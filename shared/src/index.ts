@@ -7,6 +7,7 @@ export * from "./contracts/inventory";
 export * from "./contracts/loadout";
 export * from "./contracts/offline";
 export * from "./contracts/player-profile";
+export * from "./contracts/sync";
 export * from "./decimal";
 export * from "./domain/economy";
 export * from "./domain/cultivation-settlement";

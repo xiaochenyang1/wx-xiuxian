@@ -83,6 +83,29 @@ export async function registerCultivationRoutes(
   cultivationService: CultivationServicePort,
 ): Promise<void> {
   app.post<{ Body: Record<string, never>; Headers: MutationHeaders }>(
+    "/api/v1/sync/heartbeat",
+    {
+      schema: {
+        tags: ["sync"],
+        summary: "同步服务器时间并结算修炼进度",
+        security: [{ bearerAuth: [] }],
+        headers: mutationHeadersSchema,
+        body: Type.Object({}, { additionalProperties: false }),
+        response: { 200: settleResponseSchema, ...mutationErrorResponses },
+      },
+    },
+    async (request) => {
+      const identity = await authService.authenticate(request.headers.authorization);
+      const result = await cultivationService.heartbeat(
+        identity,
+        request.headers["idempotency-key"],
+        request.headers["if-player-version"],
+      );
+      return success(request.id, result.playerVersion, result.data);
+    },
+  );
+
+  app.post<{ Body: Record<string, never>; Headers: MutationHeaders }>(
     "/api/v1/cultivation/settle",
     {
       schema: {

@@ -6,6 +6,7 @@ import type {
   PlayerAvatarResult,
   PlayerRenameResult,
   RefreshSessionResult,
+  SyncHeartbeatResult,
 } from "@cultivation-diary/shared";
 import { describe, expect, it } from "vitest";
 import { ApiClient } from "../../assets/scripts/services/ApiClient";
@@ -14,7 +15,10 @@ import type {
   HttpResponse,
   LoginIntent,
 } from "../../assets/scripts/core/ClientTypes";
-import type { PlatformAdapter } from "../../assets/scripts/platform/PlatformAdapter";
+import type {
+  PlatformAdapter,
+  PlatformLifecycleHandlers,
+} from "../../assets/scripts/platform/PlatformAdapter";
 import { bootstrapFixture } from "./fixtures/bootstrap";
 
 describe("Cocos API client", () => {
@@ -87,7 +91,38 @@ describe("Cocos API client", () => {
       retryable: true,
     });
   });
+
+  it("uses the formal heartbeat route and captures its authoritative metadata", async () => {
+    const platform = new ScriptedPlatform();
+    const client = new ApiClient(platform, "http://game.test");
+
+    await client.authenticate();
+    const heartbeat = await client.syncHeartbeat();
+
+    expect(heartbeat.bootstrap.progress.experience).toBe("1");
+    const request = platform.requests.find((candidate) =>
+      candidate.url.endsWith("/api/v1/sync/heartbeat"),
+    );
+    expect(request).toMatchObject({
+      method: "POST",
+      body: {},
+      headers: {
+        Authorization: "Bearer access-1",
+        "Content-Type": "application/json",
+        "If-Player-Version": "7",
+      },
+    });
+    expect(request?.headers?.["Idempotency-Key"]).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+    expect(client.getAuthoritativeSnapshotMetadata()).toEqual({
+      playerVersion: "8",
+      lastSuccessfulSyncAt: SERVER_TIME,
+    });
+  });
 });
+
+const SERVER_TIME = "2026-08-05T08:00:00.000Z";
 
 class ScriptedPlatform implements PlatformAdapter {
   readonly kind = "browser" as const;
@@ -130,6 +165,14 @@ class ScriptedPlatform implements PlatformAdapter {
         displayName: "云外客",
         usedFreeRename: true,
         renameCardsConsumed: 0,
+        bootstrap,
+      }));
+    }
+    if (request.url.endsWith("/api/v1/sync/heartbeat")) {
+      const bootstrap = bootstrapFixture();
+      bootstrap.progress.experience = "1";
+      return response<T>(200, success<SyncHeartbeatResult>("8", {
+        settlement: settlementSummary(),
         bootstrap,
       }));
     }
@@ -181,15 +224,36 @@ class ScriptedPlatform implements PlatformAdapter {
     this.storage.set(key, value);
   }
 
+  subscribeLifecycle(_handlers: PlatformLifecycleHandlers): () => void {
+    return () => undefined;
+  }
+
   feedback(): void {}
 }
 
 function success<T>(playerVersion: string, data: T): ApiSuccess<T> {
   return {
     requestId: "request-success",
-    serverTime: new Date().toISOString(),
+    serverTime: SERVER_TIME,
     playerVersion,
     data,
+  };
+}
+
+function settlementSummary(): CultivationSettleResult["settlement"] {
+  return {
+    settlementId: "00000000-0000-4000-8000-000000000004",
+    mode: "online",
+    efficiencyBp: 10_000,
+    elapsedMilliseconds: 1_000,
+    experienceGained: "1",
+    experienceDiscarded: "0",
+    spiritStoneGained: "0",
+    dropAttempts: 0,
+    drops: emptyDrops(),
+    events: [],
+    newcomerRewardGranted: false,
+    offlineSettlement: null,
   };
 }
 

@@ -15,9 +15,14 @@ import type {
   PlayerAvatarResult,
   PlayerRenameResult,
   RefreshSessionResult,
+  SyncHeartbeatResult,
 } from "@cultivation-diary/shared";
 import { CLIENT_CONFIG } from "../core/ClientConfig";
-import type { LoginIntent, StoredSession } from "../core/ClientTypes";
+import type {
+  AuthoritativeSnapshotMetadata,
+  LoginIntent,
+  StoredSession,
+} from "../core/ClientTypes";
 import type { PlatformAdapter } from "../platform/PlatformAdapter";
 
 export class ClientApiError extends Error {
@@ -33,6 +38,7 @@ export class ClientApiError extends Error {
 
 export class ApiClient {
   private playerVersion: string | null = null;
+  private lastSuccessfulSyncAt: string | null = null;
 
   constructor(
     private readonly platform: PlatformAdapter,
@@ -80,6 +86,18 @@ export class ApiClient {
     return this.authorizedMutation<CultivationSettleResult>(
       "/api/v1/cultivation/settle",
     );
+  }
+
+  async syncHeartbeat(): Promise<SyncHeartbeatResult> {
+    return this.authorizedMutation<SyncHeartbeatResult>("/api/v1/sync/heartbeat");
+  }
+
+  getAuthoritativeSnapshotMetadata(): AuthoritativeSnapshotMetadata | null {
+    if (this.playerVersion === null || this.lastSuccessfulSyncAt === null) return null;
+    return {
+      playerVersion: this.playerVersion,
+      lastSuccessfulSyncAt: this.lastSuccessfulSyncAt,
+    };
   }
 
   async breakthrough(): Promise<CultivationBreakthroughResult> {
@@ -250,6 +268,7 @@ export class ApiClient {
       );
     }
     this.playerVersion = response.playerVersion;
+    this.lastSuccessfulSyncAt = response.serverTime;
     return response.data;
   }
 }

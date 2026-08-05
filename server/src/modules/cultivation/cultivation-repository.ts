@@ -7,11 +7,13 @@ import {
   getRealmConfigForLevel,
   isAssetQuality,
   settleCultivation as calculateCultivationSettlement,
+  type BootstrapSnapshot,
   type CultivationSettlementMode,
   type CultivationSettlementSummary,
   type DropRewardSummary,
   type OfflineSettlementSummary,
   type ProgressionStatus,
+  type SyncHeartbeatResult,
 } from "@cultivation-diary/shared";
 import { and, eq, isNotNull, sql } from "drizzle-orm";
 import { AppError } from "../../common/app-error";
@@ -32,6 +34,7 @@ import {
   techniqueProgress,
 } from "../../db/schema";
 import type { GameDatabase } from "../../infrastructure";
+import { BootstrapService } from "../bootstrap/bootstrap-service";
 import {
   emptyDropRewardSummary,
   persistIdleDrops,
@@ -67,7 +70,30 @@ export interface BreakthroughPersistenceResult {
   offlineSettlement: OfflineSettlementSummary | null;
 }
 
+export interface SyncHeartbeatPersistenceResult {
+  playerVersion: string;
+  data: SyncHeartbeatResult;
+}
+
+type GameTransaction = Parameters<Parameters<GameDatabase["transaction"]>[0]>[0];
+
+interface SettlementOperation<T> {
+  scope: string;
+  parseStored(value: unknown): T;
+  complete(
+    transaction: GameTransaction,
+    command: CultivationMutationCommand,
+    settlement: CultivationSettlementSummary,
+  ): Promise<T>;
+}
+
+const IDEMPOTENCY_CLEANUP_INTERVAL_MILLISECONDS = 5 * 60 * 1_000;
+const IDEMPOTENCY_CLEANUP_RETRY_MILLISECONDS = 60 * 1_000;
+const IDEMPOTENCY_CLEANUP_BATCH_SIZE = 10_000;
+
 export class CultivationRepository {
+  private nextIdempotencyCleanupAt = 0;
+
   constructor(
     private readonly database: GameDatabase,
     private readonly randomInt?: DropRandomInt,
@@ -76,6 +102,90 @@ export class CultivationRepository {
   async settle(
     command: CultivationMutationCommand,
   ): Promise<CultivationSettlementSummary> {
+    return this.executeSettlement(command, {
+      scope: "cultivation.settle",
+      parseStored: parseStoredSettlement,
+      complete: async (transaction, currentCommand, settlement) => {
+        await storeIdempotentResult(
+          transaction,
+          currentCommand,
+          "cultivation.settle",
+          { kind: "cultivation_settlement", result: settlement },
+        );
+        return settlement;
+      },
+    });
+  }
+
+  async heartbeat(
+    command: CultivationMutationCommand,
+  ): Promise<SyncHeartbeatPersistenceResult> {
+    await this.cleanupExpiredIdempotencyRecords(command.now);
+    return this.executeSettlement(command, {
+      scope: "sync.heartbeat",
+      parseStored: parseStoredHeartbeat,
+      complete: async (transaction, currentCommand, settlement) => {
+        const bootstrap = await new BootstrapService(
+          transaction,
+          true,
+        ).getSnapshot(currentCommand.accountId, currentCommand.playerId);
+        const result: SyncHeartbeatPersistenceResult = {
+          playerVersion: bootstrap.playerVersion,
+          data: {
+            settlement,
+            bootstrap: {
+              ...bootstrap.snapshot,
+              offlineSettlement: settlement.offlineSettlement,
+            },
+          },
+        };
+        await storeIdempotentResult(
+          transaction,
+          currentCommand,
+          "sync.heartbeat",
+          { kind: "sync_heartbeat", result },
+        );
+        return result;
+      },
+    });
+  }
+
+  private async cleanupExpiredIdempotencyRecords(now: Date): Promise<void> {
+    if (now.getTime() < this.nextIdempotencyCleanupAt) return;
+
+    this.nextIdempotencyCleanupAt =
+      now.getTime() + IDEMPOTENCY_CLEANUP_INTERVAL_MILLISECONDS;
+    try {
+      await this.database.transaction(async (transaction) => {
+        const lock = await transaction.execute(sql`
+          select pg_try_advisory_xact_lock(20260805, 1) as acquired
+        `);
+        if (lock.rows[0]?.acquired !== true) return;
+
+        await transaction.execute(sql`
+          delete from ${idempotencyRecords}
+          where ctid in (
+            select ctid
+            from ${idempotencyRecords}
+            where ${idempotencyRecords.expiresAt} <= ${now}
+            order by ${idempotencyRecords.expiresAt}
+            limit ${IDEMPOTENCY_CLEANUP_BATCH_SIZE}
+            for update skip locked
+          )
+        `);
+      });
+    } catch (error) {
+      // Maintenance must never turn a valid player heartbeat into a 500 response.
+      console.warn("Failed to clean expired idempotency records", error);
+      this.nextIdempotencyCleanupAt =
+        now.getTime() + IDEMPOTENCY_CLEANUP_RETRY_MILLISECONDS;
+    }
+  }
+
+  private async executeSettlement<T>(
+    command: CultivationMutationCommand,
+    operation: SettlementOperation<T>,
+  ): Promise<T> {
     return this.database.transaction(async (transaction) => {
       const [state] = await transaction
         .select({
@@ -101,8 +211,8 @@ export class CultivationRepository {
       const replay = await loadIdempotentResult(
         transaction,
         command,
-        "cultivation.settle",
-        parseStoredSettlement,
+        operation.scope,
+        operation.parseStored,
       );
       if (replay) return replay;
       assertPlayerVersion(state.version, command.expectedPlayerVersion);
@@ -254,13 +364,7 @@ export class CultivationRepository {
         offlineSettlement,
       };
 
-      await storeIdempotentResult(
-        transaction,
-        command,
-        "cultivation.settle",
-        { kind: "cultivation_settlement", result },
-      );
-      return result;
+      return operation.complete(transaction, command, result);
     });
   }
 
@@ -505,8 +609,6 @@ export class CultivationRepository {
   }
 }
 
-type GameTransaction = Parameters<Parameters<GameDatabase["transaction"]>[0]>[0];
-
 async function loadEquippedBonuses(
   transaction: GameTransaction,
   playerId: string,
@@ -706,7 +808,35 @@ function parseStoredSettlement(value: unknown): CultivationSettlementSummary {
   if (!isRecord(value) || value.kind !== "cultivation_settlement" || !isRecord(value.result)) {
     throw new Error("Invalid cultivation settlement idempotency response");
   }
+  return parseSettlementSummary(value.result);
+}
+
+function parseStoredHeartbeat(value: unknown): SyncHeartbeatPersistenceResult {
+  if (!isRecord(value) || value.kind !== "sync_heartbeat" || !isRecord(value.result)) {
+    throw new Error("Invalid sync heartbeat idempotency response");
+  }
   const result = value.result;
+  if (
+    typeof result.playerVersion !== "string" ||
+    !isRecord(result.data) ||
+    !isRecord(result.data.bootstrap)
+  ) {
+    throw new Error("Invalid sync heartbeat idempotency response");
+  }
+  return {
+    playerVersion: result.playerVersion,
+    data: {
+      settlement: parseSettlementSummary(result.data.settlement),
+      bootstrap: result.data.bootstrap as unknown as BootstrapSnapshot,
+    },
+  };
+}
+
+function parseSettlementSummary(value: unknown): CultivationSettlementSummary {
+  if (!isRecord(value)) {
+    throw new Error("Invalid cultivation settlement idempotency response");
+  }
+  const result = value;
   if (
     typeof result.settlementId !== "string" ||
     typeof result.elapsedMilliseconds !== "number" ||

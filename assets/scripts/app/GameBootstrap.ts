@@ -5,6 +5,16 @@ import type {
   EquippedEquipmentSlot,
   LoadoutMutationResult,
 } from "@cultivation-diary/shared";
+import { CLIENT_CONFIG } from "../core/ClientConfig";
+import {
+  BOOTSTRAP_CACHE_SCHEMA_VERSION,
+  isStoredBootstrapCacheEnvelope,
+} from "../core/ClientTypes";
+import type { StoredBootstrapCache } from "../core/ClientTypes";
+import {
+  LifecycleSyncCoordinator,
+  type LifecycleRenderToken,
+} from "../core/LifecycleSyncCoordinator";
 import { ApiClient, ClientApiError } from "../services/ApiClient";
 import { createPlatformAdapter } from "../platform/PlatformAdapter";
 import { AppStore } from "../state/AppStore";
@@ -19,10 +29,29 @@ export class GameBootstrap extends Component {
   private readonly apiClient = new ApiClient(this.platform);
   private appView: AppView | null = null;
   private unsubscribe: (() => void) | null = null;
+  private unsubscribeLifecycle: (() => void) | null = null;
   private mutationInFlight = false;
+  private destroyed = false;
   private offlineDismissPending = false;
   private modalInputLockedUntil = 0;
   private pendingProfileBootstrap: BootstrapSnapshot | null = null;
+  private lastAuthoritativeCache: StoredBootstrapCache | null = null;
+  private readonly lifecycleSync = new LifecycleSyncCoordinator<BootstrapSnapshot>({
+    intervalSeconds: CLIENT_CONFIG.heartbeatIntervalSeconds,
+    schedule: (callback, intervalSeconds) => this.schedule(callback, intervalSeconds),
+    unschedule: (callback) => this.unschedule(callback),
+    persistCurrentSnapshot: () => this.persistCurrentBootstrap(),
+    canStartSync: () =>
+      !this.mutationInFlight &&
+      (this.store.snapshot.phase === "ready" || this.lastAuthoritativeCache !== null),
+    setSyncInFlight: (inFlight) => {
+      this.mutationInFlight = inFlight;
+    },
+    sync: async () => (await this.apiClient.syncHeartbeat()).bootstrap,
+    recover: (error) => this.recoverHeartbeat(error),
+    accept: (bootstrap, allowRender) =>
+      this.acceptHeartbeatBootstrap(bootstrap, allowRender),
+  });
 
   onLoad(): void {
     view.setDesignResolutionSize(750, 1334, ResolutionPolicy.SHOW_ALL);
@@ -56,28 +85,67 @@ export class GameBootstrap extends Component {
     });
     this.unsubscribe = this.store.subscribe((state) => this.appView?.render(state));
     this.schedule(() => this.appView?.updateIdleAnimation(), 0.5);
-    this.schedule(() => void this.settleGame(), 30);
+    this.lifecycleSync.start();
+    this.unsubscribeLifecycle = this.platform.subscribeLifecycle({
+      onShow: () => {
+        this.lifecycleSync.handleShow();
+        if (
+          this.lastAuthoritativeCache === null &&
+          this.store.snapshot.phase !== "ready"
+        ) {
+          void this.startGame();
+        }
+      },
+      onHide: () => this.lifecycleSync.handleHide(),
+    });
     void this.startGame();
   }
 
   onDestroy(): void {
+    this.destroyed = true;
+    this.unsubscribeLifecycle?.();
+    this.unsubscribeLifecycle = null;
+    this.lifecycleSync.destroy();
     this.unsubscribe?.();
     this.unsubscribe = null;
+    this.appView = null;
   }
 
   private async startGame(): Promise<void> {
+    if (this.mutationInFlight || this.destroyed) return;
+    const renderToken = this.lifecycleSync.captureRenderToken();
+    if (!renderToken) return;
+
+    this.mutationInFlight = true;
     this.store.setLoading("正在同步修为");
+    let settleAfterAuthentication = false;
+    let retryAfterLifecycleChange = false;
     try {
       const bootstrap = await this.apiClient.authenticate();
-      this.store.setReady(bootstrap);
-      await this.settleGame();
+      this.persistBootstrap(bootstrap);
+      if (this.lifecycleSync.canRender(renderToken)) {
+        this.store.setReady(bootstrap);
+        settleAfterAuthentication = true;
+      }
     } catch (error) {
-      const message =
-        error instanceof ClientApiError || error instanceof Error
-          ? error.message
-          : "暂时无法连接仙门";
-      this.store.setError(message);
+      if (this.lifecycleSync.canRender(renderToken)) {
+        const message =
+          error instanceof ClientApiError || error instanceof Error
+            ? error.message
+            : "暂时无法连接仙门";
+        this.store.setError(message);
+      } else {
+        retryAfterLifecycleChange =
+          !this.destroyed &&
+          this.lastAuthoritativeCache === null &&
+          this.lifecycleSync.captureRenderToken() !== null;
+      }
+    } finally {
+      this.finishMutation();
     }
+
+    if (settleAfterAuthentication) await this.settleGame();
+    else if (retryAfterLifecycleChange) void this.startGame();
   }
 
   private async settleGame(): Promise<void> {
@@ -89,19 +157,95 @@ export class GameBootstrap extends Component {
       return;
     }
 
+    const renderToken = this.lifecycleSync.captureRenderToken();
     this.mutationInFlight = true;
     try {
       const result = await this.apiClient.settleCultivation();
-      if (this.isProfileOpen()) {
-        this.pendingProfileBootstrap = result.bootstrap;
-      } else {
-        this.store.setReady(result.bootstrap);
-      }
+      this.persistBootstrap(result.bootstrap);
+      if (!this.lifecycleSync.canRender(renderToken)) return;
+      this.applySyncedBootstrap(result.bootstrap);
     } catch (error) {
-      if (await this.recoverPlayerVersionConflict(error, true)) return;
+      const recoveredBootstrap = await this.recoverHeartbeat(error);
+      if (recoveredBootstrap) {
+        this.persistBootstrap(recoveredBootstrap);
+        if (this.lifecycleSync.canRender(renderToken)) {
+          this.applySyncedBootstrap(recoveredBootstrap);
+        }
+        return;
+      }
       // Keep the last authoritative snapshot visible; the next scheduled sync retries.
     } finally {
-      this.mutationInFlight = false;
+      this.finishMutation();
+    }
+  }
+
+  private acceptHeartbeatBootstrap(
+    bootstrap: BootstrapSnapshot,
+    allowRender: boolean,
+  ): void {
+    this.persistBootstrap(bootstrap);
+    if (allowRender && !this.destroyed) this.applySyncedBootstrap(bootstrap);
+  }
+
+  private applySyncedBootstrap(bootstrap: BootstrapSnapshot): void {
+    if (this.isProfileOpen()) {
+      this.pendingProfileBootstrap = bootstrap;
+    } else {
+      this.store.setReady(bootstrap);
+    }
+  }
+
+  private persistCurrentBootstrap(): void {
+    if (this.lastAuthoritativeCache) {
+      this.platform.save(
+        CLIENT_CONFIG.bootstrapCacheStorageKey,
+        this.lastAuthoritativeCache,
+      );
+    }
+  }
+
+  private persistBootstrap(bootstrap: BootstrapSnapshot): void {
+    if (this.destroyed) return;
+    const metadata = this.apiClient.getAuthoritativeSnapshotMetadata();
+    if (!metadata) return;
+
+    const cache: StoredBootstrapCache = {
+      schemaVersion: BOOTSTRAP_CACHE_SCHEMA_VERSION,
+      ...metadata,
+      bootstrap,
+    };
+    if (isStoredBootstrapCacheEnvelope(cache)) {
+      this.lastAuthoritativeCache = cache;
+      this.platform.save(CLIENT_CONFIG.bootstrapCacheStorageKey, cache);
+    }
+  }
+
+  private applyMutationBootstrap(
+    bootstrap: BootstrapSnapshot,
+    renderToken: LifecycleRenderToken,
+    beforeApply?: () => void,
+  ): boolean {
+    this.persistBootstrap(bootstrap);
+    if (!this.lifecycleSync.canRender(renderToken)) return false;
+
+    this.pendingProfileBootstrap = null;
+    beforeApply?.();
+    this.store.setReady(bootstrap);
+    return true;
+  }
+
+  private async recoverHeartbeat(error: unknown): Promise<BootstrapSnapshot | null> {
+    if (
+      !(error instanceof ClientApiError) ||
+      error.code !== "PLAYER_VERSION_CONFLICT"
+    ) {
+      return null;
+    }
+
+    try {
+      return await this.apiClient.authenticate();
+    } catch {
+      return null;
     }
   }
 
@@ -142,42 +286,50 @@ export class GameBootstrap extends Component {
       return;
     }
 
+    const renderToken = this.lifecycleSync.captureRenderToken();
+    if (!renderToken) return;
     this.platform.feedback();
     this.mutationInFlight = true;
     this.store.setLoading("正在叩开境界之门");
     try {
       const result = await this.apiClient.breakthrough();
-      this.store.setReady(result.bootstrap);
+      this.applyMutationBootstrap(result.bootstrap, renderToken);
     } catch (error) {
-      if (await this.recoverPlayerVersionConflict(error)) return;
+      if (await this.recoverPlayerVersionConflict(error, renderToken)) return;
+      if (!this.lifecycleSync.canRender(renderToken)) return;
       const message =
         error instanceof ClientApiError || error instanceof Error
           ? error.message
           : "突破暂未成功";
       this.store.setError(message);
     } finally {
-      this.mutationInFlight = false;
+      this.finishMutation();
     }
   }
 
   private async expandInventory(): Promise<void> {
     if (!this.canStartFeatureMutation()) return;
+    const renderToken = this.lifecycleSync.captureRenderToken();
+    if (!renderToken) return;
     this.mutationInFlight = true;
     this.store.setFeatureMessage("正在扩展行囊……");
     try {
       const result = await this.apiClient.expandInventory();
-      this.store.setReady(result.bootstrap);
+      if (!this.applyMutationBootstrap(result.bootstrap, renderToken)) return;
       this.store.setFeatureMessage(
         result.nextCost === null
           ? "行囊已扩展至最大容量"
           : `行囊扩展成功，消耗灵石 ${result.cost}`,
       );
     } catch (error) {
-      if (!(await this.recoverPlayerVersionConflict(error))) {
+      if (
+        !(await this.recoverPlayerVersionConflict(error, renderToken)) &&
+        this.lifecycleSync.canRender(renderToken)
+      ) {
         this.store.setFeatureMessage(errorMessage(error, "行囊扩展失败"));
       }
     } finally {
-      this.mutationInFlight = false;
+      this.finishMutation();
     }
   }
 
@@ -185,6 +337,8 @@ export class GameBootstrap extends Component {
     avatarVariant: ChosenAvatarVariant,
   ): Promise<void> {
     if (!this.canStartFeatureMutation()) return;
+    const renderToken = this.lifecycleSync.captureRenderToken();
+    if (!renderToken) return;
     if (this.pendingProfileBootstrap) {
       const pendingBootstrap = this.pendingProfileBootstrap;
       this.applyPendingProfileBootstrap();
@@ -199,26 +353,28 @@ export class GameBootstrap extends Component {
     this.store.setFeatureMessage("正在确认角色形象……");
     try {
       const result = await this.apiClient.chooseAvatar(avatarVariant);
-      this.pendingProfileBootstrap = null;
-      this.store.setReady(result.bootstrap);
+      if (!this.applyMutationBootstrap(result.bootstrap, renderToken)) return;
       this.store.setFeatureMessage("角色形象已确定，此后不可再次修改");
     } catch (error) {
-      if (await this.recoverPlayerVersionConflict(error)) {
+      if (await this.recoverPlayerVersionConflict(error, renderToken)) {
+        if (!this.lifecycleSync.canRender(renderToken)) return;
         this.store.setFeatureMessage(
           this.store.snapshot.bootstrap?.player.avatarVariant === "neutral"
             ? "档案状态已同步，请重新确认"
             : "角色形象已由其他操作确定，档案状态已同步",
         );
-      } else {
+      } else if (this.lifecycleSync.canRender(renderToken)) {
         this.store.setFeatureMessage(errorMessage(error, "角色形象确认失败"));
       }
     } finally {
-      this.mutationInFlight = false;
+      this.finishMutation();
     }
   }
 
   private async renamePlayer(displayName: string): Promise<void> {
     if (!this.canStartFeatureMutation()) return;
+    const renderToken = this.lifecycleSync.captureRenderToken();
+    if (!renderToken) return;
     if (this.pendingProfileBootstrap) {
       this.appView?.preserveProfileNameDraft(displayName);
       this.applyPendingProfileBootstrap();
@@ -236,81 +392,101 @@ export class GameBootstrap extends Component {
     this.store.setFeatureMessage("正在呈递新道号……");
     try {
       const result = await this.apiClient.renamePlayer(displayName);
-      this.pendingProfileBootstrap = null;
-      this.appView?.acceptProfileName(result.displayName);
-      this.store.setReady(result.bootstrap);
+      if (
+        !this.applyMutationBootstrap(result.bootstrap, renderToken, () =>
+          this.appView?.acceptProfileName(result.displayName),
+        )
+      ) {
+        return;
+      }
       this.store.setFeatureMessage(
         result.usedFreeRename
           ? `道号已改为「${result.displayName}」，本次使用免费机会`
           : `道号已改为「${result.displayName}」，消耗改名卡 1 张`,
       );
     } catch (error) {
-      if (await this.recoverPlayerVersionConflict(error)) {
+      if (await this.recoverPlayerVersionConflict(error, renderToken)) {
+        if (!this.lifecycleSync.canRender(renderToken)) return;
         this.store.setFeatureMessage(
           "档案状态已同步，原输入已保留，请核对后重新提交",
         );
-      } else {
+      } else if (this.lifecycleSync.canRender(renderToken)) {
         this.store.setFeatureMessage(errorMessage(error, "修改道号失败"));
       }
     } finally {
-      this.mutationInFlight = false;
+      this.finishMutation();
     }
   }
 
   private async useInventoryItem(itemConfigId: string): Promise<void> {
     if (!this.canStartFeatureMutation()) return;
+    const renderToken = this.lifecycleSync.captureRenderToken();
+    if (!renderToken) return;
     this.mutationInFlight = true;
     this.store.setFeatureMessage("正在炼化经验丹……");
     try {
       const result = await this.apiClient.useInventoryItem(itemConfigId);
-      this.store.setReady(result.bootstrap);
+      if (!this.applyMutationBootstrap(result.bootstrap, renderToken)) return;
       this.store.setFeatureMessage(
         result.reachedBreakthrough
           ? `炼化完成：修为 +${result.experienceGained}，已到达突破瓶颈`
           : `炼化完成：修为 +${result.experienceGained}`,
       );
     } catch (error) {
-      if (!(await this.recoverPlayerVersionConflict(error))) {
+      if (
+        !(await this.recoverPlayerVersionConflict(error, renderToken)) &&
+        this.lifecycleSync.canRender(renderToken)
+      ) {
         this.store.setFeatureMessage(errorMessage(error, "道具使用失败"));
       }
     } finally {
-      this.mutationInFlight = false;
+      this.finishMutation();
     }
   }
 
   private async transferHarvest(entryId: string): Promise<void> {
     if (!this.canStartFeatureMutation()) return;
+    const renderToken = this.lifecycleSync.captureRenderToken();
+    if (!renderToken) return;
     this.mutationInFlight = true;
     this.store.setFeatureMessage("正在收入行囊……");
     try {
       const result = await this.apiClient.transferHarvest([entryId]);
-      this.store.setReady(result.bootstrap);
+      if (!this.applyMutationBootstrap(result.bootstrap, renderToken)) return;
       this.store.setFeatureMessage("收获已安全收入行囊或功法库");
     } catch (error) {
-      if (!(await this.recoverPlayerVersionConflict(error))) {
+      if (
+        !(await this.recoverPlayerVersionConflict(error, renderToken)) &&
+        this.lifecycleSync.canRender(renderToken)
+      ) {
         this.store.setFeatureMessage(errorMessage(error, "收取失败"));
       }
     } finally {
-      this.mutationInFlight = false;
+      this.finishMutation();
     }
   }
 
   private async salvageHarvest(entryId: string): Promise<void> {
     if (!this.canStartFeatureMutation()) return;
+    const renderToken = this.lifecycleSync.captureRenderToken();
+    if (!renderToken) return;
     this.mutationInFlight = true;
     this.store.setFeatureMessage("正在分解收获……");
     try {
       const result = await this.apiClient.salvageHarvest([entryId]);
-      this.store.setReady(result.bootstrap);
+      if (!this.applyMutationBootstrap(result.bootstrap, renderToken)) return;
       this.store.setFeatureMessage(
         `分解完成：灵石 +${result.spiritStoneGained}，强化石 +${result.enhanceStoneGained}`,
       );
     } catch (error) {
-      if (!(await this.recoverPlayerVersionConflict(error))) {
+      if (
+        !(await this.recoverPlayerVersionConflict(error, renderToken)) &&
+        this.lifecycleSync.canRender(renderToken)
+      ) {
         this.store.setFeatureMessage(errorMessage(error, "分解失败"));
       }
     } finally {
-      this.mutationInFlight = false;
+      this.finishMutation();
     }
   }
 
@@ -355,21 +531,31 @@ export class GameBootstrap extends Component {
     completedMessage: string,
   ): Promise<void> {
     if (!this.canStartFeatureMutation()) return;
+    const renderToken = this.lifecycleSync.captureRenderToken();
+    if (!renderToken) return;
     this.mutationInFlight = true;
     this.store.setFeatureMessage(pendingMessage);
     try {
       const result = await mutation();
-      this.store.setReady(result.bootstrap);
+      if (!this.applyMutationBootstrap(result.bootstrap, renderToken)) return;
       this.store.setFeatureMessage(
         `${completedMessage}，${describePowerDelta(result.powerDelta)}`,
       );
     } catch (error) {
-      if (!(await this.recoverPlayerVersionConflict(error))) {
+      if (
+        !(await this.recoverPlayerVersionConflict(error, renderToken)) &&
+        this.lifecycleSync.canRender(renderToken)
+      ) {
         this.store.setFeatureMessage(errorMessage(error, "装备操作失败"));
       }
     } finally {
-      this.mutationInFlight = false;
+      this.finishMutation();
     }
+  }
+
+  private finishMutation(): void {
+    this.mutationInFlight = false;
+    this.lifecycleSync.notifySyncAvailable();
   }
 
   private canStartFeatureMutation(): boolean {
@@ -389,6 +575,7 @@ export class GameBootstrap extends Component {
 
   private async recoverPlayerVersionConflict(
     error: unknown,
+    renderToken: LifecycleRenderToken,
     deferWhileProfileOpen = false,
   ): Promise<boolean> {
     if (!(error instanceof ClientApiError) || error.code !== "PLAYER_VERSION_CONFLICT") {
@@ -397,6 +584,8 @@ export class GameBootstrap extends Component {
 
     try {
       const bootstrap = await this.apiClient.authenticate();
+      this.persistBootstrap(bootstrap);
+      if (!this.lifecycleSync.canRender(renderToken)) return true;
       if (deferWhileProfileOpen && this.isProfileOpen()) {
         this.pendingProfileBootstrap = bootstrap;
         return true;

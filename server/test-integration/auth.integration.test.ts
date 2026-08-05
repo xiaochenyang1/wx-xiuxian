@@ -657,6 +657,210 @@ describe("authentication and bootstrap PostgreSQL integration", () => {
     });
   });
 
+  it("advances the online heartbeat cursor and replays its atomic snapshot", async () => {
+    const loggedIn = await login(app, "heartbeat-player", randomUUID());
+    const loginData = loggedIn.json().data;
+    const accountId = loginData.bootstrap.account.id as string;
+    const playerId = loginData.bootstrap.player.id as string;
+    const accessToken = loginData.tokens.accessToken as string;
+    const unauthenticated = await app.inject({
+      method: "POST",
+      url: "/api/v1/sync/heartbeat",
+      headers: { "idempotency-key": randomUUID() },
+      payload: {},
+    });
+    expect(unauthenticated.statusCode).toBe(401);
+    expect(unauthenticated.json()).toMatchObject({
+      error: { code: "UNAUTHENTICATED", retryable: false },
+    });
+    await infrastructure.pool.query(
+      `update player_progress
+       set last_settled_at = clock_timestamp() - interval '60 seconds',
+           last_heartbeat_at = clock_timestamp()
+       where player_id = $1`,
+      [playerId],
+    );
+    await infrastructure.pool.query(
+      `insert into idempotency_records (
+         account_id, scope, idempotency_key, request_hash,
+         status_code, response_body, expires_at, created_at
+       ) values ($1, 'expired.test', $2, repeat('0', 64), 200, '{}',
+         clock_timestamp() - interval '1 hour',
+         clock_timestamp() - interval '25 hours')`,
+      [accountId, randomUUID()],
+    );
+    await infrastructure.pool.query(
+      `insert into idempotency_records (
+         account_id, scope, idempotency_key, request_hash,
+         status_code, response_body, expires_at, created_at
+       ) values ($1, 'active.test', $2, repeat('1', 64), 200, '{}',
+         clock_timestamp() + interval '1 hour', clock_timestamp())`,
+      [accountId, randomUUID()],
+    );
+
+    const heartbeatKey = randomUUID();
+    const [heartbeat, concurrentReplay] = await Promise.all([
+      cultivationMutation(
+        app,
+        "/api/v1/sync/heartbeat",
+        accessToken,
+        heartbeatKey,
+        "1",
+      ),
+      cultivationMutation(
+        app,
+        "/api/v1/sync/heartbeat",
+        accessToken,
+        heartbeatKey,
+        "1",
+      ),
+    ]);
+    expect(heartbeat.statusCode).toBe(200);
+    expect(concurrentReplay.statusCode).toBe(200);
+    const heartbeatBody = heartbeat.json();
+    expect(concurrentReplay.json().playerVersion).toBe("2");
+    expect(concurrentReplay.json().data).toEqual(heartbeatBody.data);
+    expect(heartbeatBody).toMatchObject({
+      playerVersion: "2",
+      data: {
+        settlement: {
+          mode: "online",
+          efficiencyBp: 10_000,
+          offlineSettlement: null,
+        },
+        bootstrap: {
+          player: { id: playerId, avatarVariant: "neutral" },
+          config: { version: "mvp-0.3.0" },
+          offlineSettlement: null,
+        },
+      },
+    });
+    expect(heartbeatBody.data.settlement.elapsedMilliseconds).toBeGreaterThanOrEqual(
+      59_000,
+    );
+    expect(Object.keys(heartbeatBody.data.bootstrap).sort()).toEqual(
+      [
+        "account",
+        "activeEffects",
+        "config",
+        "equipment",
+        "harvestChest",
+        "inventory",
+        "newcomerTasks",
+        "offlineSettlement",
+        "player",
+        "progress",
+        "settings",
+        "techniques",
+        "unlocks",
+        "wallet",
+      ].sort(),
+    );
+
+    const avatarChange = await inventoryMutation(
+      app,
+      "/api/v1/player/avatar",
+      accessToken,
+      randomUUID(),
+      { avatarVariant: "male" },
+      "2",
+    );
+    expect(avatarChange.statusCode).toBe(200);
+    expect(avatarChange.json().playerVersion).toBe("3");
+
+    const replay = await cultivationMutation(
+      app,
+      "/api/v1/sync/heartbeat",
+      accessToken,
+      heartbeatKey,
+      "1",
+    );
+    expect(replay.statusCode).toBe(200);
+    expect(replay.json().playerVersion).toBe("2");
+    expect(replay.json().data).toEqual(heartbeatBody.data);
+    expect(replay.json().data.bootstrap.player.avatarVariant).toBe("neutral");
+
+    const reusedKey = await cultivationMutation(
+      app,
+      "/api/v1/sync/heartbeat",
+      accessToken,
+      heartbeatKey,
+      "2",
+    );
+    expect(reusedKey.statusCode).toBe(409);
+    expect(reusedKey.json()).toMatchObject({
+      error: { code: "IDEMPOTENCY_KEY_REUSED", retryable: false },
+    });
+
+    const staleVersion = await cultivationMutation(
+      app,
+      "/api/v1/sync/heartbeat",
+      accessToken,
+      randomUUID(),
+      "2",
+    );
+    expect(staleVersion.statusCode).toBe(409);
+    expect(staleVersion.json()).toMatchObject({
+      error: {
+        code: "PLAYER_VERSION_CONFLICT",
+        details: { currentPlayerVersion: "3" },
+      },
+    });
+
+    const persisted = await infrastructure.pool.query<{
+      version: string;
+      cursorIsCurrent: boolean;
+      cursorsMatch: boolean;
+      idempotencyCount: string;
+      storedKind: string;
+      storedPlayerVersion: string;
+      storedAvatarVariant: string;
+      expiredIdempotencyCount: string;
+      activeControlCount: string;
+    }>(
+      `select
+        pp.version::text as version,
+        pp.last_settled_at > now() - interval '30 seconds' as "cursorIsCurrent",
+        pp.last_settled_at = pp.last_heartbeat_at as "cursorsMatch",
+        (select count(*) from idempotency_records ir
+          where ir.account_id = p.account_id
+            and ir.scope = 'sync.heartbeat'
+            and ir.idempotency_key = $2)::text as "idempotencyCount",
+        (select ir.response_body->>'kind' from idempotency_records ir
+          where ir.account_id = p.account_id
+            and ir.scope = 'sync.heartbeat'
+            and ir.idempotency_key = $2) as "storedKind",
+        (select ir.response_body #>> '{result,playerVersion}' from idempotency_records ir
+          where ir.account_id = p.account_id
+            and ir.scope = 'sync.heartbeat'
+            and ir.idempotency_key = $2) as "storedPlayerVersion",
+        (select ir.response_body #>> '{result,data,bootstrap,player,avatarVariant}'
+          from idempotency_records ir
+          where ir.account_id = p.account_id
+            and ir.scope = 'sync.heartbeat'
+            and ir.idempotency_key = $2) as "storedAvatarVariant",
+        (select count(*) from idempotency_records ir
+          where ir.expires_at <= now())::text as "expiredIdempotencyCount",
+        (select count(*) from idempotency_records ir
+          where ir.scope = 'active.test')::text as "activeControlCount"
+       from player_progress pp
+       join players p on p.id = pp.player_id
+       where pp.player_id = $1`,
+      [playerId, heartbeatKey],
+    );
+    expect(persisted.rows[0]).toEqual({
+      version: "3",
+      cursorIsCurrent: true,
+      cursorsMatch: true,
+      idempotencyCount: "1",
+      storedKind: "sync_heartbeat",
+      storedPlayerVersion: "2",
+      storedAvatarVariant: "neutral",
+      expiredIdempotencyCount: "0",
+      activeControlCount: "1",
+    });
+  });
+
   it("materializes idle drops and supports transactional transfer and salvage", async () => {
     const loggedIn = await login(app, "idle-drop-player", randomUUID());
     const loginData = loggedIn.json().data;

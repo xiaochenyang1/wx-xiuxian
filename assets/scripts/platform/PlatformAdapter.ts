@@ -23,7 +23,16 @@ interface WechatApi {
   }): void;
   getStorageSync(key: string): unknown;
   setStorageSync(key: string, value: unknown): void;
+  onShow(callback: () => void): void;
+  onHide(callback: () => void): void;
+  offShow?(callback: () => void): void;
+  offHide?(callback: () => void): void;
   vibrateShort?(options: { type: "light" }): void;
+}
+
+export interface PlatformLifecycleHandlers {
+  onShow(): void;
+  onHide(): void;
 }
 
 export interface PlatformAdapter {
@@ -32,6 +41,7 @@ export interface PlatformAdapter {
   getLoginIntent(): Promise<LoginIntent>;
   load<T>(key: string): T | null;
   save<T>(key: string, value: T): void;
+  subscribeLifecycle(handlers: PlatformLifecycleHandlers): () => void;
   feedback(): void;
 }
 
@@ -79,6 +89,33 @@ class BrowserPlatformAdapter implements PlatformAdapter {
     } catch {
       // Storage can be unavailable in privacy mode; login still works for the current session.
     }
+  }
+
+  subscribeLifecycle(handlers: PlatformLifecycleHandlers): () => void {
+    let visible = document.visibilityState !== "hidden";
+    let disposed = false;
+    const updateVisibility = (nextVisible: boolean): void => {
+      if (disposed || visible === nextVisible) return;
+      visible = nextVisible;
+      if (nextVisible) handlers.onShow();
+      else handlers.onHide();
+    };
+    const onVisibilityChange = (): void =>
+      updateVisibility(document.visibilityState !== "hidden");
+    const onPageShow = (): void => updateVisibility(document.visibilityState !== "hidden");
+    const onPageHide = (): void => updateVisibility(false);
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("pageshow", onPageShow);
+    window.addEventListener("pagehide", onPageHide);
+    if (!visible) handlers.onHide();
+
+    return () => {
+      disposed = true;
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("pageshow", onPageShow);
+      window.removeEventListener("pagehide", onPageHide);
+    };
   }
 
   feedback(): void {
@@ -155,6 +192,29 @@ class WechatPlatformAdapter implements PlatformAdapter {
     } catch {
       // Storage failures are non-fatal; the player can authenticate again.
     }
+  }
+
+  subscribeLifecycle(handlers: PlatformLifecycleHandlers): () => void {
+    let visible = true;
+    let disposed = false;
+    const onShow = (): void => {
+      if (disposed || visible) return;
+      visible = true;
+      handlers.onShow();
+    };
+    const onHide = (): void => {
+      if (disposed || !visible) return;
+      visible = false;
+      handlers.onHide();
+    };
+
+    this.api.onShow(onShow);
+    this.api.onHide(onHide);
+    return () => {
+      disposed = true;
+      this.api.offShow?.(onShow);
+      this.api.offHide?.(onHide);
+    };
   }
 
   feedback(): void {

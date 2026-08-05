@@ -1,6 +1,7 @@
 import type {
   CultivationBreakthroughResult,
   CultivationSettleResult,
+  SyncHeartbeatResult,
 } from "@cultivation-diary/shared";
 import { hashRequest } from "../../common/hash";
 import type { AccessIdentity } from "../auth/token-service";
@@ -18,6 +19,11 @@ export interface CultivationOperationResult<T> {
 }
 
 export interface CultivationServicePort {
+  heartbeat(
+    identity: AccessIdentity,
+    idempotencyKey: string,
+    expectedPlayerVersion?: string,
+  ): Promise<CultivationOperationResult<SyncHeartbeatResult>>;
   settle(
     identity: AccessIdentity,
     idempotencyKey: string,
@@ -36,6 +42,20 @@ export class CultivationService implements CultivationServicePort {
     private readonly bootstrapService: BootstrapService,
     private readonly clock: () => Date = () => new Date(),
   ) {}
+
+  async heartbeat(
+    identity: AccessIdentity,
+    idempotencyKey: string,
+    expectedPlayerVersion?: string,
+  ): Promise<CultivationOperationResult<SyncHeartbeatResult>> {
+    const command = this.command(
+      identity,
+      idempotencyKey,
+      expectedPlayerVersion,
+      "heartbeat",
+    );
+    return this.repository.heartbeat(command);
+  }
 
   async settle(
     identity: AccessIdentity,
@@ -95,7 +115,7 @@ export class CultivationService implements CultivationServicePort {
     identity: AccessIdentity,
     idempotencyKey: string,
     expectedPlayerVersion: string | undefined,
-    operation: "settle" | "breakthrough",
+    operation: "heartbeat" | "settle" | "breakthrough",
   ): CultivationMutationCommand {
     const now = this.clock();
     return {

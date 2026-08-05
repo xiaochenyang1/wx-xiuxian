@@ -46,25 +46,39 @@ function authService(): AuthServicePort {
 
 function cultivationService(): CultivationServicePort {
   const snapshot = bootstrapFixture();
+  const settlement = {
+    settlementId: randomUUID(),
+    mode: "online" as const,
+    efficiencyBp: 10_000,
+    elapsedMilliseconds: 1_000,
+    experienceGained: "1",
+    experienceDiscarded: "0",
+    spiritStoneGained: "0",
+    dropAttempts: 0,
+    drops: {
+      configVersion: "test",
+      stackItems: [],
+      equipmentCount: 0,
+      techniqueCount: 0,
+      harvestChestAdded: 0,
+      techniqueDuplicates: 0,
+      autoSalvagedCount: 0,
+      mailedCount: 0,
+      autoSalvageSpiritStone: "0",
+      autoSalvageEnhanceStone: "0",
+    },
+    events: [],
+    newcomerRewardGranted: false,
+    offlineSettlement: null,
+  };
   return {
+    heartbeat: vi.fn().mockResolvedValue({
+      playerVersion: "2",
+      data: { settlement, bootstrap: snapshot },
+    }),
     settle: vi.fn().mockResolvedValue({
       playerVersion: "2",
-      data: {
-        settlement: {
-          settlementId: randomUUID(),
-          mode: "online",
-          efficiencyBp: 10_000,
-          elapsedMilliseconds: 1_000,
-          experienceGained: "1",
-          experienceDiscarded: "0",
-          spiritStoneGained: "0",
-          dropAttempts: 0,
-          events: [],
-          newcomerRewardGranted: false,
-          offlineSettlement: null,
-        },
-        bootstrap: snapshot,
-      },
+      data: { settlement, bootstrap: snapshot },
     }),
     breakthrough: vi.fn().mockResolvedValue({
       playerVersion: "3",
@@ -155,8 +169,63 @@ describe("authentication routes", () => {
     expect(document.paths).toHaveProperty("/api/v1/auth/wechat");
     expect(document.paths).toHaveProperty("/api/v1/auth/refresh");
     expect(document.paths).toHaveProperty("/api/v1/bootstrap");
+    expect(document.paths).toHaveProperty("/api/v1/sync/heartbeat");
     expect(document.paths).toHaveProperty("/api/v1/cultivation/settle");
     expect(document.paths).toHaveProperty("/api/v1/cultivation/breakthrough");
+    await app.close();
+  });
+
+  it("authenticates heartbeat requests and forwards mutation guards", async () => {
+    const auth = authService();
+    const cultivation = cultivationService();
+    const app = await buildApp({
+      config: loadAppConfig({ NODE_ENV: "development" }),
+      readiness: readiness(),
+      services: { authService: auth, cultivationService: cultivation },
+    });
+    const idempotencyKey = randomUUID();
+
+    const missingIdempotencyKey = await app.inject({
+      method: "POST",
+      url: "/api/v1/sync/heartbeat",
+      headers: { authorization: "Bearer access-token" },
+      payload: {},
+    });
+    expect(missingIdempotencyKey.statusCode).toBe(400);
+    expect(missingIdempotencyKey.json()).toMatchObject({
+      error: { code: "INVALID_REQUEST", retryable: false },
+    });
+    expect(cultivation.heartbeat).not.toHaveBeenCalled();
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/sync/heartbeat",
+      headers: {
+        authorization: "Bearer access-token",
+        "idempotency-key": idempotencyKey,
+        "if-player-version": "1",
+      },
+      payload: {},
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      playerVersion: "2",
+      data: {
+        settlement: { mode: "online" },
+        bootstrap: { progress: { level: 1 } },
+      },
+    });
+    expect(auth.authenticate).toHaveBeenCalledWith("Bearer access-token");
+    expect(cultivation.heartbeat).toHaveBeenCalledWith(
+      {
+        sessionId: "session-id",
+        accountId: bootstrapFixture().account.id,
+        playerId: bootstrapFixture().player.id,
+      },
+      idempotencyKey,
+      "1",
+    );
     await app.close();
   });
 
