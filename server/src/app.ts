@@ -10,6 +10,7 @@ import { registerBootstrapRoutes } from "./modules/bootstrap/bootstrap-routes";
 import { registerCultivationRoutes } from "./modules/cultivation/cultivation-routes";
 import { registerInventoryRoutes } from "./modules/inventory/inventory-routes";
 import { registerLoadoutRoutes } from "./modules/loadout/loadout-routes";
+import { registerPlayerProfileRoutes } from "./modules/player-profile/player-profile-routes";
 
 export interface ReadinessChecks {
   checkDatabase(): Promise<void>;
@@ -199,6 +200,13 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
         app,
         options.services.authService,
         options.services.loadoutService,
+      );
+    }
+    if (options.services.playerProfileService) {
+      await registerPlayerProfileRoutes(
+        app,
+        options.services.authService,
+        options.services.playerProfileService,
       );
     }
   }

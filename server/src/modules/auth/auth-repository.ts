@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, eq, gt, isNull, sql } from "drizzle-orm";
+import { and, eq, gt, isNull, lte, sql } from "drizzle-orm";
 import { AppError } from "../../common/app-error";
 import {
   accounts,
@@ -9,9 +9,13 @@ import {
   playerSettings,
   playerWallets,
   players,
+  reservedPlayerNames,
 } from "../../db/schema";
 import type { GameDatabase } from "../../infrastructure";
-import { PlayerNameGenerator } from "./player-name";
+import {
+  PLAYER_NAME_ADVISORY_LOCK_ID,
+  PlayerNameGenerator,
+} from "./player-name";
 
 const MAX_NAME_ATTEMPTS = 256;
 
@@ -115,8 +119,27 @@ export class AuthRepository {
       let isNewPlayer = false;
 
       if (!player) {
+        await transaction.execute(
+          sql`select pg_advisory_xact_lock(${PLAYER_NAME_ADVISORY_LOCK_ID})`,
+        );
+        await transaction
+          .delete(reservedPlayerNames)
+          .where(lte(reservedPlayerNames.releaseAt, command.now));
+
         for (let attempt = 0; attempt < MAX_NAME_ATTEMPTS; attempt += 1) {
           const name = this.nameGenerator.candidate(attempt);
+          const [reservation] = await transaction
+            .select({ displayNameKey: reservedPlayerNames.displayNameKey })
+            .from(reservedPlayerNames)
+            .where(
+              and(
+                eq(reservedPlayerNames.displayNameKey, name.displayNameKey),
+                gt(reservedPlayerNames.releaseAt, command.now),
+              ),
+            )
+            .limit(1);
+          if (reservation) continue;
+
           const [createdPlayer] = await transaction
             .insert(players)
             .values({

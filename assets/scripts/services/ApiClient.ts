@@ -3,6 +3,7 @@ import type {
   ApiSuccess,
   AuthLoginResult,
   BootstrapSnapshot,
+  ChosenAvatarVariant,
   CultivationBreakthroughResult,
   CultivationSettleResult,
   HarvestSalvageResult,
@@ -11,6 +12,8 @@ import type {
   InventoryUseResult,
   LoadoutMutationResult,
   EquippedEquipmentSlot,
+  PlayerAvatarResult,
+  PlayerRenameResult,
   RefreshSessionResult,
 } from "@cultivation-diary/shared";
 import { CLIENT_CONFIG } from "../core/ClientConfig";
@@ -82,6 +85,22 @@ export class ApiClient {
   async breakthrough(): Promise<CultivationBreakthroughResult> {
     return this.authorizedMutation<CultivationBreakthroughResult>(
       "/api/v1/cultivation/breakthrough",
+    );
+  }
+
+  async chooseAvatar(
+    avatarVariant: ChosenAvatarVariant,
+  ): Promise<PlayerAvatarResult> {
+    return this.authorizedMutation<PlayerAvatarResult>(
+      "/api/v1/player/avatar",
+      { avatarVariant },
+    );
+  }
+
+  async renamePlayer(displayName: string): Promise<PlayerRenameResult> {
+    return this.authorizedMutation<PlayerRenameResult>(
+      "/api/v1/player/rename",
+      { displayName },
     );
   }
 
@@ -220,9 +239,29 @@ export class ApiClient {
   }
 
   private capture<T>(response: ApiSuccess<T>): T {
+    if (
+      this.playerVersion !== null &&
+      comparePlayerVersions(response.playerVersion, this.playerVersion) < 0
+    ) {
+      throw new ClientApiError(
+        "STALE_PLAYER_RESPONSE",
+        "已忽略过期的角色数据，请重试",
+        true,
+      );
+    }
     this.playerVersion = response.playerVersion;
     return response.data;
   }
+}
+
+function comparePlayerVersions(left: string, right: string): number {
+  const normalizedLeft = left.replace(/^0+(?=\d)/, "");
+  const normalizedRight = right.replace(/^0+(?=\d)/, "");
+  if (normalizedLeft.length !== normalizedRight.length) {
+    return normalizedLeft.length < normalizedRight.length ? -1 : 1;
+  }
+  if (normalizedLeft === normalizedRight) return 0;
+  return normalizedLeft < normalizedRight ? -1 : 1;
 }
 
 function unwrap<T>(statusCode: number, response: ApiSuccess<T> | ApiFailure): ApiSuccess<T> {

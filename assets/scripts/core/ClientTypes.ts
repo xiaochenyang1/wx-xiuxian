@@ -1,7 +1,12 @@
 import type { AuthTokens, BootstrapSnapshot } from "@cultivation-diary/shared";
 
 export type MainTab = "cultivation" | "partner" | "ranking" | "cave";
-export type FeaturePanel = "techniques" | "equipment" | "inventory" | "tasks";
+export type FeaturePanel =
+  | "profile"
+  | "techniques"
+  | "equipment"
+  | "inventory"
+  | "tasks";
 
 export type LoginIntent =
   | { kind: "development"; accountId: string }

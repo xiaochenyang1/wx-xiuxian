@@ -1,5 +1,7 @@
 import {
   type AssetQuality,
+  type AvatarVariant,
+  type ChosenAvatarVariant,
   type EquippedEquipmentSlot,
   type OfflineSettlementSummary,
 } from "@cultivation-diary/shared";
@@ -17,6 +19,7 @@ import {
   Button,
   BlockInputEvents,
   Color,
+  EditBox,
   Graphics,
   HorizontalTextAlignment,
   Label,
@@ -73,6 +76,8 @@ interface AppViewActions {
   openFeature(feature: FeaturePanel): void;
   closeFeature(): void;
   breakthrough(): void;
+  chooseAvatar(avatarVariant: ChosenAvatarVariant): void;
+  renamePlayer(displayName: string): void;
   expandInventory(): void;
   useInventoryItem(itemConfigId: string): void;
   transferHarvest(entryId: string): void;
@@ -112,6 +117,9 @@ export class AppView {
   private idleLabel: Label | null = null;
   private idleFrame = 0;
   private lastState: Readonly<AppState> | null = null;
+  private profileAvatarDraft: ChosenAvatarVariant | null = null;
+  private profileNameDraft: string | null = null;
+  private profileNameSource: string | null = null;
   private readonly pages: Record<PagedList, number> = {
     inventoryStacks: 0,
     harvestChest: 0,
@@ -169,6 +177,19 @@ export class AppView {
     if (!this.idleLabel?.isValid) return;
     this.idleFrame = (this.idleFrame + 1) % 4;
     this.idleLabel.string = `挂机中${".".repeat(this.idleFrame)}`;
+  }
+
+  acceptProfileName(displayName: string): void {
+    this.profileNameSource = displayName;
+    this.profileNameDraft = displayName;
+  }
+
+  preserveProfileNameDraft(displayName: string): void {
+    this.profileNameDraft = displayName;
+    if (this.profileNameSource === null) {
+      this.profileNameSource =
+        this.lastState?.bootstrap?.player.displayName ?? displayName;
+    }
   }
 
   private pageWindow(
@@ -305,12 +326,19 @@ export class AppView {
     const bootstrap = state.bootstrap!;
     drawBand(this.root, "Header", 0, 594, 750, 122, COLORS.panelStrong, COLORS.goldMuted);
 
+    drawAvatarPortrait(
+      this.root,
+      bootstrap.player.avatarVariant,
+      -337,
+      594,
+    );
+
     addLabel(
       this.root,
       bootstrap.player.displayName,
-      -245,
+      -213,
       606,
-      230,
+      188,
       42,
       24,
       COLORS.text,
@@ -321,15 +349,29 @@ export class AppView {
     addLabel(
       this.root,
       bootstrap.progress.title,
-      -245,
+      -213,
       568,
-      230,
+      188,
       34,
       18,
       COLORS.jade,
       false,
       1,
       HorizontalTextAlignment.LEFT,
+    );
+
+    createButton(
+      this.root,
+      "档案",
+      -65,
+      594,
+      82,
+      46,
+      { fill: COLORS.inkGreenLight, stroke: COLORS.goldMuted, fontSize: 16 },
+      () => {
+        this.actions.feedback();
+        this.actions.openFeature("profile");
+      },
     );
 
     addLabel(this.root, "总战力", 214, 616, 250, 30, 17, COLORS.textMuted);
@@ -670,6 +712,7 @@ export class AppView {
 
     drawBand(overlay, "FeaturePanelBody", 0, 0, 700, 1060, COLORS.panelStrong, COLORS.goldMuted);
     const title = {
+      profile: "个人档案",
       techniques: "功法库",
       equipment: "法宝",
       inventory: "行囊与挂机收获",
@@ -684,9 +727,13 @@ export class AppView {
       112,
       54,
       { fill: COLORS.panel, stroke: COLORS.goldMuted, fontSize: 18 },
-      () => this.actions.closeFeature(),
+      () => {
+        if (feature === "profile") this.clearProfileDraft();
+        this.actions.closeFeature();
+      },
     );
 
+    if (feature === "profile") this.drawProfilePanel(overlay, state);
     if (feature === "inventory") this.drawInventoryPanel(overlay, state);
     if (feature === "techniques") this.drawTechniquePanel(overlay, state);
     if (feature === "equipment") this.drawEquipmentPanel(overlay, state);
@@ -705,6 +752,205 @@ export class AppView {
         COLORS.gold,
       );
     }
+  }
+
+  private drawProfilePanel(overlay: Node, state: Readonly<AppState>): void {
+    const data = state.bootstrap!;
+    const player = data.player;
+
+    drawBand(overlay, "AvatarProfile", 0, 302, 620, 220, COLORS.inkGreen);
+    addLabel(
+      overlay,
+      "角色形象",
+      -25,
+      376,
+      430,
+      38,
+      22,
+      COLORS.gold,
+      true,
+      1,
+      HorizontalTextAlignment.LEFT,
+    );
+    drawAvatarPortrait(overlay, player.avatarVariant, -225, 300, 1.8);
+
+    if (player.avatarVariant === "neutral") {
+      addLabel(
+        overlay,
+        "首次选择后将永久确定",
+        70,
+        334,
+        390,
+        34,
+        17,
+        COLORS.textMuted,
+      );
+      createButton(
+        overlay,
+        this.profileAvatarDraft === "male" ? "已选男修" : "男修形象",
+        5,
+        278,
+        150,
+        58,
+        {
+          fill:
+            this.profileAvatarDraft === "male"
+              ? COLORS.inkGreen
+              : COLORS.inkGreenLight,
+          stroke: COLORS.jade,
+          fontSize: 18,
+        },
+        () => this.selectAvatarDraft("male"),
+      );
+      createButton(
+        overlay,
+        this.profileAvatarDraft === "female" ? "已选女修" : "女修形象",
+        190,
+        278,
+        150,
+        58,
+        {
+          fill:
+            this.profileAvatarDraft === "female"
+              ? COLORS.inkGreen
+              : COLORS.inkGreenLight,
+          stroke: COLORS.gold,
+          fontSize: 18,
+        },
+        () => this.selectAvatarDraft("female"),
+      );
+      if (this.profileAvatarDraft) {
+        createButton(
+          overlay,
+          `确认${avatarVariantName(this.profileAvatarDraft)}`,
+          98,
+          216,
+          335,
+          44,
+          { fill: COLORS.red, stroke: COLORS.goldMuted, fontSize: 16 },
+          () => this.actions.chooseAvatar(this.profileAvatarDraft!),
+        );
+      }
+    } else {
+      this.profileAvatarDraft = null;
+      addLabel(
+        overlay,
+        `${avatarVariantName(player.avatarVariant)} · 已确定`,
+        70,
+        318,
+        390,
+        42,
+        23,
+        COLORS.text,
+        true,
+      );
+      addLabel(
+        overlay,
+        "角色形象不可再次修改",
+        70,
+        274,
+        390,
+        32,
+        17,
+        COLORS.textMuted,
+      );
+    }
+
+    drawBand(overlay, "RenameProfile", 0, 18, 620, 324, COLORS.panel);
+    addLabel(
+      overlay,
+      "道号",
+      -245,
+      140,
+      120,
+      38,
+      22,
+      COLORS.gold,
+      true,
+      1,
+      HorizontalTextAlignment.LEFT,
+    );
+    addLabel(
+      overlay,
+      `当前：${player.displayName}`,
+      48,
+      140,
+      450,
+      36,
+      18,
+      COLORS.text,
+      false,
+      1,
+      HorizontalTextAlignment.LEFT,
+    );
+
+    const renameCardQuantity =
+      data.inventory.stacks.find((item) => item.itemConfigId === "rename_card")
+        ?.quantity ?? "0";
+    addLabel(
+      overlay,
+      player.freeRenameAvailable
+        ? "可免费修改 1 次"
+        : `持有改名卡 ${formatLargeNumber(renameCardQuantity)} 张`,
+      -15,
+      92,
+      530,
+      34,
+      17,
+      player.freeRenameAvailable ? COLORS.jade : COLORS.textMuted,
+    );
+
+    if (this.profileNameSource === null) {
+      this.profileNameSource = player.displayName;
+      this.profileNameDraft = player.displayName;
+    } else if (this.profileNameSource !== player.displayName) {
+      this.profileNameSource = player.displayName;
+    }
+    const nameInput = createTextInput(
+      overlay,
+      this.profileNameDraft ?? player.displayName,
+      "输入新的道号",
+      -66,
+      27,
+      420,
+      60,
+      (value) => {
+        this.profileNameDraft = value;
+      },
+      (value) => this.actions.renamePlayer(value),
+    );
+    createButton(
+      overlay,
+      "确认改名",
+      226,
+      27,
+      126,
+      60,
+      { fill: COLORS.inkGreenLight, stroke: COLORS.gold, fontSize: 17 },
+      () => this.actions.renamePlayer(nameInput.string),
+    );
+    addLabel(
+      overlay,
+      "2 至 12 个中文、英文字母或数字",
+      -65,
+      -27,
+      420,
+      30,
+      15,
+      COLORS.textMuted,
+    );
+  }
+
+  private selectAvatarDraft(avatarVariant: ChosenAvatarVariant): void {
+    this.actions.feedback();
+    this.profileAvatarDraft = avatarVariant;
+    if (this.lastState) this.render(this.lastState);
+  }
+
+  private clearProfileDraft(): void {
+    this.profileAvatarDraft = null;
+    this.profileNameDraft = null;
+    this.profileNameSource = null;
   }
 
   private drawInventoryPanel(overlay: Node, state: Readonly<AppState>): void {
@@ -1382,6 +1628,80 @@ function createButton(
   return node;
 }
 
+function createTextInput(
+  parent: Node,
+  value: string,
+  placeholder: string,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  onChange: (value: string) => void,
+  onSubmit: (value: string) => void,
+): EditBox {
+  const node = createUiNode(parent, "ProfileNameInput");
+  node.setPosition(x, y);
+  setSize(node, width, height);
+
+  const background = node.addComponent(Graphics);
+  background.fillColor = COLORS.black;
+  background.roundRect(-width / 2, -height / 2, width, height, 6);
+  background.fill();
+  background.strokeColor = COLORS.goldMuted;
+  background.lineWidth = 2;
+  background.roundRect(-width / 2, -height / 2, width, height, 6);
+  background.stroke();
+
+  const textLabel = addLabel(
+    node,
+    value,
+    0,
+    0,
+    width - 32,
+    height - 12,
+    19,
+    COLORS.text,
+    false,
+    1,
+    HorizontalTextAlignment.LEFT,
+  );
+  const placeholderLabel = addLabel(
+    node,
+    placeholder,
+    0,
+    0,
+    width - 32,
+    height - 12,
+    19,
+    COLORS.textMuted,
+    false,
+    1,
+    HorizontalTextAlignment.LEFT,
+  );
+  const editBox = node.addComponent(EditBox);
+  editBox.textLabel = textLabel;
+  editBox.placeholderLabel = placeholderLabel;
+  editBox.inputMode = EditBox.InputMode.SINGLE_LINE;
+  editBox.inputFlag = EditBox.InputFlag.DEFAULT;
+  editBox.returnType = EditBox.KeyboardReturnType.DONE;
+  editBox.maxLength = 12;
+  editBox.placeholder = placeholder;
+  editBox.string = value;
+  node.on(EditBox.EventType.TEXT_CHANGED, (box: EditBox) => {
+    onChange(box.string);
+  });
+  node.on(
+    EditBox.EventType.EDITING_RETURN,
+    (box: EditBox, finalText?: string) => {
+      const value = finalText ?? box.string;
+      box.string = value;
+      onChange(value);
+      onSubmit(value);
+    },
+  );
+  return editBox;
+}
+
 function drawPagination(
   parent: Node,
   name: string,
@@ -1555,6 +1875,58 @@ function drawBand(
     graphic.roundRect(-width / 2, -height / 2, width, height, 6);
     graphic.stroke();
   }
+}
+
+function drawAvatarPortrait(
+  parent: Node,
+  variant: AvatarVariant,
+  x: number,
+  y: number,
+  scale = 1,
+): void {
+  const portrait = graphicsNode(parent, `Avatar-${variant}`, x, y);
+  portrait.node.setScale(scale, scale, 1);
+  portrait.fillColor = COLORS.black;
+  portrait.circle(0, 0, 31);
+  portrait.fill();
+  portrait.strokeColor = variant === "female" ? COLORS.gold : COLORS.jade;
+  portrait.lineWidth = 2;
+  portrait.circle(0, 0, 31);
+  portrait.stroke();
+
+  portrait.fillColor =
+    variant === "female"
+      ? COLORS.gold
+      : variant === "male"
+        ? COLORS.jade
+        : COLORS.textMuted;
+  portrait.circle(0, 9, 10);
+  portrait.fill();
+  portrait.arc(0, -18, 18, 0, Math.PI, false);
+  portrait.lineTo(-18, -18);
+  portrait.lineTo(18, -18);
+  portrait.close();
+  portrait.fill();
+
+  if (variant === "female") {
+    portrait.strokeColor = COLORS.gold;
+    portrait.lineWidth = 3;
+    portrait.arc(0, 10, 15, Math.PI * 0.05, Math.PI * 0.95, false);
+    portrait.stroke();
+  } else if (variant === "male") {
+    portrait.strokeColor = COLORS.jade;
+    portrait.lineWidth = 3;
+    portrait.moveTo(-11, 19);
+    portrait.lineTo(0, 24);
+    portrait.lineTo(11, 19);
+    portrait.stroke();
+  } else {
+    addLabel(portrait.node, "?", 0, 2, 30, 36, 22, COLORS.black, true);
+  }
+}
+
+function avatarVariantName(variant: ChosenAvatarVariant): string {
+  return variant === "male" ? "男修形象" : "女修形象";
 }
 
 function drawProgress(

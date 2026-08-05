@@ -3,6 +3,8 @@ import type {
   ApiSuccess,
   AuthLoginResult,
   CultivationSettleResult,
+  PlayerAvatarResult,
+  PlayerRenameResult,
   RefreshSessionResult,
 } from "@cultivation-diary/shared";
 import { describe, expect, it } from "vitest";
@@ -36,6 +38,55 @@ describe("Cocos API client", () => {
     expect(mutationRequests[0]?.headers?.Authorization).toBe("Bearer access-1");
     expect(mutationRequests[1]?.headers?.Authorization).toBe("Bearer access-2");
   });
+
+  it("advances profile versions and rejects an older replay response", async () => {
+    const platform = new ScriptedPlatform();
+    const client = new ApiClient(platform, "http://game.test");
+
+    await client.authenticate();
+    const avatar = await client.chooseAvatar("female");
+    const renamed = await client.renamePlayer("云外客");
+
+    expect(avatar.avatarVariant).toBe("female");
+    expect(renamed.displayName).toBe("云外客");
+
+    const avatarRequest = platform.requests.find((request) =>
+      request.url.endsWith("/api/v1/player/avatar"),
+    );
+    expect(avatarRequest).toMatchObject({
+      method: "POST",
+      body: { avatarVariant: "female" },
+      headers: {
+        Authorization: "Bearer access-1",
+        "Content-Type": "application/json",
+        "If-Player-Version": "7",
+      },
+    });
+
+    const renameRequest = platform.requests.find((request) =>
+      request.url.endsWith("/api/v1/player/rename"),
+    );
+    expect(renameRequest).toMatchObject({
+      method: "POST",
+      body: { displayName: "云外客" },
+      headers: {
+        Authorization: "Bearer access-1",
+        "Content-Type": "application/json",
+        "If-Player-Version": "8",
+      },
+    });
+    expect(avatarRequest?.headers?.["Idempotency-Key"]).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+    expect(renameRequest?.headers?.["Idempotency-Key"]).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+
+    await expect(client.chooseAvatar("female")).rejects.toMatchObject({
+      code: "STALE_PLAYER_RESPONSE",
+      retryable: true,
+    });
+  });
 });
 
 class ScriptedPlatform implements PlatformAdapter {
@@ -57,6 +108,29 @@ class ScriptedPlatform implements PlatformAdapter {
       return response<T>(200, success<RefreshSessionResult>("7", {
         tokens: tokens("2"),
         bootstrap: bootstrapFixture(),
+      }));
+    }
+    if (request.url.endsWith("/api/v1/player/avatar")) {
+      const bootstrap = bootstrapFixture();
+      bootstrap.player.avatarVariant = "female";
+      return response<T>(200, success<PlayerAvatarResult>("8", {
+        operationId: "00000000-0000-4000-8000-000000000002",
+        avatarVariant: "female",
+        bootstrap,
+      }));
+    }
+    if (request.url.endsWith("/api/v1/player/rename")) {
+      const bootstrap = bootstrapFixture();
+      bootstrap.player.avatarVariant = "female";
+      bootstrap.player.displayName = "云外客";
+      bootstrap.player.freeRenameAvailable = false;
+      return response<T>(200, success<PlayerRenameResult>("9", {
+        operationId: "00000000-0000-4000-8000-000000000003",
+        previousDisplayName: "青岚子",
+        displayName: "云外客",
+        usedFreeRename: true,
+        renameCardsConsumed: 0,
+        bootstrap,
       }));
     }
     if (request.url.endsWith("/api/v1/cultivation/settle")) {

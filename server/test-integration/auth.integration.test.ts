@@ -195,6 +195,361 @@ describe("authentication and bootstrap PostgreSQL integration", () => {
     expect(newBootstrap.statusCode).toBe(200);
   });
 
+  it("allows exactly one idempotent avatar selection with player version checks", async () => {
+    const loggedIn = await login(app, "avatar-player", randomUUID());
+    const loginData = loggedIn.json().data;
+    const accessToken = loginData.tokens.accessToken as string;
+    const playerId = loginData.bootstrap.player.id as string;
+    const idempotencyKey = randomUUID();
+
+    const neutral = await inventoryMutation(
+      app,
+      "/api/v1/player/avatar",
+      accessToken,
+      randomUUID(),
+      { avatarVariant: "neutral" },
+      "1",
+    );
+    const selected = await inventoryMutation(
+      app,
+      "/api/v1/player/avatar",
+      accessToken,
+      idempotencyKey,
+      { avatarVariant: "female" },
+      "1",
+    );
+    const conflictingReplay = await inventoryMutation(
+      app,
+      "/api/v1/player/avatar",
+      accessToken,
+      idempotencyKey,
+      { avatarVariant: "male" },
+      "1",
+    );
+    const replay = await inventoryMutation(
+      app,
+      "/api/v1/player/avatar",
+      accessToken,
+      idempotencyKey,
+      { avatarVariant: "female" },
+      "1",
+    );
+    const stale = await inventoryMutation(
+      app,
+      "/api/v1/player/avatar",
+      accessToken,
+      randomUUID(),
+      { avatarVariant: "male" },
+      "1",
+    );
+    const secondSelection = await inventoryMutation(
+      app,
+      "/api/v1/player/avatar",
+      accessToken,
+      randomUUID(),
+      { avatarVariant: "male" },
+      "2",
+    );
+
+    expect(neutral.statusCode).toBe(400);
+    expect(neutral.json()).toMatchObject({
+      error: { code: "INVALID_REQUEST" },
+    });
+    expect(selected.statusCode).toBe(200);
+    expect(selected.json()).toMatchObject({
+      playerVersion: "2",
+      data: {
+        avatarVariant: "female",
+        bootstrap: { player: { avatarVariant: "female" } },
+      },
+    });
+    expect(replay.statusCode).toBe(200);
+    expect(replay.json().playerVersion).toBe(selected.json().playerVersion);
+    expect(replay.json().data).toEqual(selected.json().data);
+    expect(conflictingReplay.statusCode).toBe(409);
+    expect(conflictingReplay.json()).toMatchObject({
+      error: { code: "IDEMPOTENCY_KEY_REUSED" },
+    });
+    expect(stale.statusCode).toBe(409);
+    expect(stale.json()).toMatchObject({
+      error: {
+        code: "PLAYER_VERSION_CONFLICT",
+        details: { currentPlayerVersion: "2" },
+      },
+    });
+    expect(secondSelection.statusCode).toBe(409);
+    expect(secondSelection.json()).toMatchObject({
+      error: { code: "AVATAR_ALREADY_SELECTED" },
+    });
+
+    const persisted = await infrastructure.pool.query<{
+      avatarVariant: string;
+      version: string;
+      idempotencyCount: string;
+    }>(
+      `select
+        p.avatar_variant as "avatarVariant",
+        pp.version::text as version,
+        (select count(*) from idempotency_records where scope = 'player.avatar')::text as "idempotencyCount"
+       from players p
+       join player_progress pp on pp.player_id = p.id
+       where p.id = $1`,
+      [playerId],
+    );
+    expect(persisted.rows[0]).toEqual({
+      avatarVariant: "female",
+      version: "2",
+      idempotencyCount: "1",
+    });
+  });
+
+  it("renames for free once, then consumes one card and preserves old names", async () => {
+    const loggedIn = await login(app, "rename-player", randomUUID());
+    const loginData = loggedIn.json().data;
+    const accessToken = loginData.tokens.accessToken as string;
+    const playerId = loginData.bootstrap.player.id as string;
+    const originalName = loginData.bootstrap.player.displayName as string;
+    const freeRenameKey = randomUUID();
+
+    const invalidName = await inventoryMutation(
+      app,
+      "/api/v1/player/rename",
+      accessToken,
+      randomUUID(),
+      { displayName: " GM道友" },
+      "1",
+    );
+    const freeRename = await inventoryMutation(
+      app,
+      "/api/v1/player/rename",
+      accessToken,
+      freeRenameKey,
+      { displayName: "云外客" },
+      "1",
+    );
+    const freeReplay = await inventoryMutation(
+      app,
+      "/api/v1/player/rename",
+      accessToken,
+      freeRenameKey,
+      { displayName: "云外客" },
+      "1",
+    );
+    const missingCard = await inventoryMutation(
+      app,
+      "/api/v1/player/rename",
+      accessToken,
+      randomUUID(),
+      { displayName: "星海真人" },
+      "2",
+    );
+
+    expect(invalidName.statusCode).toBe(400);
+    expect(invalidName.json()).toMatchObject({
+      error: { code: "NAME_INVALID" },
+    });
+    expect(freeRename.statusCode).toBe(200);
+    expect(freeRename.json()).toMatchObject({
+      playerVersion: "2",
+      data: {
+        previousDisplayName: originalName,
+        displayName: "云外客",
+        usedFreeRename: true,
+        renameCardsConsumed: 0,
+        bootstrap: {
+          player: { displayName: "云外客", freeRenameAvailable: false },
+        },
+      },
+    });
+    expect(freeReplay.statusCode).toBe(200);
+    expect(freeReplay.json().playerVersion).toBe(
+      freeRename.json().playerVersion,
+    );
+    expect(freeReplay.json().data).toEqual(freeRename.json().data);
+    expect(missingCard.statusCode).toBe(409);
+    expect(missingCard.json()).toMatchObject({
+      error: { code: "INSUFFICIENT_ITEM" },
+    });
+
+    await infrastructure.pool.query(
+      `insert into inventory_stacks (player_id, item_config_id, quantity)
+       values ($1, 'rename_card', '2')`,
+      [playerId],
+    );
+    const cardRenameKey = randomUUID();
+    const cardRename = await inventoryMutation(
+      app,
+      "/api/v1/player/rename",
+      accessToken,
+      cardRenameKey,
+      { displayName: "星海真人" },
+      "2",
+    );
+    const cardReplay = await inventoryMutation(
+      app,
+      "/api/v1/player/rename",
+      accessToken,
+      cardRenameKey,
+      { displayName: "星海真人" },
+      "2",
+    );
+    const lateFreeReplay = await inventoryMutation(
+      app,
+      "/api/v1/player/rename",
+      accessToken,
+      freeRenameKey,
+      { displayName: "云外客" },
+      "1",
+    );
+    const reclaimOriginal = await inventoryMutation(
+      app,
+      "/api/v1/player/rename",
+      accessToken,
+      randomUUID(),
+      { displayName: originalName },
+      "3",
+    );
+
+    expect(cardRename.statusCode).toBe(200);
+    expect(cardRename.json()).toMatchObject({
+      playerVersion: "3",
+      data: {
+        previousDisplayName: "云外客",
+        displayName: "星海真人",
+        usedFreeRename: false,
+        renameCardsConsumed: 1,
+        bootstrap: {
+          player: { displayName: "星海真人", freeRenameAvailable: false },
+          inventory: {
+            stacks: [{ itemConfigId: "rename_card", quantity: "1" }],
+          },
+        },
+      },
+    });
+    expect(cardReplay.statusCode).toBe(200);
+    expect(cardReplay.json().playerVersion).toBe(
+      cardRename.json().playerVersion,
+    );
+    expect(cardReplay.json().data).toEqual(cardRename.json().data);
+    expect(lateFreeReplay.statusCode).toBe(200);
+    expect(lateFreeReplay.json().playerVersion).toBe(
+      freeRename.json().playerVersion,
+    );
+    expect(lateFreeReplay.json().data).toEqual(freeRename.json().data);
+    expect(reclaimOriginal.statusCode).toBe(409);
+    expect(reclaimOriginal.json()).toMatchObject({
+      error: { code: "NAME_ALREADY_TAKEN" },
+    });
+
+    const persisted = await infrastructure.pool.query<{
+      displayName: string;
+      freeRenameAvailable: boolean;
+      version: string;
+      cardQuantity: string;
+      reservationCount: string;
+      ledgerCount: string;
+      minimumReleaseAt: Date;
+    }>(
+      `select
+        p.display_name as "displayName",
+        p.free_rename_available as "freeRenameAvailable",
+        pp.version::text as version,
+        coalesce((select quantity::text from inventory_stacks where player_id = p.id and item_config_id = 'rename_card'), '0') as "cardQuantity",
+        (select count(*) from reserved_player_names where previous_player_id = p.id)::text as "reservationCount",
+        (select count(*) from asset_ledger where player_id = p.id and reason = 'player_rename')::text as "ledgerCount",
+        (select min(release_at) from reserved_player_names where previous_player_id = p.id) as "minimumReleaseAt"
+       from players p
+       join player_progress pp on pp.player_id = p.id
+       where p.id = $1`,
+      [playerId],
+    );
+    expect(persisted.rows[0]).toMatchObject({
+      displayName: "星海真人",
+      freeRenameAvailable: false,
+      version: "3",
+      cardQuantity: "1",
+      reservationCount: "2",
+      ledgerCount: "1",
+    });
+    expect(persisted.rows[0]?.minimumReleaseAt.getTime()).toBeGreaterThan(
+      Date.now() + 6 * 24 * 60 * 60 * 1_000,
+    );
+
+    const ledger = await infrastructure.pool.query<{
+      delta: string;
+      balanceAfter: string;
+      referenceId: string;
+    }>(
+      `select delta::text as delta,
+        balance_after::text as "balanceAfter",
+        reference_id as "referenceId"
+       from asset_ledger
+       where player_id = $1 and reason = 'player_rename'`,
+      [playerId],
+    );
+    expect(ledger.rows).toEqual([
+      {
+        delta: "-1",
+        balanceAfter: "1",
+        referenceId: cardRename.json().data.operationId,
+      },
+    ]);
+  });
+
+  it("allows only one player to claim a name under concurrent renames", async () => {
+    const [firstLogin, secondLogin] = await Promise.all([
+      login(app, "rename-race-a", randomUUID()),
+      login(app, "rename-race-b", randomUUID()),
+    ]);
+    const firstData = firstLogin.json().data;
+    const secondData = secondLogin.json().data;
+    const playerIds = [
+      firstData.bootstrap.player.id as string,
+      secondData.bootstrap.player.id as string,
+    ];
+
+    const responses = await Promise.all([
+      inventoryMutation(
+        app,
+        "/api/v1/player/rename",
+        firstData.tokens.accessToken,
+        randomUUID(),
+        { displayName: "并发道友" },
+        "1",
+      ),
+      inventoryMutation(
+        app,
+        "/api/v1/player/rename",
+        secondData.tokens.accessToken,
+        randomUUID(),
+        { displayName: "并发道友" },
+        "1",
+      ),
+    ]);
+    const statuses = responses.map((response) => response.statusCode).sort();
+
+    expect(statuses).toEqual([200, 409]);
+    expect(
+      responses.find((response) => response.statusCode === 409)?.json(),
+    ).toMatchObject({ error: { code: "NAME_ALREADY_TAKEN" } });
+
+    const persisted = await infrastructure.pool.query<{
+      ownerCount: string;
+      consumedFreeRenameCount: string;
+    }>(
+      `select
+       count(*) filter (where display_name_key = '并发道友')::text as "ownerCount",
+        count(*) filter (where free_rename_available = false)::text as "consumedFreeRenameCount"
+       from players
+       where id = any($1::uuid[])`,
+      [playerIds],
+    );
+    expect(persisted.rows[0]).toEqual({
+      ownerCount: "1",
+      consumedFreeRenameCount: "1",
+    });
+  });
+
   it("settles through Lv.8, stops at Lv.10, and breaks through to Lv.11 exactly once", async () => {
     const loggedIn = await login(app, "cultivation-player", randomUUID());
     const loginData = loggedIn.json().data;

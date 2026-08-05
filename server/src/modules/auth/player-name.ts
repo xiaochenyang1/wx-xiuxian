@@ -22,6 +22,9 @@ const RESERVED_FRAGMENTS = ["系统", "管理员", "官方", "客服", "gm", "�
 const ALLOWED_NAME_CHARACTERS = /^[\p{Script=Han}A-Za-z0-9]+$/u;
 const segmenter = new Intl.Segmenter("zh-CN", { granularity: "grapheme" });
 
+// Serializes every operation that can claim or release a globally unique player name.
+export const PLAYER_NAME_ADVISORY_LOCK_ID = 2_026_080_501;
+
 export interface ValidatedPlayerName {
   displayName: string;
   displayNameKey: string;

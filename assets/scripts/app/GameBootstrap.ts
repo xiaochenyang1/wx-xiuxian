@@ -1,5 +1,7 @@
 import { _decorator, Component, Node, ResolutionPolicy, view } from "cc";
 import type {
+  BootstrapSnapshot,
+  ChosenAvatarVariant,
   EquippedEquipmentSlot,
   LoadoutMutationResult,
 } from "@cultivation-diary/shared";
@@ -20,6 +22,7 @@ export class GameBootstrap extends Component {
   private mutationInFlight = false;
   private offlineDismissPending = false;
   private modalInputLockedUntil = 0;
+  private pendingProfileBootstrap: BootstrapSnapshot | null = null;
 
   onLoad(): void {
     view.setDesignResolutionSize(750, 1334, ResolutionPolicy.SHOW_ALL);
@@ -31,8 +34,10 @@ export class GameBootstrap extends Component {
       retry: () => void this.startGame(),
       selectTab: (tab) => this.store.selectTab(tab),
       openFeature: (feature) => this.store.openFeature(feature),
-      closeFeature: () => this.store.closeFeature(),
+      closeFeature: () => this.closeFeature(),
       breakthrough: () => void this.breakthrough(),
+      chooseAvatar: (avatarVariant) => void this.chooseAvatar(avatarVariant),
+      renamePlayer: (displayName) => void this.renamePlayer(displayName),
       expandInventory: () => void this.expandInventory(),
       useInventoryItem: (itemConfigId) =>
         void this.useInventoryItem(itemConfigId),
@@ -76,14 +81,24 @@ export class GameBootstrap extends Component {
   }
 
   private async settleGame(): Promise<void> {
-    if (this.mutationInFlight || this.store.snapshot.phase !== "ready") return;
+    if (
+      this.mutationInFlight ||
+      this.store.snapshot.phase !== "ready" ||
+      this.isProfileOpen()
+    ) {
+      return;
+    }
 
     this.mutationInFlight = true;
     try {
       const result = await this.apiClient.settleCultivation();
-      this.store.setReady(result.bootstrap);
+      if (this.isProfileOpen()) {
+        this.pendingProfileBootstrap = result.bootstrap;
+      } else {
+        this.store.setReady(result.bootstrap);
+      }
     } catch (error) {
-      if (await this.recoverPlayerVersionConflict(error)) return;
+      if (await this.recoverPlayerVersionConflict(error, true)) return;
       // Keep the last authoritative snapshot visible; the next scheduled sync retries.
     } finally {
       this.mutationInFlight = false;
@@ -104,6 +119,17 @@ export class GameBootstrap extends Component {
       this.store.dismissOfflineSettlement();
       this.offlineDismissPending = false;
     }, 0.1);
+  }
+
+  private closeFeature(): void {
+    const pendingBootstrap = this.pendingProfileBootstrap;
+    this.pendingProfileBootstrap = null;
+    this.store.closeFeature();
+    if (pendingBootstrap) this.store.setReady(pendingBootstrap);
+  }
+
+  private isProfileOpen(): boolean {
+    return this.store.snapshot.activeFeature === "profile";
   }
 
   private async breakthrough(): Promise<void> {
@@ -149,6 +175,82 @@ export class GameBootstrap extends Component {
     } catch (error) {
       if (!(await this.recoverPlayerVersionConflict(error))) {
         this.store.setFeatureMessage(errorMessage(error, "行囊扩展失败"));
+      }
+    } finally {
+      this.mutationInFlight = false;
+    }
+  }
+
+  private async chooseAvatar(
+    avatarVariant: ChosenAvatarVariant,
+  ): Promise<void> {
+    if (!this.canStartFeatureMutation()) return;
+    if (this.pendingProfileBootstrap) {
+      const pendingBootstrap = this.pendingProfileBootstrap;
+      this.applyPendingProfileBootstrap();
+      this.store.setFeatureMessage(
+        pendingBootstrap.player.avatarVariant === "neutral"
+          ? "档案状态已同步，请重新确认"
+          : "角色形象已由其他操作确定，档案状态已同步",
+      );
+      return;
+    }
+    this.mutationInFlight = true;
+    this.store.setFeatureMessage("正在确认角色形象……");
+    try {
+      const result = await this.apiClient.chooseAvatar(avatarVariant);
+      this.pendingProfileBootstrap = null;
+      this.store.setReady(result.bootstrap);
+      this.store.setFeatureMessage("角色形象已确定，此后不可再次修改");
+    } catch (error) {
+      if (await this.recoverPlayerVersionConflict(error)) {
+        this.store.setFeatureMessage(
+          this.store.snapshot.bootstrap?.player.avatarVariant === "neutral"
+            ? "档案状态已同步，请重新确认"
+            : "角色形象已由其他操作确定，档案状态已同步",
+        );
+      } else {
+        this.store.setFeatureMessage(errorMessage(error, "角色形象确认失败"));
+      }
+    } finally {
+      this.mutationInFlight = false;
+    }
+  }
+
+  private async renamePlayer(displayName: string): Promise<void> {
+    if (!this.canStartFeatureMutation()) return;
+    if (this.pendingProfileBootstrap) {
+      this.appView?.preserveProfileNameDraft(displayName);
+      this.applyPendingProfileBootstrap();
+      this.store.setFeatureMessage(
+        "档案状态已同步，原输入已保留，请核对后重新提交",
+      );
+      return;
+    }
+    if (!displayName.trim()) {
+      this.store.setFeatureMessage("请输入新的道号");
+      return;
+    }
+
+    this.mutationInFlight = true;
+    this.store.setFeatureMessage("正在呈递新道号……");
+    try {
+      const result = await this.apiClient.renamePlayer(displayName);
+      this.pendingProfileBootstrap = null;
+      this.appView?.acceptProfileName(result.displayName);
+      this.store.setReady(result.bootstrap);
+      this.store.setFeatureMessage(
+        result.usedFreeRename
+          ? `道号已改为「${result.displayName}」，本次使用免费机会`
+          : `道号已改为「${result.displayName}」，消耗改名卡 1 张`,
+      );
+    } catch (error) {
+      if (await this.recoverPlayerVersionConflict(error)) {
+        this.store.setFeatureMessage(
+          "档案状态已同步，原输入已保留，请核对后重新提交",
+        );
+      } else {
+        this.store.setFeatureMessage(errorMessage(error, "修改道号失败"));
       }
     } finally {
       this.mutationInFlight = false;
@@ -279,13 +381,27 @@ export class GameBootstrap extends Component {
     );
   }
 
-  private async recoverPlayerVersionConflict(error: unknown): Promise<boolean> {
+  private applyPendingProfileBootstrap(): void {
+    const pendingBootstrap = this.pendingProfileBootstrap;
+    this.pendingProfileBootstrap = null;
+    if (pendingBootstrap) this.store.setReady(pendingBootstrap);
+  }
+
+  private async recoverPlayerVersionConflict(
+    error: unknown,
+    deferWhileProfileOpen = false,
+  ): Promise<boolean> {
     if (!(error instanceof ClientApiError) || error.code !== "PLAYER_VERSION_CONFLICT") {
       return false;
     }
 
     try {
       const bootstrap = await this.apiClient.authenticate();
+      if (deferWhileProfileOpen && this.isProfileOpen()) {
+        this.pendingProfileBootstrap = bootstrap;
+        return true;
+      }
+      this.pendingProfileBootstrap = null;
       this.store.setReady(bootstrap);
       return true;
     } catch {

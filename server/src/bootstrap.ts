@@ -22,12 +22,18 @@ import {
   LoadoutService,
   type LoadoutServicePort,
 } from "./modules/loadout/loadout-service";
+import { PlayerProfileRepository } from "./modules/player-profile/player-profile-repository";
+import {
+  PlayerProfileService,
+  type PlayerProfileServicePort,
+} from "./modules/player-profile/player-profile-service";
 
 export interface ServerServices {
   authService: AuthServicePort;
   cultivationService: CultivationServicePort;
   inventoryService?: InventoryServicePort;
   loadoutService?: LoadoutServicePort;
+  playerProfileService?: PlayerProfileServicePort;
 }
 
 export interface CreateServerServicesOptions {
@@ -49,6 +55,7 @@ export function createServerServices(
   );
   const inventoryRepository = new InventoryRepository(database);
   const loadoutRepository = new LoadoutRepository(database);
+  const playerProfileRepository = new PlayerProfileRepository(database);
   const wechatCodeExchanger = new HttpWechatCodeExchanger(config);
   const authService = new AuthService(
     config,
@@ -69,5 +76,6 @@ export function createServerServices(
       bootstrapService,
     ),
     loadoutService: new LoadoutService(loadoutRepository, bootstrapService),
+    playerProfileService: new PlayerProfileService(playerProfileRepository),
   };
 }

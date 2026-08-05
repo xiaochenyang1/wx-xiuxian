@@ -33,13 +33,18 @@ import {
 } from "../../db/schema";
 import type { GameDatabase } from "../../infrastructure";
 
+type BootstrapDatabase = Pick<GameDatabase, "select">;
+
 export interface BootstrapResult {
   playerVersion: string;
   snapshot: BootstrapSnapshot;
 }
 
 export class BootstrapService {
-  constructor(private readonly database: GameDatabase) {}
+  constructor(
+    private readonly database: BootstrapDatabase,
+    private readonly serializeCollectionQueries = false,
+  ) {}
 
   async getSnapshot(accountId: string, playerId: string): Promise<BootstrapResult> {
     const [core] = await this.database
@@ -84,82 +89,91 @@ export class BootstrapService {
       throw new Error(`Player realm does not match level for player ${core.playerId}`);
     }
 
-    const [stacks, techniques, equipment, harvestEntries, tasks] = await Promise.all([
-      this.database
-        .select({
-          itemConfigId: inventoryStacks.itemConfigId,
-          quantity: inventoryStacks.quantity,
-        })
-        .from(inventoryStacks)
-        .where(eq(inventoryStacks.playerId, playerId))
-        .orderBy(inventoryStacks.itemConfigId),
-      this.database
-        .select({
-          techniqueConfigId: techniqueProgress.techniqueConfigId,
-          star: techniqueProgress.star,
-          duplicateCount: techniqueProgress.duplicateCount,
-          equippedSlot: techniqueProgress.equippedSlot,
-          configVersion: techniqueProgress.configVersion,
-        })
-        .from(techniqueProgress)
-        .where(eq(techniqueProgress.playerId, playerId))
-        .orderBy(
-          techniqueProgress.acquiredAt,
-          techniqueProgress.techniqueConfigId,
-        ),
-      this.database
-        .select({
-          id: equipmentInstances.id,
-          equipmentConfigId: equipmentInstances.equipmentConfigId,
-          quality: equipmentInstances.quality,
-          enhanceLevel: equipmentInstances.enhanceLevel,
-          rolledAffixes: equipmentInstances.rolledAffixes,
-          location: equipmentInstances.location,
-          equippedSlot: equipmentInstances.equippedSlot,
-          isLocked: equipmentInstances.isLocked,
-          configVersion: equipmentInstances.configVersion,
-        })
-        .from(equipmentInstances)
-        .where(
-          and(
-            eq(equipmentInstances.playerId, playerId),
-            inArray(equipmentInstances.location, ["bag", "equipped"]),
-          ),
-        )
-        .orderBy(equipmentInstances.acquiredAt, equipmentInstances.id),
-      this.database
-        .select({
-          id: harvestChestEntries.id,
-          entryType: harvestChestEntries.entryType,
-          equipmentInstanceId: harvestChestEntries.equipmentInstanceId,
-          techniqueConfigId: harvestChestEntries.techniqueConfigId,
-          equipmentConfigId: equipmentInstances.equipmentConfigId,
-          quality: harvestChestEntries.quality,
-          valueScore: harvestChestEntries.valueScore,
-          acquiredAt: harvestChestEntries.acquiredAt,
-        })
-        .from(harvestChestEntries)
-        .leftJoin(
-          equipmentInstances,
-          eq(equipmentInstances.id, harvestChestEntries.equipmentInstanceId),
-        )
-        .where(
-          and(
-            eq(harvestChestEntries.playerId, playerId),
-            eq(harvestChestEntries.status, "pending"),
-          ),
-        )
-        .orderBy(harvestChestEntries.acquiredAt, harvestChestEntries.id),
-      this.database
-        .select({
-          taskConfigId: newcomerTaskProgress.taskConfigId,
-          progress: newcomerTaskProgress.progress,
-          completedAt: newcomerTaskProgress.completedAt,
-          claimedAt: newcomerTaskProgress.claimedAt,
-        })
-        .from(newcomerTaskProgress)
-        .where(eq(newcomerTaskProgress.playerId, playerId)),
-    ]);
+    const [stacks, techniques, equipment, harvestEntries, tasks] =
+      await executeQueries(
+        this.serializeCollectionQueries,
+        [
+          () =>
+            this.database
+              .select({
+                itemConfigId: inventoryStacks.itemConfigId,
+                quantity: inventoryStacks.quantity,
+              })
+              .from(inventoryStacks)
+              .where(eq(inventoryStacks.playerId, playerId))
+              .orderBy(inventoryStacks.itemConfigId),
+          () =>
+            this.database
+              .select({
+                techniqueConfigId: techniqueProgress.techniqueConfigId,
+                star: techniqueProgress.star,
+                duplicateCount: techniqueProgress.duplicateCount,
+                equippedSlot: techniqueProgress.equippedSlot,
+                configVersion: techniqueProgress.configVersion,
+              })
+              .from(techniqueProgress)
+              .where(eq(techniqueProgress.playerId, playerId))
+              .orderBy(
+                techniqueProgress.acquiredAt,
+                techniqueProgress.techniqueConfigId,
+              ),
+          () =>
+            this.database
+              .select({
+                id: equipmentInstances.id,
+                equipmentConfigId: equipmentInstances.equipmentConfigId,
+                quality: equipmentInstances.quality,
+                enhanceLevel: equipmentInstances.enhanceLevel,
+                rolledAffixes: equipmentInstances.rolledAffixes,
+                location: equipmentInstances.location,
+                equippedSlot: equipmentInstances.equippedSlot,
+                isLocked: equipmentInstances.isLocked,
+                configVersion: equipmentInstances.configVersion,
+              })
+              .from(equipmentInstances)
+              .where(
+                and(
+                  eq(equipmentInstances.playerId, playerId),
+                  inArray(equipmentInstances.location, ["bag", "equipped"]),
+                ),
+              )
+              .orderBy(equipmentInstances.acquiredAt, equipmentInstances.id),
+          () =>
+            this.database
+              .select({
+                id: harvestChestEntries.id,
+                entryType: harvestChestEntries.entryType,
+                equipmentInstanceId: harvestChestEntries.equipmentInstanceId,
+                techniqueConfigId: harvestChestEntries.techniqueConfigId,
+                equipmentConfigId: equipmentInstances.equipmentConfigId,
+                quality: harvestChestEntries.quality,
+                valueScore: harvestChestEntries.valueScore,
+                acquiredAt: harvestChestEntries.acquiredAt,
+              })
+              .from(harvestChestEntries)
+              .leftJoin(
+                equipmentInstances,
+                eq(equipmentInstances.id, harvestChestEntries.equipmentInstanceId),
+              )
+              .where(
+                and(
+                  eq(harvestChestEntries.playerId, playerId),
+                  eq(harvestChestEntries.status, "pending"),
+                ),
+              )
+              .orderBy(harvestChestEntries.acquiredAt, harvestChestEntries.id),
+          () =>
+            this.database
+              .select({
+                taskConfigId: newcomerTaskProgress.taskConfigId,
+                progress: newcomerTaskProgress.progress,
+                completedAt: newcomerTaskProgress.completedAt,
+                claimedAt: newcomerTaskProgress.claimedAt,
+              })
+              .from(newcomerTaskProgress)
+              .where(eq(newcomerTaskProgress.playerId, playerId)),
+        ] as const,
+      );
 
     const loadoutBonuses = calculateLoadoutBonuses({
       techniques: techniques
@@ -361,4 +375,17 @@ function safeAssetName(entryType: string, assetConfigId: string): string {
   return entryType === "equipment"
     ? safeEquipmentName(assetConfigId)
     : safeTechniqueConfig(assetConfigId).displayName;
+}
+
+async function executeQueries<const T extends readonly unknown[]>(
+  serial: boolean,
+  loaders: { [K in keyof T]: () => PromiseLike<T[K]> },
+): Promise<T> {
+  if (!serial) {
+    return (await Promise.all(loaders.map((load) => load()))) as unknown as T;
+  }
+
+  const results: unknown[] = [];
+  for (const load of loaders) results.push(await load());
+  return results as unknown as T;
 }
