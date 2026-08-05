@@ -1,4 +1,5 @@
 import type { BootstrapSnapshot } from "@cultivation-diary/shared";
+import { hasSameBootstrapIdentity } from "../core/ClientTypes";
 import type { AppState, FeaturePanel, MainTab } from "../core/ClientTypes";
 
 type StateListener = (state: Readonly<AppState>) => void;
@@ -37,21 +38,61 @@ export class AppStore {
     });
   }
 
+  setCachedPreview(
+    bootstrap: BootstrapSnapshot,
+    lastSuccessfulSyncAt: string,
+  ): void {
+    this.update({
+      phase: "ready",
+      syncStatus: "reconnecting",
+      lastSuccessfulSyncAt,
+      bootstrap,
+      errorMessage: null,
+      selectedTab: "cultivation",
+      activeFeature: null,
+      featureMessage: null,
+    });
+  }
+
   setReady(bootstrap: BootstrapSnapshot, lastSuccessfulSyncAt?: string): void {
+    const sameIdentity = hasSameBootstrapIdentity(this.state.bootstrap, bootstrap);
     this.update({
       phase: "ready",
       syncStatus: "online",
-      ...(lastSuccessfulSyncAt === undefined ? {} : { lastSuccessfulSyncAt }),
-      bootstrap: this.mergePendingOfflineSettlement(bootstrap),
+      ...(lastSuccessfulSyncAt === undefined
+        ? sameIdentity
+          ? {}
+          : { lastSuccessfulSyncAt: null }
+        : { lastSuccessfulSyncAt }),
+      bootstrap: sameIdentity
+        ? this.mergePendingOfflineSettlement(bootstrap)
+        : bootstrap,
       errorMessage: null,
+      ...(sameIdentity
+        ? {}
+        : {
+            selectedTab: "cultivation" as const,
+            activeFeature: null,
+            featureMessage: null,
+          }),
     });
   }
 
   replaceSnapshot(bootstrap: BootstrapSnapshot): void {
+    const sameIdentity = hasSameBootstrapIdentity(this.state.bootstrap, bootstrap);
     this.update({
       phase: "ready",
-      bootstrap: this.mergePendingOfflineSettlement(bootstrap),
+      bootstrap: sameIdentity
+        ? this.mergePendingOfflineSettlement(bootstrap)
+        : bootstrap,
       errorMessage: null,
+      ...(sameIdentity
+        ? {}
+        : {
+            selectedTab: "cultivation" as const,
+            activeFeature: null,
+            featureMessage: null,
+          }),
     });
   }
 
@@ -96,6 +137,19 @@ export class AppStore {
 
   setError(message: string): void {
     this.update({ phase: "error", errorMessage: message });
+  }
+
+  setAuthenticationError(message: string): void {
+    this.update({
+      phase: "error",
+      syncStatus: "reconnecting",
+      lastSuccessfulSyncAt: null,
+      bootstrap: null,
+      errorMessage: message,
+      selectedTab: "cultivation",
+      activeFeature: null,
+      featureMessage: null,
+    });
   }
 
   selectTab(tab: MainTab): void {

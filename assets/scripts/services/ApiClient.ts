@@ -25,6 +25,7 @@ import type {
   LoginIntent,
   StoredSession,
 } from "../core/ClientTypes";
+import { isStoredSession } from "../core/ClientTypes";
 import type { PlatformAdapter } from "../platform/PlatformAdapter";
 
 export class ClientApiError extends Error {
@@ -40,6 +41,12 @@ export class ClientApiError extends Error {
 
 export function isClientTransportError(error: unknown): error is ClientApiError {
   return error instanceof ClientApiError && error.code === "NETWORK_UNAVAILABLE";
+}
+
+export function isTerminalAuthenticationError(
+  error: unknown,
+): error is ClientApiError {
+  return error instanceof ClientApiError && error.code === "ACCOUNT_BANNED";
 }
 
 export function requiresAuthoritativeRecovery(error: unknown): error is ClientApiError {
@@ -65,6 +72,7 @@ export function classifyAuthoritativeFailure(
 export class ApiClient {
   private playerVersion: string | null = null;
   private lastSuccessfulSyncAt: string | null = null;
+  private rejectedStoredSession = false;
 
   constructor(
     private readonly platform: PlatformAdapter,
@@ -72,23 +80,36 @@ export class ApiClient {
   ) {}
 
   async authenticate(): Promise<BootstrapSnapshot> {
-    const stored = this.platform.load<StoredSession>(CLIENT_CONFIG.sessionStorageKey);
+    // Authentication establishes a fresh authoritative baseline and may switch players.
+    this.resetAuthoritativeMetadata();
+    const stored = this.loadStoredSession();
     if (stored) {
       try {
-        return await this.bootstrap(stored.accessToken);
+        const bootstrap = await this.bootstrap(stored.accessToken);
+        this.persistSession(stored, bootstrap);
+        return bootstrap;
       } catch (error) {
+        if (isTerminalAuthenticationError(error)) {
+          this.rejectStoredSession();
+          throw error;
+        }
         if (!(error instanceof ClientApiError) || error.code !== "UNAUTHENTICATED") {
           throw error;
         }
 
         try {
           const refreshed = await this.refresh(stored.refreshToken);
-          this.persistSession(refreshed.tokens);
+          this.persistSession(refreshed.tokens, refreshed.bootstrap);
           return refreshed.bootstrap;
         } catch (refreshError) {
+          if (isTerminalAuthenticationError(refreshError)) {
+            this.rejectStoredSession();
+            throw refreshError;
+          }
           if (!isRejectedSessionCredential(refreshError)) {
             throw refreshError;
           }
+          this.rejectStoredSession();
           // An invalid refresh credential falls through to a new platform login.
         }
       }
@@ -96,8 +117,14 @@ export class ApiClient {
 
     const intent = await this.getLoginIntent();
     const login = await this.login(intent);
-    this.persistSession(login.tokens);
+    this.persistSession(login.tokens, login.bootstrap);
     return login.bootstrap;
+  }
+
+  consumeRejectedStoredSession(): boolean {
+    const rejected = this.rejectedStoredSession;
+    this.rejectedStoredSession = false;
+    return rejected;
   }
 
   async bootstrap(accessToken: string): Promise<BootstrapSnapshot> {
@@ -245,7 +272,7 @@ export class ApiClient {
   }
 
   private async authorizedMutation<T>(path: string, body: unknown = {}): Promise<T> {
-    const stored = this.platform.load<StoredSession>(CLIENT_CONFIG.sessionStorageKey);
+    const stored = this.loadStoredSession();
     if (!stored) {
       throw new ClientApiError("UNAUTHENTICATED", "请先登录", false);
     }
@@ -271,18 +298,60 @@ export class ApiClient {
     try {
       return await request(stored.accessToken);
     } catch (error) {
+      if (isTerminalAuthenticationError(error)) {
+        this.rejectStoredSession();
+        throw error;
+      }
       if (!(error instanceof ClientApiError) || error.code !== "UNAUTHENTICATED") {
         throw error;
       }
 
-      const refreshed = await this.refresh(stored.refreshToken);
-      this.persistSession(refreshed.tokens);
-      return request(refreshed.tokens.accessToken);
+      try {
+        const refreshed = await this.refresh(stored.refreshToken);
+        this.persistSession(refreshed.tokens, refreshed.bootstrap);
+        return request(refreshed.tokens.accessToken);
+      } catch (refreshError) {
+        if (
+          isRejectedSessionCredential(refreshError) ||
+          isTerminalAuthenticationError(refreshError)
+        ) {
+          this.rejectStoredSession();
+        }
+        throw refreshError;
+      }
     }
   }
 
-  private persistSession(session: StoredSession): void {
-    this.platform.save(CLIENT_CONFIG.sessionStorageKey, session);
+  private loadStoredSession(): StoredSession | null {
+    const stored = this.platform.load<unknown>(CLIENT_CONFIG.sessionStorageKey);
+    if (stored === null) return null;
+    if (isStoredSession(stored)) return stored;
+
+    this.platform.remove(CLIENT_CONFIG.sessionStorageKey);
+    this.resetAuthoritativeMetadata();
+    return null;
+  }
+
+  private persistSession(
+    session: StoredSession,
+    bootstrap: BootstrapSnapshot,
+  ): void {
+    this.platform.save<StoredSession>(CLIENT_CONFIG.sessionStorageKey, {
+      ...session,
+      accountId: bootstrap.account.id,
+      playerId: bootstrap.player.id,
+    });
+  }
+
+  private rejectStoredSession(): void {
+    this.platform.remove(CLIENT_CONFIG.sessionStorageKey);
+    this.resetAuthoritativeMetadata();
+    this.rejectedStoredSession = true;
+  }
+
+  private resetAuthoritativeMetadata(): void {
+    this.playerVersion = null;
+    this.lastSuccessfulSyncAt = null;
   }
 
   private async getLoginIntent(): Promise<LoginIntent> {

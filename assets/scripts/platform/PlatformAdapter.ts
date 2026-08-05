@@ -29,6 +29,7 @@ interface WechatApi {
   }): void;
   getStorageSync(key: string): unknown;
   setStorageSync(key: string, value: unknown): void;
+  removeStorageSync(key: string): void;
   onShow(callback: () => void): void;
   onHide(callback: () => void): void;
   offShow?(callback: () => void): void;
@@ -54,6 +55,7 @@ export interface PlatformAdapter {
   getLoginIntent(): Promise<LoginIntent>;
   load<T>(key: string): T | null;
   save<T>(key: string, value: T): void;
+  remove(key: string): void;
   subscribeLifecycle(handlers: PlatformLifecycleHandlers): () => void;
   subscribeNetworkStatus(handlers: PlatformNetworkHandlers): () => void;
   feedback(): void;
@@ -111,6 +113,14 @@ class BrowserPlatformAdapter implements PlatformAdapter {
       localStorage.setItem(key, JSON.stringify(value));
     } catch {
       // Storage can be unavailable in privacy mode; login still works for the current session.
+    }
+  }
+
+  remove(key: string): void {
+    try {
+      localStorage.removeItem(key);
+    } catch {
+      // Storage cleanup is best-effort; callers still discard the loaded value.
     }
   }
 
@@ -244,6 +254,14 @@ class WechatPlatformAdapter implements PlatformAdapter {
       this.api.setStorageSync(key, value);
     } catch {
       // Storage failures are non-fatal; the player can authenticate again.
+    }
+  }
+
+  remove(key: string): void {
+    try {
+      this.api.removeStorageSync(key);
+    } catch {
+      // Storage cleanup is best-effort; callers still discard the loaded value.
     }
   }
 

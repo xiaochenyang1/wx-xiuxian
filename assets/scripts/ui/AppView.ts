@@ -118,6 +118,7 @@ export class AppView {
   private idleLabel: Label | null = null;
   private idleFrame = 0;
   private lastState: Readonly<AppState> | null = null;
+  private profilePlayerId: string | null = null;
   private profileAvatarDraft: ChosenAvatarVariant | null = null;
   private profileNameDraft: string | null = null;
   private profileNameSource: string | null = null;
@@ -136,6 +137,11 @@ export class AppView {
   }
 
   render(state: Readonly<AppState>): void {
+    const playerId = state.bootstrap?.player.id ?? null;
+    if (playerId !== this.profilePlayerId) {
+      this.clearPlayerUiState();
+      this.profilePlayerId = playerId;
+    }
     this.lastState = state;
     for (const child of [...this.root.children]) child.destroy();
     this.idleLabel = null;
@@ -413,7 +419,7 @@ export class AppView {
     addLabel(
       this.root,
       reconnecting
-        ? "正在重连 · 当前显示上次同步数据"
+        ? `正在重连 · ${formatLastSync(state.lastSuccessfulSyncAt)} · 当前显示缓存数据`
         : `离线数据 · ${formatLastSync(state.lastSuccessfulSyncAt)} · 联网后自动核对`,
       0,
       520,
@@ -801,7 +807,7 @@ export class AppView {
       addLabel(
         overlay,
         state.syncStatus === "reconnecting"
-          ? "正在重连 · 操作暂不可用"
+          ? `正在重连 · ${formatLastSync(state.lastSuccessfulSyncAt)} · 操作暂不可用`
           : `离线数据 · ${formatLastSync(state.lastSuccessfulSyncAt)} · 操作暂不可用`,
         0,
         -473,
@@ -1023,6 +1029,14 @@ export class AppView {
     this.profileAvatarDraft = null;
     this.profileNameDraft = null;
     this.profileNameSource = null;
+  }
+
+  private clearPlayerUiState(): void {
+    this.clearProfileDraft();
+    this.pages.inventoryStacks = 0;
+    this.pages.harvestChest = 0;
+    this.pages.techniques = 0;
+    this.pages.equipment = 0;
   }
 
   private drawInventoryPanel(overlay: Node, state: Readonly<AppState>): void {

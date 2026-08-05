@@ -1,13 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
-  BOOTSTRAP_CACHE_SCHEMA_VERSION,
-  isStoredBootstrapCacheEnvelope,
-} from "../../assets/scripts/core/ClientTypes";
-import {
   LifecycleSyncCoordinator,
   type LifecycleSyncReason,
 } from "../../assets/scripts/core/LifecycleSyncCoordinator";
-import { bootstrapFixture } from "./fixtures/bootstrap";
 
 describe("Cocos lifecycle sync coordinator", () => {
   it("persists before the best-effort hide sync and deduplicates lifecycle events", async () => {
@@ -204,30 +199,6 @@ describe("Cocos lifecycle sync coordinator", () => {
 
     expect(accepted).toEqual([]);
     expect(unscheduleCount).toBe(2);
-  });
-});
-
-describe("Cocos bootstrap cache schema", () => {
-  it("accepts the versioned authoritative snapshot envelope", () => {
-    const cache = {
-      schemaVersion: BOOTSTRAP_CACHE_SCHEMA_VERSION,
-      playerVersion: "18",
-      lastSuccessfulSyncAt: "2026-08-05T08:00:00.000Z",
-      bootstrap: bootstrapFixture(),
-    };
-
-    expect(isStoredBootstrapCacheEnvelope(cache)).toBe(true);
-    expect(isStoredBootstrapCacheEnvelope({ ...cache, schemaVersion: 2 })).toBe(false);
-    expect(isStoredBootstrapCacheEnvelope({ ...cache, playerVersion: "latest" })).toBe(
-      false,
-    );
-    expect(
-      isStoredBootstrapCacheEnvelope({
-        ...cache,
-        lastSuccessfulSyncAt: "yesterday",
-      }),
-    ).toBe(false);
-    expect(isStoredBootstrapCacheEnvelope({ ...cache, bootstrap: {} })).toBe(false);
   });
 });
 

@@ -14,6 +14,7 @@ import {
   ClientApiError,
   classifyAuthoritativeFailure,
   isClientTransportError,
+  isTerminalAuthenticationError,
 } from "../../assets/scripts/services/ApiClient";
 import { CLIENT_CONFIG } from "../../assets/scripts/core/ClientConfig";
 import type {
@@ -48,6 +49,60 @@ describe("Cocos API client", () => {
     );
     expect(mutationRequests[0]?.headers?.Authorization).toBe("Bearer access-1");
     expect(mutationRequests[1]?.headers?.Authorization).toBe("Bearer access-2");
+    expect(platform.load(CLIENT_CONFIG.sessionStorageKey)).toMatchObject({
+      accessToken: "access-2",
+      accountId: bootstrapFixture().account.id,
+      playerId: bootstrapFixture().player.id,
+    });
+  });
+
+  it("persists player identity after login and backfills it after bootstrap", async () => {
+    const loginPlatform = new ScriptedPlatform();
+    const loginClient = new ApiClient(loginPlatform, "http://game.test");
+
+    await loginClient.authenticate();
+
+    expect(loginPlatform.load(CLIENT_CONFIG.sessionStorageKey)).toMatchObject({
+      accessToken: "access-1",
+      accountId: bootstrapFixture().account.id,
+      playerId: bootstrapFixture().player.id,
+    });
+
+    const bootstrapPlatform = new ScriptedPlatform();
+    bootstrapPlatform.save(CLIENT_CONFIG.sessionStorageKey, tokens("legacy"));
+    const bootstrapClient = new ApiClient(bootstrapPlatform, "http://game.test");
+
+    await bootstrapClient.authenticate();
+
+    expect(bootstrapPlatform.load(CLIENT_CONFIG.sessionStorageKey)).toMatchObject({
+      accessToken: "access-legacy",
+      accountId: bootstrapFixture().account.id,
+      playerId: bootstrapFixture().player.id,
+    });
+    expect(bootstrapPlatform.requests.some((request) =>
+      request.url.endsWith("/api/v1/bootstrap"),
+    )).toBe(true);
+  });
+
+  it("ignores and removes malformed stored sessions before login", async () => {
+    const platform = new ScriptedPlatform();
+    platform.save(CLIENT_CONFIG.sessionStorageKey, {
+      accessToken: "access-corrupt",
+      refreshToken: "refresh-corrupt",
+    });
+    const client = new ApiClient(platform, "http://game.test");
+
+    await client.authenticate();
+
+    expect(platform.removedKeys).toContain(CLIENT_CONFIG.sessionStorageKey);
+    expect(platform.requests.some((request) =>
+      request.url.endsWith("/api/v1/bootstrap"),
+    )).toBe(false);
+    expect(platform.load(CLIENT_CONFIG.sessionStorageKey)).toMatchObject({
+      accessToken: "access-1",
+      accountId: bootstrapFixture().account.id,
+      playerId: bootstrapFixture().player.id,
+    });
   });
 
   it("advances profile versions and rejects an older replay response", async () => {
@@ -158,7 +213,8 @@ describe("Cocos API client", () => {
 
   it("does not start a new platform login when refresh fails at the transport layer", async () => {
     const platform = new FailurePlatform("refresh-transport");
-    platform.save(CLIENT_CONFIG.sessionStorageKey, tokens("stored"));
+    const stored = tokens("stored");
+    platform.save(CLIENT_CONFIG.sessionStorageKey, stored);
     const client = new ApiClient(platform, "http://game.test");
 
     await expect(client.authenticate()).rejects.toMatchObject({
@@ -168,6 +224,40 @@ describe("Cocos API client", () => {
     expect(platform.requests.filter((request) => request.url.endsWith("/api/v1/auth/dev"))).toEqual(
       [],
     );
+    expect(platform.load(CLIENT_CONFIG.sessionStorageKey)).toEqual(stored);
+    expect(client.consumeRejectedStoredSession()).toBe(false);
+  });
+
+  it("removes rejected credentials and reports them when replacement login fails", async () => {
+    const platform = new FailurePlatform("login-transport");
+    platform.save(CLIENT_CONFIG.sessionStorageKey, tokens("stored"));
+    const client = new ApiClient(platform, "http://game.test");
+
+    await expect(client.authenticate()).rejects.toMatchObject({
+      code: "NETWORK_UNAVAILABLE",
+    });
+
+    expect(platform.load(CLIENT_CONFIG.sessionStorageKey)).toBeNull();
+    expect(platform.removedKeys).toEqual([CLIENT_CONFIG.sessionStorageKey]);
+    expect(platform.loginIntentCount).toBe(1);
+    expect(client.getAuthoritativeSnapshotMetadata()).toBeNull();
+    expect(client.consumeRejectedStoredSession()).toBe(true);
+    expect(client.consumeRejectedStoredSession()).toBe(false);
+  });
+
+  it("invalidates a banned stored identity without attempting replacement login", async () => {
+    const platform = new FailurePlatform("refresh-banned");
+    platform.save(CLIENT_CONFIG.sessionStorageKey, tokens("stored"));
+    const client = new ApiClient(platform, "http://game.test");
+
+    const error = await client.authenticate().catch((failure: unknown) => failure);
+
+    expect(isTerminalAuthenticationError(error)).toBe(true);
+    expect(error).toMatchObject({ code: "ACCOUNT_BANNED", retryable: false });
+    expect(platform.load(CLIENT_CONFIG.sessionStorageKey)).toBeNull();
+    expect(platform.loginIntentCount).toBe(0);
+    expect(client.consumeRejectedStoredSession()).toBe(true);
+    expect(client.consumeRejectedStoredSession()).toBe(false);
   });
 
   it("starts a new platform login when the refresh credential is rejected", async () => {
@@ -182,27 +272,82 @@ describe("Cocos API client", () => {
     expect(platform.requests.some((request) => request.url.endsWith("/api/v1/auth/dev"))).toBe(
       true,
     );
+    expect(platform.load(CLIENT_CONFIG.sessionStorageKey)).toMatchObject({
+      accessToken: "access-new-login",
+      accountId: bootstrapFixture().account.id,
+      playerId: bootstrapFixture().player.id,
+    });
+    expect(client.consumeRejectedStoredSession()).toBe(true);
+    expect(client.consumeRejectedStoredSession()).toBe(false);
+  });
+
+  it("accepts a lower player version after rejected credentials switch identity", async () => {
+    const platform = new ScriptedPlatform(true);
+    const client = new ApiClient(platform, "http://game.test");
+
+    const previous = await client.authenticate();
+    expect(previous.account.id).toBe(bootstrapFixture().account.id);
+    expect(client.getAuthoritativeSnapshotMetadata()?.playerVersion).toBe("99");
+
+    const replacement = await client.authenticate();
+
+    expect(replacement).toMatchObject({
+      account: { id: REPLACEMENT_ACCOUNT_ID },
+      player: { id: REPLACEMENT_PLAYER_ID },
+    });
+    expect(client.getAuthoritativeSnapshotMetadata()?.playerVersion).toBe("1");
+    expect(platform.load(CLIENT_CONFIG.sessionStorageKey)).toMatchObject({
+      accountId: REPLACEMENT_ACCOUNT_ID,
+      playerId: REPLACEMENT_PLAYER_ID,
+    });
+    expect(client.consumeRejectedStoredSession()).toBe(true);
   });
 });
 
 const SERVER_TIME = "2026-08-05T08:00:00.000Z";
+const REPLACEMENT_ACCOUNT_ID = "6f8dfe97-11ad-4cd1-8481-6a7d00826357";
+const REPLACEMENT_PLAYER_ID = "29cd7452-dc8b-41bf-90d1-dcf58049bded";
 
 class ScriptedPlatform implements PlatformAdapter {
   readonly kind = "browser" as const;
   readonly requests: HttpRequest[] = [];
+  readonly removedKeys: string[] = [];
   private readonly storage = new Map<string, unknown>();
   private settlementAttempts = 0;
+  private loginAttempts = 0;
+
+  constructor(private readonly switchIdentityAfterFirstLogin = false) {}
 
   async request<T>(request: HttpRequest): Promise<HttpResponse<T>> {
     this.requests.push(request);
+    if (request.url.endsWith("/api/v1/bootstrap")) {
+      if (this.switchIdentityAfterFirstLogin) {
+        return response<T>(401, failure("UNAUTHENTICATED", "登录状态已过期"));
+      }
+      return response<T>(200, success("7", bootstrapFixture()));
+    }
     if (request.url.endsWith("/api/v1/auth/dev")) {
-      return response<T>(200, success<AuthLoginResult>("7", {
+      this.loginAttempts += 1;
+      const bootstrap = bootstrapFixture();
+      if (this.switchIdentityAfterFirstLogin && this.loginAttempts > 1) {
+        bootstrap.account.id = REPLACEMENT_ACCOUNT_ID;
+        bootstrap.player.id = REPLACEMENT_PLAYER_ID;
+      }
+      const playerVersion = this.switchIdentityAfterFirstLogin
+        ? this.loginAttempts === 1
+          ? "99"
+          : "1"
+        : "7";
+      return response<T>(200, success<AuthLoginResult>(playerVersion, {
         isNewPlayer: true,
-        tokens: tokens("1"),
-        bootstrap: bootstrapFixture(),
+        tokens: tokens(String(this.loginAttempts)),
+        bootstrap,
       }));
     }
     if (request.url.endsWith("/api/v1/auth/refresh")) {
+      if (this.switchIdentityAfterFirstLogin) {
+        return response<T>(401, failure("SESSION_EXPIRED", "会话已过期"));
+      }
       return response<T>(200, success<RefreshSessionResult>("7", {
         tokens: tokens("2"),
         bootstrap: bootstrapFixture(),
@@ -287,6 +432,11 @@ class ScriptedPlatform implements PlatformAdapter {
     this.storage.set(key, value);
   }
 
+  remove(key: string): void {
+    this.removedKeys.push(key);
+    this.storage.delete(key);
+  }
+
   subscribeLifecycle(_handlers: PlatformLifecycleHandlers): () => void {
     return () => undefined;
   }
@@ -302,12 +452,14 @@ type FailureMode =
   | "login-transport"
   | "login-business"
   | "refresh-transport"
-  | "refresh-rejected";
+  | "refresh-rejected"
+  | "refresh-banned";
 
 class FailurePlatform implements PlatformAdapter {
   readonly kind = "browser" as const;
   readonly requests: HttpRequest[] = [];
   readonly storage = new Map<string, unknown>();
+  readonly removedKeys: string[] = [];
   loginIntentCount = 0;
 
   constructor(private readonly mode: FailureMode) {}
@@ -319,6 +471,9 @@ class FailurePlatform implements PlatformAdapter {
     }
     if (request.url.endsWith("/api/v1/auth/refresh")) {
       if (this.mode === "refresh-transport") throw new Error("connection reset");
+      if (this.mode === "refresh-banned") {
+        return response<T>(403, failure("ACCOUNT_BANNED", "账号当前无法登录"));
+      }
       return response<T>(401, failure("SESSION_EXPIRED", "会话已过期"));
     }
     if (request.url.endsWith("/api/v1/auth/dev")) {
@@ -346,6 +501,11 @@ class FailurePlatform implements PlatformAdapter {
 
   save<T>(key: string, value: T): void {
     this.storage.set(key, value);
+  }
+
+  remove(key: string): void {
+    this.removedKeys.push(key);
+    this.storage.delete(key);
   }
 
   subscribeLifecycle(_handlers: PlatformLifecycleHandlers): () => void {

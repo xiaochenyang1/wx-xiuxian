@@ -5,6 +5,47 @@ import { canRunAuthoritativeMutation } from "../../assets/scripts/core/ClientTyp
 import { bootstrapFixture } from "./fixtures/bootstrap";
 
 describe("Cocos app store", () => {
+  it("installs a cached snapshot atomically as a reconnecting read-only preview", () => {
+    const store = new AppStore();
+    const bootstrap = bootstrapFixture();
+    const states: Array<{ phase: string; syncStatus: string; hasBootstrap: boolean }> = [];
+    const unsubscribe = store.subscribe((state) => {
+      states.push({
+        phase: state.phase,
+        syncStatus: state.syncStatus,
+        hasBootstrap: state.bootstrap !== null,
+      });
+    });
+
+    store.setCachedPreview(bootstrap, "2026-08-05T07:59:00.000Z");
+    unsubscribe();
+
+    expect(states).toEqual([
+      { phase: "loading", syncStatus: "reconnecting", hasBootstrap: false },
+      { phase: "ready", syncStatus: "reconnecting", hasBootstrap: true },
+    ]);
+    expect(store.snapshot.bootstrap).toBe(bootstrap);
+    expect(store.snapshot.lastSuccessfulSyncAt).toBe("2026-08-05T07:59:00.000Z");
+    expect(canRunAuthoritativeMutation(store.snapshot)).toBe(false);
+  });
+
+  it("preserves the exact cached snapshot and sync time when reconnecting becomes offline", () => {
+    const store = new AppStore();
+    const bootstrap = bootstrapFixture();
+    const syncedAt = "2026-08-05T07:59:00.000Z";
+
+    store.setCachedPreview(bootstrap, syncedAt);
+    store.markOffline();
+
+    expect(store.snapshot).toMatchObject({
+      phase: "ready",
+      syncStatus: "offline",
+      lastSuccessfulSyncAt: syncedAt,
+    });
+    expect(store.snapshot.bootstrap).toBe(bootstrap);
+    expect(canRunAuthoritativeMutation(store.snapshot)).toBe(false);
+  });
+
   it("keeps the selected feature panel open while authoritative snapshots refresh", () => {
     const store = new AppStore();
     store.setReady(bootstrapFixture());
@@ -61,6 +102,117 @@ describe("Cocos app store", () => {
 
     expect(store.snapshot.bootstrap?.offlineSettlement).toBeNull();
     expect(store.snapshot.bootstrap?.progress.experience).toBe("18");
+  });
+
+  it("keeps cached UI context and an unconfirmed settlement for the same identity", () => {
+    const store = new AppStore();
+    const offlineSettlement = offlineSettlementFixture();
+    const cached = { ...bootstrapFixture(), offlineSettlement };
+    store.setCachedPreview(cached, "2026-08-05T07:59:00.000Z");
+    store.selectTab("cave");
+    store.openFeature("inventory");
+    store.setFeatureMessage("待恢复的操作提示");
+
+    const authoritative = {
+      ...bootstrapFixture(),
+      progress: { ...bootstrapFixture().progress, experience: "25" },
+      offlineSettlement: null,
+    };
+    store.setReady(authoritative, "2026-08-05T08:00:00.000Z");
+
+    expect(store.snapshot).toMatchObject({
+      phase: "ready",
+      syncStatus: "online",
+      lastSuccessfulSyncAt: "2026-08-05T08:00:00.000Z",
+      selectedTab: "cave",
+      activeFeature: "inventory",
+      featureMessage: "待恢复的操作提示",
+    });
+    expect(store.snapshot.bootstrap?.progress.experience).toBe("25");
+    expect(store.snapshot.bootstrap?.offlineSettlement).toBe(offlineSettlement);
+    expect(canRunAuthoritativeMutation(store.snapshot)).toBe(true);
+  });
+
+  it("does not carry cached settlement or UI context across player identities", () => {
+    const store = new AppStore();
+    store.setCachedPreview(
+      { ...bootstrapFixture(), offlineSettlement: offlineSettlementFixture() },
+      "2026-08-05T07:59:00.000Z",
+    );
+    store.selectTab("cave");
+    store.openFeature("inventory");
+    store.setFeatureMessage("旧角色提示");
+
+    const authoritative = bootstrapFixture();
+    authoritative.account.id = "00000000-0000-4000-8000-000000000101";
+    authoritative.player.id = "00000000-0000-4000-8000-000000000102";
+    authoritative.player.displayName = "新角色";
+    authoritative.offlineSettlement = null;
+    store.setReady(authoritative, "2026-08-05T08:00:00.000Z");
+
+    expect(store.snapshot).toMatchObject({
+      phase: "ready",
+      syncStatus: "online",
+      lastSuccessfulSyncAt: "2026-08-05T08:00:00.000Z",
+      selectedTab: "cultivation",
+      activeFeature: null,
+      featureMessage: null,
+    });
+    expect(store.snapshot.bootstrap).toBe(authoritative);
+    expect(store.snapshot.bootstrap?.offlineSettlement).toBeNull();
+    expect(canRunAuthoritativeMutation(store.snapshot)).toBe(true);
+  });
+
+  it("isolates a cross-identity snapshot replacement while preserving read-only status", () => {
+    const store = new AppStore();
+    store.setCachedPreview(
+      { ...bootstrapFixture(), offlineSettlement: offlineSettlementFixture() },
+      "2026-08-05T07:59:00.000Z",
+    );
+    store.markOffline();
+    store.selectTab("cave");
+    store.openFeature("profile");
+    store.setFeatureMessage("旧角色档案提示");
+
+    const replacement = bootstrapFixture();
+    replacement.account.id = "00000000-0000-4000-8000-000000000201";
+    replacement.player.id = "00000000-0000-4000-8000-000000000202";
+    replacement.offlineSettlement = null;
+    store.replaceSnapshot(replacement);
+
+    expect(store.snapshot).toMatchObject({
+      phase: "ready",
+      syncStatus: "offline",
+      lastSuccessfulSyncAt: "2026-08-05T07:59:00.000Z",
+      selectedTab: "cultivation",
+      activeFeature: null,
+      featureMessage: null,
+    });
+    expect(store.snapshot.bootstrap).toBe(replacement);
+    expect(store.snapshot.bootstrap?.offlineSettlement).toBeNull();
+    expect(canRunAuthoritativeMutation(store.snapshot)).toBe(false);
+  });
+
+  it("clears cached identity and UI state when authentication is invalidated", () => {
+    const store = new AppStore();
+    store.setCachedPreview(bootstrapFixture(), "2026-08-05T07:59:00.000Z");
+    store.selectTab("cave");
+    store.openFeature("inventory");
+    store.setFeatureMessage("旧角色提示");
+
+    store.setAuthenticationError("登录状态已失效");
+
+    expect(store.snapshot).toMatchObject({
+      phase: "error",
+      syncStatus: "reconnecting",
+      lastSuccessfulSyncAt: null,
+      bootstrap: null,
+      errorMessage: "登录状态已失效",
+      selectedTab: "cultivation",
+      activeFeature: null,
+      featureMessage: null,
+    });
+    expect(canRunAuthoritativeMutation(store.snapshot)).toBe(false);
   });
 
   it("keeps the current view read-only while offline and restores it after sync", () => {

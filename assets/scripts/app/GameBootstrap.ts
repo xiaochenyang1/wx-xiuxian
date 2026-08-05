@@ -7,9 +7,12 @@ import type {
 } from "@cultivation-diary/shared";
 import { CLIENT_CONFIG } from "../core/ClientConfig";
 import {
-  BOOTSTRAP_CACHE_SCHEMA_VERSION,
   canRunAuthoritativeMutation,
-  isStoredBootstrapCacheEnvelope,
+  createStoredBootstrapCache,
+  dismissCachedOfflineSettlement,
+  getRestorableBootstrapCache,
+  hasSameBootstrapIdentity,
+  shouldInstallDeferredIdentityPreview,
 } from "../core/ClientTypes";
 import type { StoredBootstrapCache } from "../core/ClientTypes";
 import {
@@ -21,6 +24,7 @@ import {
   ClientApiError,
   classifyAuthoritativeFailure,
   isClientTransportError,
+  isTerminalAuthenticationError,
   requiresAuthoritativeRecovery,
 } from "../services/ApiClient";
 import { createPlatformAdapter } from "../platform/PlatformAdapter";
@@ -39,6 +43,7 @@ export class GameBootstrap extends Component {
   private unsubscribeLifecycle: (() => void) | null = null;
   private unsubscribeNetworkStatus: (() => void) | null = null;
   private mutationInFlight = false;
+  private startupAuthenticationInFlight = false;
   private startupRetryRequested = false;
   private destroyed = false;
   private offlineDismissPending = false;
@@ -73,6 +78,7 @@ export class GameBootstrap extends Component {
 
   onLoad(): void {
     view.setDesignResolutionSize(750, 1334, ResolutionPolicy.SHOW_ALL);
+    this.restoreCachedPreview();
 
     const appRoot = new Node("AppRoot");
     appRoot.layer = this.node.layer;
@@ -141,21 +147,25 @@ export class GameBootstrap extends Component {
     if (!renderToken) return;
 
     this.mutationInFlight = true;
-    this.store.setLoading("正在同步修为");
+    this.startupAuthenticationInFlight = true;
+    if (this.store.snapshot.bootstrap) this.store.markReconnecting();
+    else this.store.setLoading("正在同步修为");
     let settleAfterAuthentication = false;
     let retryAfterLifecycleChange = false;
     let retryAfterConnectivityHint = false;
     try {
-      const bootstrap = await this.apiClient.authenticate();
-      this.persistBootstrap(bootstrap);
-      if (this.lifecycleSync.canRender(renderToken)) {
+      const bootstrap = await this.authenticateAuthoritatively();
+      const allowRender = this.lifecycleSync.canRender(renderToken);
+      this.persistBootstrap(bootstrap, allowRender);
+      if (allowRender) {
         this.setAuthoritativeReady(bootstrap);
         settleAfterAuthentication = true;
       }
     } catch (error) {
       if (this.lifecycleSync.canRender(renderToken)) {
-        if (isClientTransportError(error) && this.store.snapshot.bootstrap) {
-          this.markAuthoritativeOffline();
+        if (this.store.snapshot.bootstrap) {
+          if (isClientTransportError(error)) this.markAuthoritativeOffline();
+          else this.store.markReconnecting();
           return;
         }
         const message =
@@ -173,6 +183,7 @@ export class GameBootstrap extends Component {
       retryAfterConnectivityHint =
         this.startupRetryRequested && !settleAfterAuthentication;
       this.startupRetryRequested = false;
+      this.startupAuthenticationInFlight = false;
       this.finishMutation();
     }
 
@@ -195,8 +206,9 @@ export class GameBootstrap extends Component {
     this.mutationInFlight = true;
     try {
       const result = await this.apiClient.settleCultivation();
-      this.persistBootstrap(result.bootstrap);
-      if (!this.lifecycleSync.canRender(renderToken)) return;
+      const allowRender = this.lifecycleSync.canRender(renderToken);
+      this.persistBootstrap(result.bootstrap, allowRender);
+      if (!allowRender) return;
       this.applySyncedBootstrap(result.bootstrap);
     } catch (error) {
       let recoveredBootstrap: BootstrapSnapshot | null = null;
@@ -209,8 +221,9 @@ export class GameBootstrap extends Component {
         return;
       }
       if (recoveredBootstrap) {
-        this.persistBootstrap(recoveredBootstrap);
-        if (this.lifecycleSync.canRender(renderToken)) {
+        const allowRender = this.lifecycleSync.canRender(renderToken);
+        this.persistBootstrap(recoveredBootstrap, allowRender);
+        if (allowRender) {
           this.applySyncedBootstrap(recoveredBootstrap);
         }
         return;
@@ -228,12 +241,15 @@ export class GameBootstrap extends Component {
     bootstrap: BootstrapSnapshot,
     allowRender: boolean,
   ): void {
-    this.persistBootstrap(bootstrap);
+    this.persistBootstrap(bootstrap, allowRender);
     if (allowRender && !this.destroyed) this.applySyncedBootstrap(bootstrap);
   }
 
   private applySyncedBootstrap(bootstrap: BootstrapSnapshot): void {
-    if (this.isProfileOpen()) {
+    if (
+      this.isProfileOpen() &&
+      hasSameBootstrapIdentity(this.store.snapshot.bootstrap, bootstrap)
+    ) {
       this.pendingProfileBootstrap = bootstrap;
       if (this.store.snapshot.syncStatus !== "online") {
         this.markAuthoritativeOnline();
@@ -252,19 +268,31 @@ export class GameBootstrap extends Component {
     }
   }
 
-  private persistBootstrap(bootstrap: BootstrapSnapshot): void {
+  private persistBootstrap(
+    bootstrap: BootstrapSnapshot,
+    allowRender: boolean,
+  ): void {
     if (this.destroyed) return;
     const metadata = this.apiClient.getAuthoritativeSnapshotMetadata();
     if (!metadata) return;
-
-    const cache: StoredBootstrapCache = {
-      schemaVersion: BOOTSTRAP_CACHE_SCHEMA_VERSION,
-      ...metadata,
+    const cache = createStoredBootstrapCache(
       bootstrap,
-    };
-    if (isStoredBootstrapCacheEnvelope(cache)) {
-      this.lastAuthoritativeCache = cache;
-      this.platform.save(CLIENT_CONFIG.bootstrapCacheStorageKey, cache);
+      metadata,
+      this.store.snapshot.bootstrap,
+    );
+    if (!cache) return;
+
+    this.lastAuthoritativeCache = cache;
+    this.platform.save(CLIENT_CONFIG.bootstrapCacheStorageKey, cache);
+    if (
+      shouldInstallDeferredIdentityPreview(
+        this.store.snapshot.bootstrap,
+        bootstrap,
+        allowRender,
+      )
+    ) {
+      this.pendingProfileBootstrap = null;
+      this.store.setCachedPreview(cache.bootstrap, cache.lastSuccessfulSyncAt);
     }
   }
 
@@ -273,8 +301,9 @@ export class GameBootstrap extends Component {
     renderToken: LifecycleRenderToken,
     beforeApply?: () => void,
   ): boolean {
-    this.persistBootstrap(bootstrap);
-    if (!this.lifecycleSync.canRender(renderToken)) return false;
+    const allowRender = this.lifecycleSync.canRender(renderToken);
+    this.persistBootstrap(bootstrap, allowRender);
+    if (!allowRender) return false;
 
     this.pendingProfileBootstrap = null;
     beforeApply?.();
@@ -283,12 +312,17 @@ export class GameBootstrap extends Component {
   }
 
   private async recoverHeartbeat(error: unknown): Promise<BootstrapSnapshot | null> {
+    if (isTerminalAuthenticationError(error)) {
+      this.apiClient.consumeRejectedStoredSession();
+      this.invalidateCachedIdentity(error.message);
+      return null;
+    }
     if (!requiresAuthoritativeRecovery(error)) {
       return null;
     }
 
     try {
-      return await this.apiClient.authenticate();
+      return await this.authenticateAuthoritatively();
     } catch (recoveryError) {
       if (isClientTransportError(recoveryError)) throw recoveryError;
       return null;
@@ -303,6 +337,9 @@ export class GameBootstrap extends Component {
     if (this.destroyed) return;
     if (this.store.snapshot.bootstrap) {
       this.store.markReconnecting();
+      if (this.startupAuthenticationInFlight) {
+        this.startupRetryRequested = true;
+      }
       this.lifecycleSync.requestForegroundSync();
     } else if (this.mutationInFlight) {
       this.startupRetryRequested = true;
@@ -318,9 +355,16 @@ export class GameBootstrap extends Component {
   }
 
   private dismissOfflineSettlement(): void {
-    if (this.offlineDismissPending || !this.store.snapshot.bootstrap?.offlineSettlement) {
+    const bootstrap = this.store.snapshot.bootstrap;
+    const settlement = bootstrap?.offlineSettlement;
+    if (this.offlineDismissPending || !bootstrap || !settlement) {
       return;
     }
+    const identity = {
+      accountId: bootstrap.account.id,
+      playerId: bootstrap.player.id,
+      settlementId: settlement.id,
+    };
 
     // Rebuilding the view inside the current pointer dispatch can expose an
     // underlying button to the browser's follow-up click event. Keep the modal
@@ -328,7 +372,15 @@ export class GameBootstrap extends Component {
     this.offlineDismissPending = true;
     this.modalInputLockedUntil = Date.now() + 500;
     this.scheduleOnce(() => {
-      this.store.dismissOfflineSettlement();
+      const current = this.store.snapshot.bootstrap;
+      if (
+        current?.account.id === identity.accountId &&
+        current.player.id === identity.playerId &&
+        current.offlineSettlement?.id === identity.settlementId
+      ) {
+        this.store.dismissOfflineSettlement();
+        this.persistOfflineSettlementDismissal(identity);
+      }
       this.offlineDismissPending = false;
     }, 0.1);
   }
@@ -657,15 +709,25 @@ export class GameBootstrap extends Component {
     renderToken: LifecycleRenderToken,
     deferWhileProfileOpen = false,
   ): Promise<boolean> {
+    if (isTerminalAuthenticationError(error)) {
+      this.apiClient.consumeRejectedStoredSession();
+      this.invalidateCachedIdentity(error.message);
+      return true;
+    }
     if (!requiresAuthoritativeRecovery(error)) {
       return false;
     }
 
     try {
-      const bootstrap = await this.apiClient.authenticate();
-      this.persistBootstrap(bootstrap);
-      if (!this.lifecycleSync.canRender(renderToken)) return true;
-      if (deferWhileProfileOpen && this.isProfileOpen()) {
+      const bootstrap = await this.authenticateAuthoritatively();
+      const allowRender = this.lifecycleSync.canRender(renderToken);
+      this.persistBootstrap(bootstrap, allowRender);
+      if (!allowRender) return true;
+      if (
+        deferWhileProfileOpen &&
+        this.isProfileOpen() &&
+        hasSameBootstrapIdentity(this.store.snapshot.bootstrap, bootstrap)
+      ) {
         this.pendingProfileBootstrap = bootstrap;
         return true;
       }
@@ -681,6 +743,10 @@ export class GameBootstrap extends Component {
   }
 
   private setAuthoritativeReady(bootstrap: BootstrapSnapshot): void {
+    const current = this.store.snapshot.bootstrap;
+    if (current && !hasSameBootstrapIdentity(current, bootstrap)) {
+      this.pendingProfileBootstrap = null;
+    }
     const syncAt = this.apiClient.getAuthoritativeSnapshotMetadata()?.lastSuccessfulSyncAt;
     if (syncAt) this.store.setReady(bootstrap, syncAt);
     else this.store.setReady(bootstrap);
@@ -707,6 +773,51 @@ export class GameBootstrap extends Component {
     if (status === "offline") this.markAuthoritativeOffline();
     else this.store.markReconnecting();
     return true;
+  }
+
+  private restoreCachedPreview(): void {
+    const cache = getRestorableBootstrapCache(
+      this.platform.load<unknown>(CLIENT_CONFIG.sessionStorageKey),
+      this.platform.load<unknown>(CLIENT_CONFIG.bootstrapCacheStorageKey),
+    );
+    if (!cache) return;
+
+    this.lastAuthoritativeCache = cache;
+    this.store.setCachedPreview(cache.bootstrap, cache.lastSuccessfulSyncAt);
+  }
+
+  private async authenticateAuthoritatively(): Promise<BootstrapSnapshot> {
+    try {
+      const bootstrap = await this.apiClient.authenticate();
+      this.apiClient.consumeRejectedStoredSession();
+      return bootstrap;
+    } catch (error) {
+      if (this.apiClient.consumeRejectedStoredSession()) {
+        this.invalidateCachedIdentity(errorMessage(error, "登录状态已失效"));
+      }
+      throw error;
+    }
+  }
+
+  private invalidateCachedIdentity(message: string): void {
+    this.lastAuthoritativeCache = null;
+    this.pendingProfileBootstrap = null;
+    this.platform.remove(CLIENT_CONFIG.sessionStorageKey);
+    this.platform.remove(CLIENT_CONFIG.bootstrapCacheStorageKey);
+    this.store.setAuthenticationError(message);
+  }
+
+  private persistOfflineSettlementDismissal(identity: {
+    accountId: string;
+    playerId: string;
+    settlementId: string;
+  }): void {
+    const cache = this.lastAuthoritativeCache;
+    if (!cache) return;
+    const dismissed = dismissCachedOfflineSettlement(cache, identity);
+    if (dismissed === cache) return;
+    this.lastAuthoritativeCache = dismissed;
+    this.platform.save(CLIENT_CONFIG.bootstrapCacheStorageKey, dismissed);
   }
 }
 
