@@ -1,4 +1,4 @@
-/// <reference path="../../temp/declarations/cc.d.ts" />
+/// <reference types="@cocos/creator-types/engine" />
 /// <reference path="../../temp/declarations/cc.env.d.ts" />
 
 import { describe, expect, it, vi } from "vitest";
