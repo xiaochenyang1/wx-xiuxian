@@ -13,9 +13,13 @@ import { createServerServices } from "../src/bootstrap";
 import { loadAppConfig } from "../src/config/env";
 import { createInfrastructure, type Infrastructure } from "../src/infrastructure";
 
-const databaseUrl =
-  process.env.TEST_DATABASE_URL ??
-  "postgresql://cultivation:cultivation_dev@127.0.0.1:5432/cultivation_diary_test";
+const defaultDatabaseUrl =
+  "postgresql://cultivation:cultivation_dev@127.0.0.1:5432/postgres";
+const testDatabase = resolveTestDatabase(
+  process.env.TEST_DATABASE_URL,
+  defaultDatabaseUrl,
+);
+const databaseUrl = testDatabase.connectionString;
 
 describe("authentication and bootstrap PostgreSQL integration", () => {
   let app: FastifyInstance;
@@ -23,7 +27,7 @@ describe("authentication and bootstrap PostgreSQL integration", () => {
   let forceIdleDrops = false;
 
   beforeAll(async () => {
-    await ensureTestDatabase(databaseUrl);
+    await ensureTestDatabase(testDatabase);
     const config = loadAppConfig({
       NODE_ENV: "test",
       ENABLE_DEV_AUTH: "true",
@@ -49,7 +53,17 @@ describe("authentication and bootstrap PostgreSQL integration", () => {
   });
 
   afterAll(async () => {
-    await app.close();
+    try {
+      if (app) {
+        await app.close();
+      } else if (infrastructure) {
+        await infrastructure.close();
+      }
+    } finally {
+      if (testDatabase.temporary && testDatabase.createdByThisRun) {
+        await dropTestDatabase(testDatabase);
+      }
+    }
   });
 
   it("creates one initialized player and reuses it on repeated logins", async () => {
@@ -1438,28 +1452,135 @@ async function inventoryMutation(
   });
 }
 
-async function ensureTestDatabase(connectionString: string): Promise<void> {
-  const target = new URL(connectionString);
-  const databaseName = target.pathname.slice(1);
-  if (
-    databaseName === "cultivation_diary" ||
-    !/^[A-Za-z0-9_]+$/.test(databaseName)
-  ) {
-    throw new Error("Integration tests require a dedicated safe database name");
+interface TestDatabase {
+  connectionString: string;
+  adminConnectionString: string;
+  databaseName: string;
+  temporary: boolean;
+  createdByThisRun: boolean;
+}
+
+function resolveTestDatabase(
+  explicitConnectionString: string | undefined,
+  fallbackConnectionString: string,
+): TestDatabase {
+  const explicit = explicitConnectionString?.trim();
+  if (explicit) {
+    return parseTestDatabase(explicit, false);
   }
 
-  const adminUrl = new URL(connectionString);
+  const isolatedUrl = new URL(fallbackConnectionString);
+  const runId = randomUUID().replaceAll("-", "").slice(0, 12);
+  isolatedUrl.pathname = `/cultivation_diary_test_${process.pid}_${runId}`;
+  return parseTestDatabase(isolatedUrl.toString(), true);
+}
+
+function parseTestDatabase(
+  connectionString: string,
+  temporary: boolean,
+): TestDatabase {
+  let target: URL;
+  try {
+    target = new URL(connectionString);
+  } catch {
+    throw new Error("TEST_DATABASE_URL must be a valid PostgreSQL URL");
+  }
+
+  if (target.protocol !== "postgresql:" && target.protocol !== "postgres:") {
+    throw new Error("TEST_DATABASE_URL must use the postgres or postgresql protocol");
+  }
+
+  const databaseName = target.pathname.slice(1);
+  const safeTestName =
+    databaseName.length <= 63 &&
+    /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*_test(?:_[a-z0-9]+)*$/.test(databaseName);
+  const forbiddenEnvironmentName = databaseName
+    .split("_")
+    .some((part) => ["live", "prod", "production", "stage", "staging"].includes(part));
+  if (!safeTestName || forbiddenEnvironmentName) {
+    throw new Error(
+      "Integration database names must be lowercase, contain an explicit _test suffix, and must not contain production or staging markers",
+    );
+  }
+
+  const adminUrl = new URL(target);
   adminUrl.pathname = "/postgres";
-  const pool = new Pool({ connectionString: adminUrl.toString() });
+  adminUrl.hash = "";
+
+  return {
+    connectionString: target.toString(),
+    adminConnectionString: adminUrl.toString(),
+    databaseName,
+    temporary,
+    createdByThisRun: false,
+  };
+}
+
+async function ensureTestDatabase(target: TestDatabase): Promise<void> {
+  const validated = parseTestDatabase(target.connectionString, target.temporary);
+  const pool = new Pool({ connectionString: validated.adminConnectionString });
 
   try {
     const existing = await pool.query("select 1 from pg_database where datname = $1", [
-      databaseName,
+      validated.databaseName,
     ]);
-    if (existing.rowCount === 0) {
-      await pool.query(`create database "${databaseName}"`);
+    if (existing.rowCount !== 0) {
+      if (validated.temporary) {
+        throw new Error(
+          `Refusing to share temporary integration database ${validated.databaseName}`,
+        );
+      }
+      return;
     }
+    await pool.query(`create database "${validated.databaseName}"`);
+    target.createdByThisRun = true;
   } finally {
     await pool.end();
   }
 }
+
+async function dropTestDatabase(target: TestDatabase): Promise<void> {
+  if (!target.temporary || !target.createdByThisRun) {
+    return;
+  }
+
+  const validated = parseTestDatabase(target.connectionString, true);
+  const pool = new Pool({ connectionString: validated.adminConnectionString });
+  try {
+    await pool.query(
+      `select pg_terminate_backend(pid)
+       from pg_stat_activity
+       where datname = $1 and pid <> pg_backend_pid()`,
+      [validated.databaseName],
+    );
+    await pool.query(`drop database if exists "${validated.databaseName}"`);
+  } finally {
+    await pool.end();
+  }
+}
+
+describe("integration database target safety", () => {
+  it("rejects non-test, production-like, and non-PostgreSQL targets", () => {
+    const unsafeTargets = [
+      "postgresql://user:secret@127.0.0.1:5432/cultivation_diary",
+      "postgresql://user:secret@127.0.0.1:5432/cultivation_prod_test",
+      "postgresql://user:secret@127.0.0.1:5432/cultivation_staging_test",
+      "mysql://user:secret@127.0.0.1:3306/cultivation_diary_test",
+    ];
+
+    for (const target of unsafeTargets) {
+      expect(() => parseTestDatabase(target, false)).toThrow();
+    }
+  });
+
+  it("accepts an explicitly named dedicated test database", () => {
+    const target = parseTestDatabase(
+      "postgresql://user:secret@127.0.0.1:5432/cultivation_diary_test_ci",
+      false,
+    );
+
+    expect(target.databaseName).toBe("cultivation_diary_test_ci");
+    expect(target.temporary).toBe(false);
+    expect(target.createdByThisRun).toBe(false);
+  });
+});

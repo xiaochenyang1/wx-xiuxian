@@ -3,6 +3,11 @@ import {
   type EquippedEquipmentSlot,
   type OfflineSettlementSummary,
 } from "@cultivation-diary/shared";
+import {
+  formatLargeNumber,
+  ratioOfBigNumberStrings,
+  sumBigNumberStrings,
+} from "../core/ClientNumber";
 import type {
   AppState,
   FeaturePanel,
@@ -90,9 +95,29 @@ interface ButtonStyle {
   fontSize?: number;
 }
 
+type PagedList =
+  | "inventoryStacks"
+  | "harvestChest"
+  | "techniques"
+  | "equipment";
+
+interface PageWindow {
+  page: number;
+  pageCount: number;
+  start: number;
+  end: number;
+}
+
 export class AppView {
   private idleLabel: Label | null = null;
   private idleFrame = 0;
+  private lastState: Readonly<AppState> | null = null;
+  private readonly pages: Record<PagedList, number> = {
+    inventoryStacks: 0,
+    harvestChest: 0,
+    techniques: 0,
+    equipment: 0,
+  };
 
   constructor(
     private readonly root: Node,
@@ -102,6 +127,7 @@ export class AppView {
   }
 
   render(state: Readonly<AppState>): void {
+    this.lastState = state;
     for (const child of [...this.root.children]) child.destroy();
     this.idleLabel = null;
     this.drawBackdrop();
@@ -143,6 +169,28 @@ export class AppView {
     if (!this.idleLabel?.isValid) return;
     this.idleFrame = (this.idleFrame + 1) % 4;
     this.idleLabel.string = `挂机中${".".repeat(this.idleFrame)}`;
+  }
+
+  private pageWindow(
+    list: PagedList,
+    itemCount: number,
+    pageSize: number,
+  ): PageWindow {
+    const pageCount = Math.max(1, Math.ceil(itemCount / pageSize));
+    const page = Math.min(Math.max(0, this.pages[list]), pageCount - 1);
+    this.pages[list] = page;
+    return {
+      page,
+      pageCount,
+      start: page * pageSize,
+      end: Math.min(itemCount, (page + 1) * pageSize),
+    };
+  }
+
+  private showPage(list: PagedList, page: number): void {
+    this.actions.feedback();
+    this.pages[list] = Math.max(0, page);
+    if (this.lastState) this.render(this.lastState);
   }
 
   private drawBackdrop(): void {
@@ -287,7 +335,7 @@ export class AppView {
     addLabel(this.root, "总战力", 214, 616, 250, 30, 17, COLORS.textMuted);
     addLabel(
       this.root,
-      formatCompactNumber(bootstrap.progress.totalPower),
+      formatLargeNumber(bootstrap.progress.totalPower),
       214,
       578,
       250,
@@ -323,7 +371,7 @@ export class AppView {
     drawBand(this.root, "ExperienceBand", 0, -25, 686, 82, COLORS.panel, COLORS.goldMuted);
     addLabel(
       this.root,
-      `修为 ${formatCompactNumber(data.progress.experience)} / ${formatCompactNumber(data.progress.requiredExperience)}`,
+      `修为 ${formatLargeNumber(data.progress.experience)} / ${formatLargeNumber(data.progress.requiredExperience)}`,
       0,
       -2,
       630,
@@ -337,12 +385,12 @@ export class AppView {
       { label: "等级", value: `Lv.${data.progress.level}`, color: COLORS.text },
       {
         label: "每秒经验",
-        value: `${formatCompactNumber(data.progress.experiencePerSecond)}/秒`,
+        value: `${formatLargeNumber(data.progress.experiencePerSecond)}/秒`,
         color: COLORS.jade,
       },
       {
         label: "每分钟灵石",
-        value: `${formatCompactNumber(data.progress.spiritStonePerMinute)}/分`,
+        value: `${formatLargeNumber(data.progress.spiritStonePerMinute)}/分`,
         color: COLORS.gold,
       },
     ];
@@ -662,6 +710,16 @@ export class AppView {
   private drawInventoryPanel(overlay: Node, state: Readonly<AppState>): void {
     const data = state.bootstrap!;
     const usedSlots = data.inventory.stacks.length + data.equipment.length;
+    const stackWindow = this.pageWindow(
+      "inventoryStacks",
+      data.inventory.stacks.length,
+      4,
+    );
+    const harvestWindow = this.pageWindow(
+      "harvestChest",
+      data.harvestChest.entries.length,
+      4,
+    );
     drawBand(overlay, "BagSummary", 0, 390, 620, 92, COLORS.inkGreen);
     addLabel(
       overlay,
@@ -678,7 +736,7 @@ export class AppView {
     );
     addLabel(
       overlay,
-      `灵石 ${formatCompactNumber(data.wallet.spiritStone)}`,
+      `灵石 ${formatLargeNumber(data.wallet.spiritStone)}`,
       -165,
       370,
       280,
@@ -694,7 +752,7 @@ export class AppView {
       const cost = 5_000 * purchaseIndex * purchaseIndex;
       createButton(
         overlay,
-        `扩展 +10（${formatCompactNumber(String(cost))}）`,
+        `扩展 +10（${formatLargeNumber(String(cost))}）`,
         178,
         390,
         250,
@@ -719,52 +777,64 @@ export class AppView {
       1,
       HorizontalTextAlignment.LEFT,
     );
+    drawPagination(
+      overlay,
+      "InventoryStackPager",
+      190,
+      310,
+      stackWindow.page,
+      stackWindow.pageCount,
+      () => this.showPage("inventoryStacks", stackWindow.page - 1),
+      () => this.showPage("inventoryStacks", stackWindow.page + 1),
+    );
     if (data.inventory.stacks.length === 0) {
       addLabel(overlay, "行囊中暂无堆叠道具", 0, 253, 540, 40, 18, COLORS.textMuted);
     } else {
-      data.inventory.stacks.slice(0, 4).forEach((stack, index) => {
-        const y = 258 - index * 54;
-        const directlyUsable = stack.itemConfigId === "exp_pill_small";
-        drawBand(overlay, `Stack-${stack.itemConfigId}`, 0, y, 600, 46, COLORS.panel);
-        addLabel(
-          overlay,
-          stack.displayName,
-          directlyUsable ? -180 : -155,
-          y,
-          directlyUsable ? 220 : 280,
-          32,
-          17,
-          COLORS.text,
-          false,
-          1,
-          HorizontalTextAlignment.LEFT,
-        );
-        addLabel(
-          overlay,
-          `× ${formatCompactNumber(stack.quantity)}`,
-          directlyUsable ? 70 : 190,
-          y,
-          directlyUsable ? 100 : 190,
-          32,
-          18,
-          COLORS.gold,
-          true,
-          1,
-          HorizontalTextAlignment.RIGHT,
-        );
-        if (directlyUsable) {
-          createButton(
+      data.inventory.stacks
+        .slice(stackWindow.start, stackWindow.end)
+        .forEach((stack, index) => {
+          const y = 258 - index * 54;
+          const directlyUsable = stack.itemConfigId === "exp_pill_small";
+          drawBand(overlay, `Stack-${stack.itemConfigId}`, 0, y, 600, 46, COLORS.panel);
+          addLabel(
             overlay,
-            "使用",
-            235,
+            stack.displayName,
+            directlyUsable ? -180 : -155,
             y,
-            104,
-            40,
-            { fill: COLORS.inkGreenLight, stroke: COLORS.goldMuted, fontSize: 15 },
-            () => this.actions.useInventoryItem(stack.itemConfigId),
+            directlyUsable ? 220 : 280,
+            32,
+            17,
+            COLORS.text,
+            false,
+            1,
+            HorizontalTextAlignment.LEFT,
           );
-        }
-      });
+          addLabel(
+            overlay,
+            `× ${formatLargeNumber(stack.quantity)}`,
+            directlyUsable ? 70 : 190,
+            y,
+            directlyUsable ? 100 : 190,
+            32,
+            18,
+            COLORS.gold,
+            true,
+            1,
+            HorizontalTextAlignment.RIGHT,
+          );
+          if (directlyUsable) {
+            createButton(
+              overlay,
+              "使用",
+              235,
+              y,
+              104,
+              40,
+              { fill: COLORS.inkGreenLight, stroke: COLORS.goldMuted, fontSize: 15 },
+              () => this.actions.useInventoryItem(stack.itemConfigId),
+            );
+          }
+        });
     }
 
     addLabel(
@@ -779,6 +849,16 @@ export class AppView {
       true,
       1,
       HorizontalTextAlignment.LEFT,
+    );
+    drawPagination(
+      overlay,
+      "HarvestChestPager",
+      190,
+      35,
+      harvestWindow.page,
+      harvestWindow.pageCount,
+      () => this.showPage("harvestChest", harvestWindow.page - 1),
+      () => this.showPage("harvestChest", harvestWindow.page + 1),
     );
     if (data.harvestChest.entries.length === 0) {
       drawBand(overlay, "HarvestEmpty", 0, -70, 600, 130, COLORS.panel);
@@ -796,80 +876,71 @@ export class AppView {
       return;
     }
 
-    data.harvestChest.entries.slice(0, 4).forEach((entry, index) => {
-      const y = -30 - index * 91;
-      drawBand(overlay, `Harvest-${entry.id}`, 0, y, 610, 78, COLORS.panel);
-      const quality = qualityName(entry.quality);
-      addLabel(
-        overlay,
-        `${quality} · ${entry.displayName}`,
-        -165,
-        y + 13,
-        300,
-        30,
-        17,
-        qualityColor(entry.quality),
-        true,
-        1,
-        HorizontalTextAlignment.LEFT,
-      );
-      addLabel(
-        overlay,
-        entry.entryType === "equipment" ? "独立法宝" : "功法本体",
-        -165,
-        y - 16,
-        300,
-        25,
-        15,
-        COLORS.textMuted,
-        false,
-        1,
-        HorizontalTextAlignment.LEFT,
-      );
-      createButton(
-        overlay,
-        "收取",
-        106,
-        y,
-        100,
-        48,
-        { fill: COLORS.inkGreenLight, stroke: COLORS.goldMuted, fontSize: 16 },
-        () => this.actions.transferHarvest(entry.id),
-      );
-      if (qualityRank(entry.quality) < QUALITY_ORDER.rare) {
+    data.harvestChest.entries
+      .slice(harvestWindow.start, harvestWindow.end)
+      .forEach((entry, index) => {
+        const y = -30 - index * 91;
+        drawBand(overlay, `Harvest-${entry.id}`, 0, y, 610, 78, COLORS.panel);
+        const quality = qualityName(entry.quality);
+        addLabel(
+          overlay,
+          `${quality} · ${entry.displayName}`,
+          -165,
+          y + 13,
+          300,
+          30,
+          17,
+          qualityColor(entry.quality),
+          true,
+          1,
+          HorizontalTextAlignment.LEFT,
+        );
+        addLabel(
+          overlay,
+          entry.entryType === "equipment" ? "独立法宝" : "功法本体",
+          -165,
+          y - 16,
+          300,
+          25,
+          15,
+          COLORS.textMuted,
+          false,
+          1,
+          HorizontalTextAlignment.LEFT,
+        );
         createButton(
           overlay,
-          "分解",
-          231,
+          "收取",
+          106,
           y,
           100,
           48,
-          { fill: COLORS.red, stroke: COLORS.goldMuted, fontSize: 16 },
-          () => this.actions.salvageHarvest(entry.id),
+          { fill: COLORS.inkGreenLight, stroke: COLORS.goldMuted, fontSize: 16 },
+          () => this.actions.transferHarvest(entry.id),
         );
-      } else {
-        addLabel(overlay, "已保护", 231, y, 100, 32, 15, COLORS.gold);
-      }
-    });
-    if (data.harvestChest.entries.length > 4) {
-      addLabel(
-        overlay,
-        `另有 ${data.harvestChest.entries.length - 4} 件，后续列表继续处理`,
-        0,
-        -421,
-        540,
-        30,
-        16,
-        COLORS.textMuted,
-      );
-    }
+        if (qualityRank(entry.quality) < QUALITY_ORDER.rare) {
+          createButton(
+            overlay,
+            "分解",
+            231,
+            y,
+            100,
+            48,
+            { fill: COLORS.red, stroke: COLORS.goldMuted, fontSize: 16 },
+            () => this.actions.salvageHarvest(entry.id),
+          );
+        } else {
+          addLabel(overlay, "已保护", 231, y, 100, 32, 15, COLORS.gold);
+        }
+      });
   }
 
   private drawTechniquePanel(overlay: Node, state: Readonly<AppState>): void {
     const techniques = state.bootstrap!.techniques;
+    const techniqueWindow = this.pageWindow("techniques", techniques.length, 8);
     addLabel(
       overlay,
-      `已收录 ${techniques.length} 本 · 功法/法宝战力 +${formatCompactNumber(state.bootstrap!.progress.loadoutFixedPower)} · 修炼 +${formatBasisPoints(state.bootstrap!.progress.experienceBonusBp)}`,
+      `已收录 ${techniques.length} 本 · 功法/法宝战力 +${formatLargeNumber(state.bootstrap!.progress.loadoutFixedPower)} · 修炼 +${formatBasisPoints(state.bootstrap!.progress.experienceBonusBp)}`,
       0,
       393,
       590,
@@ -902,7 +973,7 @@ export class AppView {
       addLabel(overlay, "尚未收录功法，可从挂机收获箱中收取", 0, 170, 570, 50, 20, COLORS.text);
       return;
     }
-    techniques.slice(0, 8).forEach((technique, index) => {
+    techniques.slice(techniqueWindow.start, techniqueWindow.end).forEach((technique, index) => {
       const y = 222 - index * 75;
       drawBand(overlay, `Technique-${technique.techniqueConfigId}`, 0, y, 600, 62, COLORS.panel);
       addLabel(
@@ -920,7 +991,7 @@ export class AppView {
       );
       addLabel(
         overlay,
-        `${technique.star}星 · 战力 +${formatCompactNumber(technique.fixedPower)}`,
+        `${technique.star}星 · 战力 +${formatLargeNumber(technique.fixedPower)}`,
         25,
         y,
         190,
@@ -954,10 +1025,21 @@ export class AppView {
             : this.actions.equipTechnique(technique.techniqueConfigId),
       );
     });
+    drawPagination(
+      overlay,
+      "TechniquePager",
+      0,
+      -382,
+      techniqueWindow.page,
+      techniqueWindow.pageCount,
+      () => this.showPage("techniques", techniqueWindow.page - 1),
+      () => this.showPage("techniques", techniqueWindow.page + 1),
+    );
   }
 
   private drawEquipmentPanel(overlay: Node, state: Readonly<AppState>): void {
     const equipment = state.bootstrap!.equipment;
+    const equipmentWindow = this.pageWindow("equipment", equipment.length, 7);
     addLabel(
       overlay,
       `持有法宝 ${equipment.length} 件 · 法宝加成会同步影响战力与挂机效率`,
@@ -996,7 +1078,7 @@ export class AppView {
       addLabel(overlay, "尚无法宝入囊，可先处理挂机收获", 0, 135, 560, 48, 20, COLORS.text);
       return;
     }
-    equipment.slice(0, 7).forEach((item, index) => {
+    equipment.slice(equipmentWindow.start, equipmentWindow.end).forEach((item, index) => {
       const y = 180 - index * 72;
       drawBand(overlay, `Equipment-${item.id}`, 0, y, 600, 60, COLORS.panel);
       addLabel(
@@ -1014,7 +1096,7 @@ export class AppView {
       );
       addLabel(
         overlay,
-        `战力 +${formatCompactNumber(item.fixedPower)} · +${item.enhanceLevel}`,
+        `战力 +${formatLargeNumber(item.fixedPower)} · +${item.enhanceLevel}`,
         25,
         y,
         170,
@@ -1075,6 +1157,16 @@ export class AppView {
         }
       }
     });
+    drawPagination(
+      overlay,
+      "EquipmentPager",
+      0,
+      -330,
+      equipmentWindow.page,
+      equipmentWindow.pageCount,
+      () => this.showPage("equipment", equipmentWindow.page - 1),
+      () => this.showPage("equipment", equipmentWindow.page + 1),
+    );
   }
 
   private drawTaskPanel(overlay: Node, state: Readonly<AppState>): void {
@@ -1149,8 +1241,8 @@ export class AppView {
     addLabel(overlay, "奖励已自动存入行囊", 0, 156, 500, 34, 18, COLORS.jade);
 
     const rewards = [
-      ["修为", `+${formatCompactNumber(settlement.experienceGained)}`],
-      ["灵石", `+${formatCompactNumber(settlement.spiritStoneGained)}`],
+      ["修为", `+${formatLargeNumber(settlement.experienceGained)}`],
+      ["灵石", `+${formatLargeNumber(settlement.spiritStoneGained)}`],
       ["掉落尝试", `${settlement.dropAttempts} 次`],
     ] as const;
     rewards.forEach(([label, value], index) => {
@@ -1184,11 +1276,10 @@ export class AppView {
       );
     });
 
-    const stackedDropQuantity = settlement.drops.stackItems.reduce(
-      (total, item) => total + safeNumber(item.quantity),
-      0,
+    const stackedDropQuantity = sumBigNumberStrings(
+      settlement.drops.stackItems.map((item) => item.quantity),
     );
-    const dropLine = `实物入账 ${formatCompactNumber(String(stackedDropQuantity))} · 收获箱 +${settlement.drops.harvestChestAdded}`;
+    const dropLine = `实物入账 ${formatLargeNumber(stackedDropQuantity)} · 收获箱 +${settlement.drops.harvestChestAdded}`;
     addLabel(overlay, dropLine, 0, -130, 530, 30, 16, COLORS.jade);
     if (settlement.drops.autoSalvagedCount > 0) {
       addLabel(
@@ -1289,6 +1380,58 @@ function createButton(
   node.on(Button.EventType.CLICK, onClick);
   addLabel(node, text, 0, 0, width - 20, height - 10, style.fontSize ?? 21, style.text ?? COLORS.text, true);
   return node;
+}
+
+function drawPagination(
+  parent: Node,
+  name: string,
+  x: number,
+  y: number,
+  page: number,
+  pageCount: number,
+  onPrevious: () => void,
+  onNext: () => void,
+): void {
+  if (pageCount <= 1) return;
+
+  drawPageButton(parent, `${name}-Previous`, "<", x - 72, y, page > 0, onPrevious);
+  addLabel(parent, `${page + 1} / ${pageCount}`, x, y, 78, 32, 16, COLORS.textMuted, true);
+  drawPageButton(
+    parent,
+    `${name}-Next`,
+    ">",
+    x + 72,
+    y,
+    page + 1 < pageCount,
+    onNext,
+  );
+}
+
+function drawPageButton(
+  parent: Node,
+  name: string,
+  text: string,
+  x: number,
+  y: number,
+  enabled: boolean,
+  onClick: () => void,
+): void {
+  if (enabled) {
+    createButton(
+      parent,
+      text,
+      x,
+      y,
+      52,
+      36,
+      { fill: COLORS.inkGreenLight, stroke: COLORS.goldMuted, fontSize: 18 },
+      onClick,
+    );
+    return;
+  }
+
+  drawBand(parent, name, x, y, 52, 36, COLORS.panel);
+  addLabel(parent, text, x, y, 32, 26, 18, COLORS.textMuted, true);
 }
 
 function createFeatureButton(
@@ -1516,27 +1659,7 @@ function color(hex: string): Color {
 }
 
 function ratio(value: string, total: string): number {
-  const numerator = Number(value);
-  const denominator = Number(total);
-  if (!Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator <= 0) {
-    return 0;
-  }
-  return numerator / denominator;
-}
-
-function safeNumber(value: string): number {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function formatCompactNumber(value: string): string {
-  const number = Number(value);
-  if (!Number.isFinite(number)) return value;
-  if (number < 10_000) return Math.floor(number).toLocaleString("zh-CN");
-  if (number < 1_000_000) return `${(number / 10_000).toFixed(1)}万`;
-  if (number < 100_000_000) return `${(number / 1_000_000).toFixed(1)}M`;
-  if (number < 1_000_000_000_000) return `${(number / 1_000_000_000).toFixed(1)}B`;
-  return `${(number / 1_000_000_000_000).toFixed(1)}T`;
+  return ratioOfBigNumberStrings(value, total);
 }
 
 function formatDuration(totalSeconds: number): string {

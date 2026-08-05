@@ -26,6 +26,7 @@
     "@cultivation-diary/shared": "workspace:*"
   },
   "devDependencies": {
+    "@cocos/creator-types": "3.8.7",
     "typescript": "^5.8.3"
   }
 }

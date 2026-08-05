@@ -12,6 +12,9 @@ importers:
         specifier: workspace:*
         version: link:shared
     devDependencies:
+      '@cocos/creator-types':
+        specifier: 3.8.7
+        version: 3.8.7
       typescript:
         specifier: ^5.8.3
         version: 5.8.3
@@ -37,8 +40,8 @@ importers:
         specifier: ^16.5.0
         version: 16.5.0
       drizzle-orm:
-        specifier: ^0.44.2
-        version: 0.44.2(@types/pg@8.20.3)(pg@8.22.0)
+        specifier: ^0.45.2
+        version: 0.45.2(@types/pg@8.20.3)(pg@8.22.0)
       fastify:
         specifier: ^5.4.0
         version: 5.11.0
@@ -91,6 +94,9 @@ importers:
         version: 3.2.7(@types/node@22.20.1)(tsx@4.23.5)(yaml@2.9.0)
 
 packages:
+
+  '@cocos/creator-types@3.8.7':
+    resolution: {integrity: sha512-QTtuC+w1s1yQ8DPlgFSiIGS+Pko6v2QdrrQRN8/SttEBo53JjyXEWHXpRkg1lGiHq0u/aadm0cN/Y4jtEmis/w==}
 
   '@drizzle-team/brocli@0.10.2':
     resolution: {integrity: sha512-z33Il7l5dKjUgGULTqBsQBQwckHh5AbIuxhdsIxDDiZAzBOrZO6q9ogcWC65kU382AfynTfgNumVcNIjuIua6w==}
@@ -902,8 +908,8 @@ packages:
     resolution: {integrity: sha512-7OZcmQUrdGI+DUNNsKBn1aW8qSoKuTH7d0mYgSP8bAzdFzKoovxEFnoGQp2dVs82EOJeYycqRtciopszwUf8bw==}
     hasBin: true
 
-  drizzle-orm@0.44.2:
-    resolution: {integrity: sha512-zGAqBzWWkVSFjZpwPOrmCrgO++1kZ5H/rZ4qTGeGOe18iXGVJWf3WPfHOVwFIbmi8kHjfJstC6rJomzGx8g/dQ==}
+  drizzle-orm@0.45.2:
+    resolution: {integrity: sha512-kY0BSaTNYWnoDMVoyY8uxmyHjpJW1geOmBMdSSicKo9CIIWkSxMIj2rkeSR51b8KAPB7m+qysjuHme5nKP+E5Q==}
     peerDependencies:
       '@aws-sdk/client-rds-data': '>=3'
       '@cloudflare/workers-types': '>=4'
@@ -1479,6 +1485,8 @@ packages:
 
 snapshots:
 
+  '@cocos/creator-types@3.8.7': {}
+
   '@drizzle-team/brocli@0.10.2': {}
 
   '@esbuild-kit/core-utils@3.3.2':
@@ -2001,7 +2009,7 @@ snapshots:
       esbuild: 0.25.4
       tsx: 4.23.5
 
-  drizzle-orm@0.44.2(@types/pg@8.20.3)(pg@8.22.0):
+  drizzle-orm@0.45.2(@types/pg@8.20.3)(pg@8.22.0):
     optionalDependencies:
       '@types/pg': 8.20.3
       pg: 8.22.0

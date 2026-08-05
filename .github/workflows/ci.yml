@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Typecheck, test, and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: cultivation_diary
+          POSTGRES_USER: cultivation
+          POSTGRES_PASSWORD: cultivation_dev
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cultivation -d cultivation_diary"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.15.0
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Configure Cocos Creator types
+        run: |
+          mkdir -p temp/declarations
+          cat > temp/declarations/cc.env.d.ts <<'TYPES'
+          declare module "cc/env" {
+            export const DEV: boolean;
+            export const WECHAT: boolean;
+          }
+          TYPES
+          cat > temp/tsconfig.cocos.json <<'JSON'
+          {
+            "compilerOptions": {
+              "target": "ES2015",
+              "module": "ES2015",
+              "strict": true,
+              "types": [
+                "@cocos/creator-types/engine",
+                "./temp/declarations/cc.env"
+              ],
+              "experimentalDecorators": true,
+              "isolatedModules": true,
+              "moduleResolution": "node",
+              "noEmit": true,
+              "forceConsistentCasingInFileNames": true
+            }
+          }
+          JSON
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Run unit tests
+        run: pnpm test
+
+      - name: Run PostgreSQL integration tests
+        run: pnpm test:integration
+        env:
+          REDIS_URL: redis://127.0.0.1:6379
+
+      - name: Build server
+        run: pnpm build:server
