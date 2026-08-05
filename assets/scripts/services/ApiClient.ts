@@ -20,6 +20,8 @@ import type {
 import { CLIENT_CONFIG } from "../core/ClientConfig";
 import type {
   AuthoritativeSnapshotMetadata,
+  HttpRequest,
+  HttpResponse,
   LoginIntent,
   StoredSession,
 } from "../core/ClientTypes";
@@ -34,6 +36,30 @@ export class ClientApiError extends Error {
     super(message);
     this.name = "ClientApiError";
   }
+}
+
+export function isClientTransportError(error: unknown): error is ClientApiError {
+  return error instanceof ClientApiError && error.code === "NETWORK_UNAVAILABLE";
+}
+
+export function requiresAuthoritativeRecovery(error: unknown): error is ClientApiError {
+  return (
+    error instanceof ClientApiError &&
+    (error.code === "PLAYER_VERSION_CONFLICT" ||
+      error.code === "UNAUTHENTICATED" ||
+      error.code === "SESSION_EXPIRED")
+  );
+}
+
+export function classifyAuthoritativeFailure(
+  error: unknown,
+  authoritativeRecoveryFailed = false,
+): "offline" | "reconnecting" | null {
+  if (isClientTransportError(error)) return "offline";
+  if (authoritativeRecoveryFailed || requiresAuthoritativeRecovery(error)) {
+    return "reconnecting";
+  }
+  return null;
 }
 
 export class ApiClient {
@@ -59,20 +85,23 @@ export class ApiClient {
           const refreshed = await this.refresh(stored.refreshToken);
           this.persistSession(refreshed.tokens);
           return refreshed.bootstrap;
-        } catch {
-          // A rejected refresh falls through to a new platform login.
+        } catch (refreshError) {
+          if (!isRejectedSessionCredential(refreshError)) {
+            throw refreshError;
+          }
+          // An invalid refresh credential falls through to a new platform login.
         }
       }
     }
 
-    const intent = await this.platform.getLoginIntent();
+    const intent = await this.getLoginIntent();
     const login = await this.login(intent);
     this.persistSession(login.tokens);
     return login.bootstrap;
   }
 
   async bootstrap(accessToken: string): Promise<BootstrapSnapshot> {
-    const response = await this.platform.request<
+    const response = await this.send<
       ApiSuccess<BootstrapSnapshot> | ApiFailure
     >({
       method: "GET",
@@ -192,7 +221,7 @@ export class ApiClient {
       intent.kind === "development"
         ? { accountId: intent.accountId }
         : { code: intent.code };
-    const response = await this.platform.request<
+    const response = await this.send<
       ApiSuccess<AuthLoginResult> | ApiFailure
     >({
       method: "POST",
@@ -204,7 +233,7 @@ export class ApiClient {
   }
 
   private async refresh(refreshToken: string): Promise<RefreshSessionResult> {
-    const response = await this.platform.request<
+    const response = await this.send<
       ApiSuccess<RefreshSessionResult> | ApiFailure
     >({
       method: "POST",
@@ -224,7 +253,7 @@ export class ApiClient {
     const idempotencyKey = createUuid();
     const expectedPlayerVersion = this.playerVersion;
     const request = async (accessToken: string): Promise<T> => {
-      const response = await this.platform.request<ApiSuccess<T> | ApiFailure>({
+      const response = await this.send<ApiSuccess<T> | ApiFailure>({
         method: "POST",
         url: `${this.baseUrl}${path}`,
         headers: {
@@ -256,6 +285,22 @@ export class ApiClient {
     this.platform.save(CLIENT_CONFIG.sessionStorageKey, session);
   }
 
+  private async getLoginIntent(): Promise<LoginIntent> {
+    try {
+      return await this.platform.getLoginIntent();
+    } catch (error) {
+      throw toTransportError(error);
+    }
+  }
+
+  private async send<T>(request: HttpRequest): Promise<HttpResponse<T>> {
+    try {
+      return await this.platform.request<T>(request);
+    } catch (error) {
+      throw toTransportError(error);
+    }
+  }
+
   private capture<T>(response: ApiSuccess<T>): T {
     if (
       this.playerVersion !== null &&
@@ -271,6 +316,22 @@ export class ApiClient {
     this.lastSuccessfulSyncAt = response.serverTime;
     return response.data;
   }
+}
+
+function toTransportError(error: unknown): ClientApiError {
+  if (error instanceof ClientApiError) return error;
+  return new ClientApiError(
+    "NETWORK_UNAVAILABLE",
+    "当前网络不可用，请检查连接后重试",
+    true,
+  );
+}
+
+function isRejectedSessionCredential(error: unknown): error is ClientApiError {
+  return (
+    error instanceof ClientApiError &&
+    (error.code === "UNAUTHENTICATED" || error.code === "SESSION_EXPIRED")
+  );
 }
 
 function comparePlayerVersions(left: string, right: string): number {

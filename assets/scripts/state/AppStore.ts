@@ -6,6 +6,8 @@ type StateListener = (state: Readonly<AppState>) => void;
 export class AppStore {
   private state: AppState = {
     phase: "loading",
+    syncStatus: "reconnecting",
+    lastSuccessfulSyncAt: null,
     loadingMessage: "正在叩问仙门",
     errorMessage: null,
     bootstrap: null,
@@ -27,18 +29,67 @@ export class AppStore {
   }
 
   setLoading(message: string): void {
-    this.update({ phase: "loading", loadingMessage: message, errorMessage: null });
+    this.update({
+      phase: "loading",
+      syncStatus: "reconnecting",
+      loadingMessage: message,
+      errorMessage: null,
+    });
   }
 
-  setReady(bootstrap: BootstrapSnapshot): void {
-    const pendingOfflineSettlement =
-      bootstrap.offlineSettlement ?? this.state.bootstrap?.offlineSettlement ?? null;
+  setReady(bootstrap: BootstrapSnapshot, lastSuccessfulSyncAt?: string): void {
     this.update({
       phase: "ready",
-      bootstrap:
-        pendingOfflineSettlement === bootstrap.offlineSettlement
-          ? bootstrap
-          : { ...bootstrap, offlineSettlement: pendingOfflineSettlement },
+      syncStatus: "online",
+      ...(lastSuccessfulSyncAt === undefined ? {} : { lastSuccessfulSyncAt }),
+      bootstrap: this.mergePendingOfflineSettlement(bootstrap),
+      errorMessage: null,
+    });
+  }
+
+  replaceSnapshot(bootstrap: BootstrapSnapshot): void {
+    this.update({
+      phase: "ready",
+      bootstrap: this.mergePendingOfflineSettlement(bootstrap),
+      errorMessage: null,
+    });
+  }
+
+  markReconnecting(): void {
+    if (!this.state.bootstrap) return;
+    if (this.state.phase === "ready" && this.state.syncStatus === "reconnecting") return;
+    this.update({
+      phase: "ready",
+      syncStatus: "reconnecting",
+      errorMessage: null,
+      featureMessage: null,
+    });
+  }
+
+  markOffline(lastSuccessfulSyncAt?: string): void {
+    if (!this.state.bootstrap) return;
+    if (
+      this.state.syncStatus === "offline" &&
+      (lastSuccessfulSyncAt === undefined ||
+        lastSuccessfulSyncAt === this.state.lastSuccessfulSyncAt)
+    ) {
+      return;
+    }
+    this.update({
+      phase: "ready",
+      syncStatus: "offline",
+      ...(lastSuccessfulSyncAt === undefined ? {} : { lastSuccessfulSyncAt }),
+      errorMessage: null,
+      featureMessage: null,
+    });
+  }
+
+  markOnline(lastSuccessfulSyncAt?: string): void {
+    if (!this.state.bootstrap) return;
+    this.update({
+      phase: "ready",
+      syncStatus: "online",
+      ...(lastSuccessfulSyncAt === undefined ? {} : { lastSuccessfulSyncAt }),
       errorMessage: null,
     });
   }
@@ -75,5 +126,13 @@ export class AppStore {
   private update(patch: Partial<AppState>): void {
     this.state = { ...this.state, ...patch };
     for (const listener of this.listeners) listener(this.state);
+  }
+
+  private mergePendingOfflineSettlement(bootstrap: BootstrapSnapshot): BootstrapSnapshot {
+    const pendingOfflineSettlement =
+      bootstrap.offlineSettlement ?? this.state.bootstrap?.offlineSettlement ?? null;
+    return pendingOfflineSettlement === bootstrap.offlineSettlement
+      ? bootstrap
+      : { ...bootstrap, offlineSettlement: pendingOfflineSettlement };
   }
 }

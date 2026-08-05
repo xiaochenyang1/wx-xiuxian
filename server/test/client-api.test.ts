@@ -9,7 +9,13 @@ import type {
   SyncHeartbeatResult,
 } from "@cultivation-diary/shared";
 import { describe, expect, it } from "vitest";
-import { ApiClient } from "../../assets/scripts/services/ApiClient";
+import {
+  ApiClient,
+  ClientApiError,
+  classifyAuthoritativeFailure,
+  isClientTransportError,
+} from "../../assets/scripts/services/ApiClient";
+import { CLIENT_CONFIG } from "../../assets/scripts/core/ClientConfig";
 import type {
   HttpRequest,
   HttpResponse,
@@ -18,6 +24,7 @@ import type {
 import type {
   PlatformAdapter,
   PlatformLifecycleHandlers,
+  PlatformNetworkHandlers,
 } from "../../assets/scripts/platform/PlatformAdapter";
 import { bootstrapFixture } from "./fixtures/bootstrap";
 
@@ -119,6 +126,62 @@ describe("Cocos API client", () => {
       playerVersion: "8",
       lastSuccessfulSyncAt: SERVER_TIME,
     });
+  });
+
+  it("classifies transport failures without treating HTTP business errors as offline", async () => {
+    const offlineClient = new ApiClient(
+      new FailurePlatform("login-transport"),
+      "http://game.test",
+    );
+    const offlineError = await offlineClient.authenticate().catch((error: unknown) => error);
+
+    expect(isClientTransportError(offlineError)).toBe(true);
+    expect(offlineError).toMatchObject({ code: "NETWORK_UNAVAILABLE", retryable: true });
+
+    const businessClient = new ApiClient(
+      new FailurePlatform("login-business"),
+      "http://game.test",
+    );
+    const businessError = await businessClient.authenticate().catch((error: unknown) => error);
+
+    expect(isClientTransportError(businessError)).toBe(false);
+    expect(businessError).toMatchObject({ code: "SERVER_MAINTENANCE" });
+    expect(classifyAuthoritativeFailure(offlineError)).toBe("offline");
+    expect(classifyAuthoritativeFailure(businessError)).toBeNull();
+    expect(
+      classifyAuthoritativeFailure(
+        new ClientApiError("PLAYER_VERSION_CONFLICT", "stale", true),
+      ),
+    ).toBe("reconnecting");
+    expect(classifyAuthoritativeFailure(businessError, true)).toBe("reconnecting");
+  });
+
+  it("does not start a new platform login when refresh fails at the transport layer", async () => {
+    const platform = new FailurePlatform("refresh-transport");
+    platform.save(CLIENT_CONFIG.sessionStorageKey, tokens("stored"));
+    const client = new ApiClient(platform, "http://game.test");
+
+    await expect(client.authenticate()).rejects.toMatchObject({
+      code: "NETWORK_UNAVAILABLE",
+    });
+    expect(platform.loginIntentCount).toBe(0);
+    expect(platform.requests.filter((request) => request.url.endsWith("/api/v1/auth/dev"))).toEqual(
+      [],
+    );
+  });
+
+  it("starts a new platform login when the refresh credential is rejected", async () => {
+    const platform = new FailurePlatform("refresh-rejected");
+    platform.save(CLIENT_CONFIG.sessionStorageKey, tokens("stored"));
+    const client = new ApiClient(platform, "http://game.test");
+
+    const bootstrap = await client.authenticate();
+
+    expect(bootstrap.player.displayName).toBe("青岚子");
+    expect(platform.loginIntentCount).toBe(1);
+    expect(platform.requests.some((request) => request.url.endsWith("/api/v1/auth/dev"))).toBe(
+      true,
+    );
   });
 });
 
@@ -228,6 +291,71 @@ class ScriptedPlatform implements PlatformAdapter {
     return () => undefined;
   }
 
+  subscribeNetworkStatus(_handlers: PlatformNetworkHandlers): () => void {
+    return () => undefined;
+  }
+
+  feedback(): void {}
+}
+
+type FailureMode =
+  | "login-transport"
+  | "login-business"
+  | "refresh-transport"
+  | "refresh-rejected";
+
+class FailurePlatform implements PlatformAdapter {
+  readonly kind = "browser" as const;
+  readonly requests: HttpRequest[] = [];
+  readonly storage = new Map<string, unknown>();
+  loginIntentCount = 0;
+
+  constructor(private readonly mode: FailureMode) {}
+
+  async request<T>(request: HttpRequest): Promise<HttpResponse<T>> {
+    this.requests.push(request);
+    if (request.url.endsWith("/api/v1/bootstrap")) {
+      return response<T>(401, failure("UNAUTHENTICATED", "登录状态已过期"));
+    }
+    if (request.url.endsWith("/api/v1/auth/refresh")) {
+      if (this.mode === "refresh-transport") throw new Error("connection reset");
+      return response<T>(401, failure("SESSION_EXPIRED", "会话已过期"));
+    }
+    if (request.url.endsWith("/api/v1/auth/dev")) {
+      if (this.mode === "login-transport") throw new Error("network down");
+      if (this.mode === "login-business") {
+        return response<T>(503, failure("SERVER_MAINTENANCE", "服务器维护中"));
+      }
+      return response<T>(200, success<AuthLoginResult>("7", {
+        isNewPlayer: false,
+        tokens: tokens("new-login"),
+        bootstrap: bootstrapFixture(),
+      }));
+    }
+    throw new Error(`Unexpected request: ${request.url}`);
+  }
+
+  async getLoginIntent(): Promise<LoginIntent> {
+    this.loginIntentCount += 1;
+    return { kind: "development", accountId: "failure-test" };
+  }
+
+  load<T>(key: string): T | null {
+    return (this.storage.get(key) as T | undefined) ?? null;
+  }
+
+  save<T>(key: string, value: T): void {
+    this.storage.set(key, value);
+  }
+
+  subscribeLifecycle(_handlers: PlatformLifecycleHandlers): () => void {
+    return () => undefined;
+  }
+
+  subscribeNetworkStatus(_handlers: PlatformNetworkHandlers): () => void {
+    return () => undefined;
+  }
+
   feedback(): void {}
 }
 
@@ -237,6 +365,14 @@ function success<T>(playerVersion: string, data: T): ApiSuccess<T> {
     serverTime: SERVER_TIME,
     playerVersion,
     data,
+  };
+}
+
+function failure(code: string, message: string): ApiFailure {
+  return {
+    requestId: "request-failure",
+    serverTime: SERVER_TIME,
+    error: { code, message, retryable: false, details: {} },
   };
 }
 

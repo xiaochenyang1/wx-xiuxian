@@ -1,6 +1,7 @@
 import type { OfflineSettlementSummary } from "@cultivation-diary/shared";
 import { describe, expect, it } from "vitest";
 import { AppStore } from "../../assets/scripts/state/AppStore";
+import { canRunAuthoritativeMutation } from "../../assets/scripts/core/ClientTypes";
 import { bootstrapFixture } from "./fixtures/bootstrap";
 
 describe("Cocos app store", () => {
@@ -61,6 +62,62 @@ describe("Cocos app store", () => {
     expect(store.snapshot.bootstrap?.offlineSettlement).toBeNull();
     expect(store.snapshot.bootstrap?.progress.experience).toBe("18");
   });
+
+  it("keeps the current view read-only while offline and restores it after sync", () => {
+    const store = new AppStore();
+    const bootstrap = { ...bootstrapFixture(), offlineSettlement: offlineSettlementFixture() };
+    store.setReady(bootstrap, "2026-08-05T07:59:00.000Z");
+    store.selectTab("cave");
+    store.openFeature("inventory");
+    store.setFeatureMessage("保留中的提示");
+
+    store.markOffline("2026-08-05T08:00:00.000Z");
+
+    expect(store.snapshot).toMatchObject({
+      phase: "ready",
+      syncStatus: "offline",
+      lastSuccessfulSyncAt: "2026-08-05T08:00:00.000Z",
+      selectedTab: "cave",
+      activeFeature: "inventory",
+      featureMessage: null,
+    });
+    expect(store.snapshot.bootstrap?.offlineSettlement).toEqual(bootstrap.offlineSettlement);
+    expect(canRunAuthoritativeMutation(store.snapshot)).toBe(false);
+
+    store.replaceSnapshot({
+      ...bootstrapFixture(),
+      progress: { ...bootstrapFixture().progress, experience: "99" },
+    });
+    expect(store.snapshot.syncStatus).toBe("offline");
+    expect(store.snapshot.bootstrap?.progress.experience).toBe("99");
+    expect(canRunAuthoritativeMutation(store.snapshot)).toBe(false);
+
+    store.setLoading("正在叩开境界之门");
+    expect(store.snapshot.phase).toBe("loading");
+    store.markReconnecting();
+    expect(store.snapshot.phase).toBe("ready");
+    expect(store.snapshot.syncStatus).toBe("reconnecting");
+    expect(canRunAuthoritativeMutation(store.snapshot)).toBe(false);
+
+    store.markOnline("2026-08-05T08:01:00.000Z");
+    expect(store.snapshot.syncStatus).toBe("online");
+    expect(store.snapshot.lastSuccessfulSyncAt).toBe("2026-08-05T08:01:00.000Z");
+    expect(store.snapshot.selectedTab).toBe("cave");
+    expect(store.snapshot.activeFeature).toBe("inventory");
+    expect(canRunAuthoritativeMutation(store.snapshot)).toBe(true);
+  });
+
+  it("does not fabricate an offline preview without an authoritative snapshot", () => {
+    const store = new AppStore();
+
+    store.markOffline();
+
+    expect(store.snapshot.phase).toBe("loading");
+    expect(store.snapshot.bootstrap).toBeNull();
+    expect(store.snapshot.syncStatus).toBe("reconnecting");
+    expect(canRunAuthoritativeMutation(store.snapshot)).toBe(false);
+  });
+
 });
 
 function offlineSettlementFixture(): OfflineSettlementSummary {

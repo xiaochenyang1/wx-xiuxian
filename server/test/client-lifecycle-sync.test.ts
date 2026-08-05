@@ -98,6 +98,73 @@ describe("Cocos lifecycle sync coordinator", () => {
     ]);
   });
 
+  it("reports a failing show sync and retries one connectivity hint immediately", async () => {
+    const started: Array<{ reason: LifecycleSyncReason; allowRender: boolean }> = [];
+    const rejected: Array<{ error: unknown; allowRender: boolean }> = [];
+    const accepted: string[] = [];
+    let syncCount = 0;
+    const coordinator = new LifecycleSyncCoordinator<string>({
+      intervalSeconds: 30,
+      schedule: () => undefined,
+      unschedule: () => undefined,
+      persistCurrentSnapshot: () => undefined,
+      canStartSync: () => true,
+      setSyncInFlight: () => undefined,
+      started: (reason, allowRender) => started.push({ reason, allowRender }),
+      sync: async () => {
+        syncCount += 1;
+        if (syncCount === 1) throw new Error("network down");
+        return "authoritative";
+      },
+      recover: async () => null,
+      accept: (result) => accepted.push(result),
+      reject: (error, allowRender) => rejected.push({ error, allowRender }),
+    });
+
+    coordinator.start();
+    coordinator.requestForegroundSync();
+    coordinator.requestForegroundSync();
+    await flushPromises();
+
+    expect(syncCount).toBe(2);
+    expect(started).toEqual([
+      { reason: "show", allowRender: true },
+      { reason: "show", allowRender: true },
+    ]);
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]?.allowRender).toBe(true);
+    expect(accepted).toEqual(["authoritative"]);
+  });
+
+  it("retries immediately when connectivity returns during a failing periodic sync", async () => {
+    const reasons: LifecycleSyncReason[] = [];
+    const accepted: string[] = [];
+    const coordinator = new LifecycleSyncCoordinator<string>({
+      intervalSeconds: 30,
+      schedule: () => undefined,
+      unschedule: () => undefined,
+      persistCurrentSnapshot: () => undefined,
+      canStartSync: () => true,
+      setSyncInFlight: () => undefined,
+      sync: async (reason) => {
+        reasons.push(reason);
+        if (reasons.length === 1) throw new Error("old connection failed");
+        return "reconnected";
+      },
+      recover: async () => null,
+      accept: (result) => accepted.push(result),
+    });
+
+    coordinator.start();
+    coordinator.periodicTick();
+    coordinator.requestForegroundSync();
+    coordinator.requestForegroundSync();
+    await flushPromises();
+
+    expect(reasons).toEqual(["periodic", "show"]);
+    expect(accepted).toEqual(["reconnected"]);
+  });
+
   it("waits for an external mutation and ignores late responses after destroy", async () => {
     let available = false;
     const requests: Array<Deferred<string>> = [];

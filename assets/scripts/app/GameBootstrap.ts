@@ -8,6 +8,7 @@ import type {
 import { CLIENT_CONFIG } from "../core/ClientConfig";
 import {
   BOOTSTRAP_CACHE_SCHEMA_VERSION,
+  canRunAuthoritativeMutation,
   isStoredBootstrapCacheEnvelope,
 } from "../core/ClientTypes";
 import type { StoredBootstrapCache } from "../core/ClientTypes";
@@ -15,7 +16,13 @@ import {
   LifecycleSyncCoordinator,
   type LifecycleRenderToken,
 } from "../core/LifecycleSyncCoordinator";
-import { ApiClient, ClientApiError } from "../services/ApiClient";
+import {
+  ApiClient,
+  ClientApiError,
+  classifyAuthoritativeFailure,
+  isClientTransportError,
+  requiresAuthoritativeRecovery,
+} from "../services/ApiClient";
 import { createPlatformAdapter } from "../platform/PlatformAdapter";
 import { AppStore } from "../state/AppStore";
 import { AppView } from "../ui/AppView";
@@ -30,7 +37,9 @@ export class GameBootstrap extends Component {
   private appView: AppView | null = null;
   private unsubscribe: (() => void) | null = null;
   private unsubscribeLifecycle: (() => void) | null = null;
+  private unsubscribeNetworkStatus: (() => void) | null = null;
   private mutationInFlight = false;
+  private startupRetryRequested = false;
   private destroyed = false;
   private offlineDismissPending = false;
   private modalInputLockedUntil = 0;
@@ -47,8 +56,17 @@ export class GameBootstrap extends Component {
     setSyncInFlight: (inFlight) => {
       this.mutationInFlight = inFlight;
     },
+    started: (reason, allowRender) => {
+      if (
+        allowRender &&
+        (reason === "show" || this.store.snapshot.syncStatus === "offline")
+      ) {
+        this.store.markReconnecting();
+      }
+    },
     sync: async () => (await this.apiClient.syncHeartbeat()).bootstrap,
     recover: (error) => this.recoverHeartbeat(error),
+    reject: (error, allowRender) => this.handleHeartbeatFailure(error, allowRender),
     accept: (bootstrap, allowRender) =>
       this.acceptHeartbeatBootstrap(bootstrap, allowRender),
   });
@@ -98,6 +116,10 @@ export class GameBootstrap extends Component {
       },
       onHide: () => this.lifecycleSync.handleHide(),
     });
+    this.unsubscribeNetworkStatus = this.platform.subscribeNetworkStatus({
+      onOnline: () => this.handleNetworkOnline(),
+      onOffline: () => this.handleNetworkOffline(),
+    });
     void this.startGame();
   }
 
@@ -105,6 +127,8 @@ export class GameBootstrap extends Component {
     this.destroyed = true;
     this.unsubscribeLifecycle?.();
     this.unsubscribeLifecycle = null;
+    this.unsubscribeNetworkStatus?.();
+    this.unsubscribeNetworkStatus = null;
     this.lifecycleSync.destroy();
     this.unsubscribe?.();
     this.unsubscribe = null;
@@ -120,15 +144,20 @@ export class GameBootstrap extends Component {
     this.store.setLoading("正在同步修为");
     let settleAfterAuthentication = false;
     let retryAfterLifecycleChange = false;
+    let retryAfterConnectivityHint = false;
     try {
       const bootstrap = await this.apiClient.authenticate();
       this.persistBootstrap(bootstrap);
       if (this.lifecycleSync.canRender(renderToken)) {
-        this.store.setReady(bootstrap);
+        this.setAuthoritativeReady(bootstrap);
         settleAfterAuthentication = true;
       }
     } catch (error) {
       if (this.lifecycleSync.canRender(renderToken)) {
+        if (isClientTransportError(error) && this.store.snapshot.bootstrap) {
+          this.markAuthoritativeOffline();
+          return;
+        }
         const message =
           error instanceof ClientApiError || error instanceof Error
             ? error.message
@@ -141,11 +170,16 @@ export class GameBootstrap extends Component {
           this.lifecycleSync.captureRenderToken() !== null;
       }
     } finally {
+      retryAfterConnectivityHint =
+        this.startupRetryRequested && !settleAfterAuthentication;
+      this.startupRetryRequested = false;
       this.finishMutation();
     }
 
     if (settleAfterAuthentication) await this.settleGame();
-    else if (retryAfterLifecycleChange) void this.startGame();
+    else if (retryAfterLifecycleChange || retryAfterConnectivityHint) {
+      void this.startGame();
+    }
   }
 
   private async settleGame(): Promise<void> {
@@ -165,13 +199,24 @@ export class GameBootstrap extends Component {
       if (!this.lifecycleSync.canRender(renderToken)) return;
       this.applySyncedBootstrap(result.bootstrap);
     } catch (error) {
-      const recoveredBootstrap = await this.recoverHeartbeat(error);
+      let recoveredBootstrap: BootstrapSnapshot | null = null;
+      try {
+        recoveredBootstrap = await this.recoverHeartbeat(error);
+      } catch (recoveryError) {
+        if (this.lifecycleSync.canRender(renderToken)) {
+          this.markReadOnlyAfterAuthoritativeFailure(recoveryError, true);
+        }
+        return;
+      }
       if (recoveredBootstrap) {
         this.persistBootstrap(recoveredBootstrap);
         if (this.lifecycleSync.canRender(renderToken)) {
           this.applySyncedBootstrap(recoveredBootstrap);
         }
         return;
+      }
+      if (this.lifecycleSync.canRender(renderToken)) {
+        this.markReadOnlyAfterAuthoritativeFailure(error);
       }
       // Keep the last authoritative snapshot visible; the next scheduled sync retries.
     } finally {
@@ -190,8 +235,11 @@ export class GameBootstrap extends Component {
   private applySyncedBootstrap(bootstrap: BootstrapSnapshot): void {
     if (this.isProfileOpen()) {
       this.pendingProfileBootstrap = bootstrap;
+      if (this.store.snapshot.syncStatus !== "online") {
+        this.markAuthoritativeOnline();
+      }
     } else {
-      this.store.setReady(bootstrap);
+      this.setAuthoritativeReady(bootstrap);
     }
   }
 
@@ -230,23 +278,43 @@ export class GameBootstrap extends Component {
 
     this.pendingProfileBootstrap = null;
     beforeApply?.();
-    this.store.setReady(bootstrap);
+    this.setAuthoritativeReady(bootstrap);
     return true;
   }
 
   private async recoverHeartbeat(error: unknown): Promise<BootstrapSnapshot | null> {
-    if (
-      !(error instanceof ClientApiError) ||
-      error.code !== "PLAYER_VERSION_CONFLICT"
-    ) {
+    if (!requiresAuthoritativeRecovery(error)) {
       return null;
     }
 
     try {
       return await this.apiClient.authenticate();
-    } catch {
+    } catch (recoveryError) {
+      if (isClientTransportError(recoveryError)) throw recoveryError;
       return null;
     }
+  }
+
+  private handleHeartbeatFailure(error: unknown, allowRender: boolean): void {
+    if (allowRender) this.markReadOnlyAfterAuthoritativeFailure(error);
+  }
+
+  private handleNetworkOnline(): void {
+    if (this.destroyed) return;
+    if (this.store.snapshot.bootstrap) {
+      this.store.markReconnecting();
+      this.lifecycleSync.requestForegroundSync();
+    } else if (this.mutationInFlight) {
+      this.startupRetryRequested = true;
+    } else if (this.store.snapshot.phase === "error") {
+      void this.startGame();
+    }
+  }
+
+  private handleNetworkOffline(): void {
+    if (this.destroyed || !this.store.snapshot.bootstrap) return;
+    this.persistCurrentBootstrap();
+    this.markAuthoritativeOffline();
   }
 
   private dismissOfflineSettlement(): void {
@@ -269,7 +337,7 @@ export class GameBootstrap extends Component {
     const pendingBootstrap = this.pendingProfileBootstrap;
     this.pendingProfileBootstrap = null;
     this.store.closeFeature();
-    if (pendingBootstrap) this.store.setReady(pendingBootstrap);
+    if (pendingBootstrap) this.applyDeferredProfileBootstrap(pendingBootstrap);
   }
 
   private isProfileOpen(): boolean {
@@ -277,14 +345,7 @@ export class GameBootstrap extends Component {
   }
 
   private async breakthrough(): Promise<void> {
-    if (
-      this.mutationInFlight ||
-      this.offlineDismissPending ||
-      Date.now() < this.modalInputLockedUntil ||
-      Boolean(this.store.snapshot.bootstrap?.offlineSettlement)
-    ) {
-      return;
-    }
+    if (!this.canStartFeatureMutation()) return;
 
     const renderToken = this.lifecycleSync.captureRenderToken();
     if (!renderToken) return;
@@ -297,6 +358,10 @@ export class GameBootstrap extends Component {
     } catch (error) {
       if (await this.recoverPlayerVersionConflict(error, renderToken)) return;
       if (!this.lifecycleSync.canRender(renderToken)) return;
+      if (isClientTransportError(error)) {
+        this.markAuthoritativeOffline();
+        return;
+      }
       const message =
         error instanceof ClientApiError || error instanceof Error
           ? error.message
@@ -322,11 +387,8 @@ export class GameBootstrap extends Component {
           : `行囊扩展成功，消耗灵石 ${result.cost}`,
       );
     } catch (error) {
-      if (
-        !(await this.recoverPlayerVersionConflict(error, renderToken)) &&
-        this.lifecycleSync.canRender(renderToken)
-      ) {
-        this.store.setFeatureMessage(errorMessage(error, "行囊扩展失败"));
+      if (!(await this.recoverPlayerVersionConflict(error, renderToken))) {
+        this.handleFeatureMutationFailure(error, "行囊扩展失败", renderToken);
       }
     } finally {
       this.finishMutation();
@@ -358,13 +420,14 @@ export class GameBootstrap extends Component {
     } catch (error) {
       if (await this.recoverPlayerVersionConflict(error, renderToken)) {
         if (!this.lifecycleSync.canRender(renderToken)) return;
+        if (this.store.snapshot.syncStatus !== "online") return;
         this.store.setFeatureMessage(
           this.store.snapshot.bootstrap?.player.avatarVariant === "neutral"
             ? "档案状态已同步，请重新确认"
             : "角色形象已由其他操作确定，档案状态已同步",
         );
       } else if (this.lifecycleSync.canRender(renderToken)) {
-        this.store.setFeatureMessage(errorMessage(error, "角色形象确认失败"));
+        this.handleFeatureMutationFailure(error, "角色形象确认失败", renderToken);
       }
     } finally {
       this.finishMutation();
@@ -407,11 +470,12 @@ export class GameBootstrap extends Component {
     } catch (error) {
       if (await this.recoverPlayerVersionConflict(error, renderToken)) {
         if (!this.lifecycleSync.canRender(renderToken)) return;
+        if (this.store.snapshot.syncStatus !== "online") return;
         this.store.setFeatureMessage(
           "档案状态已同步，原输入已保留，请核对后重新提交",
         );
       } else if (this.lifecycleSync.canRender(renderToken)) {
-        this.store.setFeatureMessage(errorMessage(error, "修改道号失败"));
+        this.handleFeatureMutationFailure(error, "修改道号失败", renderToken);
       }
     } finally {
       this.finishMutation();
@@ -433,11 +497,8 @@ export class GameBootstrap extends Component {
           : `炼化完成：修为 +${result.experienceGained}`,
       );
     } catch (error) {
-      if (
-        !(await this.recoverPlayerVersionConflict(error, renderToken)) &&
-        this.lifecycleSync.canRender(renderToken)
-      ) {
-        this.store.setFeatureMessage(errorMessage(error, "道具使用失败"));
+      if (!(await this.recoverPlayerVersionConflict(error, renderToken))) {
+        this.handleFeatureMutationFailure(error, "道具使用失败", renderToken);
       }
     } finally {
       this.finishMutation();
@@ -455,11 +516,8 @@ export class GameBootstrap extends Component {
       if (!this.applyMutationBootstrap(result.bootstrap, renderToken)) return;
       this.store.setFeatureMessage("收获已安全收入行囊或功法库");
     } catch (error) {
-      if (
-        !(await this.recoverPlayerVersionConflict(error, renderToken)) &&
-        this.lifecycleSync.canRender(renderToken)
-      ) {
-        this.store.setFeatureMessage(errorMessage(error, "收取失败"));
+      if (!(await this.recoverPlayerVersionConflict(error, renderToken))) {
+        this.handleFeatureMutationFailure(error, "收取失败", renderToken);
       }
     } finally {
       this.finishMutation();
@@ -479,11 +537,8 @@ export class GameBootstrap extends Component {
         `分解完成：灵石 +${result.spiritStoneGained}，强化石 +${result.enhanceStoneGained}`,
       );
     } catch (error) {
-      if (
-        !(await this.recoverPlayerVersionConflict(error, renderToken)) &&
-        this.lifecycleSync.canRender(renderToken)
-      ) {
-        this.store.setFeatureMessage(errorMessage(error, "分解失败"));
+      if (!(await this.recoverPlayerVersionConflict(error, renderToken))) {
+        this.handleFeatureMutationFailure(error, "分解失败", renderToken);
       }
     } finally {
       this.finishMutation();
@@ -542,11 +597,8 @@ export class GameBootstrap extends Component {
         `${completedMessage}，${describePowerDelta(result.powerDelta)}`,
       );
     } catch (error) {
-      if (
-        !(await this.recoverPlayerVersionConflict(error, renderToken)) &&
-        this.lifecycleSync.canRender(renderToken)
-      ) {
-        this.store.setFeatureMessage(errorMessage(error, "装备操作失败"));
+      if (!(await this.recoverPlayerVersionConflict(error, renderToken))) {
+        this.handleFeatureMutationFailure(error, "装备操作失败", renderToken);
       }
     } finally {
       this.finishMutation();
@@ -558,7 +610,26 @@ export class GameBootstrap extends Component {
     this.lifecycleSync.notifySyncAvailable();
   }
 
+  private handleFeatureMutationFailure(
+    error: unknown,
+    fallback: string,
+    renderToken: LifecycleRenderToken,
+  ): void {
+    if (!this.lifecycleSync.canRender(renderToken)) return;
+    if (isClientTransportError(error)) {
+      this.markAuthoritativeOffline();
+      return;
+    }
+    this.store.setFeatureMessage(errorMessage(error, fallback));
+  }
+
   private canStartFeatureMutation(): boolean {
+    if (!canRunAuthoritativeMutation(this.store.snapshot)) {
+      if (this.store.snapshot.bootstrap) {
+        this.store.setFeatureMessage("当前为离线数据，联网同步后可继续操作");
+      }
+      return false;
+    }
     return (
       !this.mutationInFlight &&
       !this.offlineDismissPending &&
@@ -570,7 +641,15 @@ export class GameBootstrap extends Component {
   private applyPendingProfileBootstrap(): void {
     const pendingBootstrap = this.pendingProfileBootstrap;
     this.pendingProfileBootstrap = null;
-    if (pendingBootstrap) this.store.setReady(pendingBootstrap);
+    if (pendingBootstrap) this.applyDeferredProfileBootstrap(pendingBootstrap);
+  }
+
+  private applyDeferredProfileBootstrap(bootstrap: BootstrapSnapshot): void {
+    if (this.store.snapshot.syncStatus === "online") {
+      this.setAuthoritativeReady(bootstrap);
+    } else {
+      this.store.replaceSnapshot(bootstrap);
+    }
   }
 
   private async recoverPlayerVersionConflict(
@@ -578,7 +657,7 @@ export class GameBootstrap extends Component {
     renderToken: LifecycleRenderToken,
     deferWhileProfileOpen = false,
   ): Promise<boolean> {
-    if (!(error instanceof ClientApiError) || error.code !== "PLAYER_VERSION_CONFLICT") {
+    if (!requiresAuthoritativeRecovery(error)) {
       return false;
     }
 
@@ -591,11 +670,43 @@ export class GameBootstrap extends Component {
         return true;
       }
       this.pendingProfileBootstrap = null;
-      this.store.setReady(bootstrap);
+      this.setAuthoritativeReady(bootstrap);
       return true;
-    } catch {
-      return false;
+    } catch (recoveryError) {
+      if (this.lifecycleSync.canRender(renderToken)) {
+        this.markReadOnlyAfterAuthoritativeFailure(recoveryError, true);
+      }
+      return true;
     }
+  }
+
+  private setAuthoritativeReady(bootstrap: BootstrapSnapshot): void {
+    const syncAt = this.apiClient.getAuthoritativeSnapshotMetadata()?.lastSuccessfulSyncAt;
+    if (syncAt) this.store.setReady(bootstrap, syncAt);
+    else this.store.setReady(bootstrap);
+  }
+
+  private markAuthoritativeOnline(): void {
+    const syncAt = this.apiClient.getAuthoritativeSnapshotMetadata()?.lastSuccessfulSyncAt;
+    if (syncAt) this.store.markOnline(syncAt);
+    else this.store.markOnline();
+  }
+
+  private markAuthoritativeOffline(): void {
+    const syncAt = this.apiClient.getAuthoritativeSnapshotMetadata()?.lastSuccessfulSyncAt;
+    if (syncAt) this.store.markOffline(syncAt);
+    else this.store.markOffline();
+  }
+
+  private markReadOnlyAfterAuthoritativeFailure(
+    error: unknown,
+    authoritativeRecoveryFailed = false,
+  ): boolean {
+    const status = classifyAuthoritativeFailure(error, authoritativeRecoveryFailed);
+    if (!status || !this.store.snapshot.bootstrap) return false;
+    if (status === "offline") this.markAuthoritativeOffline();
+    else this.store.markReconnecting();
+    return true;
   }
 }
 

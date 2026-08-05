@@ -3,6 +3,7 @@ import type { AuthTokens, BootstrapSnapshot } from "@cultivation-diary/shared";
 export const BOOTSTRAP_CACHE_SCHEMA_VERSION = 1 as const;
 
 export type MainTab = "cultivation" | "partner" | "ranking" | "cave";
+export type SyncStatus = "online" | "reconnecting" | "offline";
 export type FeaturePanel =
   | "profile"
   | "techniques"
@@ -28,12 +29,18 @@ export interface StoredBootstrapCache extends AuthoritativeSnapshotMetadata {
 
 export interface AppState {
   phase: "loading" | "ready" | "error";
+  syncStatus: SyncStatus;
+  lastSuccessfulSyncAt: string | null;
   loadingMessage: string;
   errorMessage: string | null;
   bootstrap: BootstrapSnapshot | null;
   selectedTab: MainTab;
   activeFeature: FeaturePanel | null;
   featureMessage: string | null;
+}
+
+export function canRunAuthoritativeMutation(state: Readonly<AppState>): boolean {
+  return state.phase === "ready" && state.bootstrap !== null && state.syncStatus === "online";
 }
 
 export interface HttpRequest {
@@ -46,6 +53,48 @@ export interface HttpRequest {
 export interface HttpResponse<T> {
   statusCode: number;
   data: T;
+}
+
+export class ClientRequestTimeoutError extends Error {
+  constructor() {
+    super("网络请求超时");
+    this.name = "ClientRequestTimeoutError";
+  }
+}
+
+export function withRequestTimeout<T>(
+  request: Promise<T>,
+  timeoutMilliseconds: number,
+  onTimeout?: () => void,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      try {
+        onTimeout?.();
+      } catch {
+        // Cleanup must not replace the timeout failure seen by the caller.
+      }
+      reject(new ClientRequestTimeoutError());
+    }, timeoutMilliseconds);
+
+    request.then(
+      (value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
 }
 
 export type StoredBootstrapCacheEnvelope = Omit<

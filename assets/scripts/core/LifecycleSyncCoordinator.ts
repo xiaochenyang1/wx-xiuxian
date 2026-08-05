@@ -11,9 +11,11 @@ export interface LifecycleSyncCallbacks<T> {
   persistCurrentSnapshot(): void;
   canStartSync(): boolean;
   setSyncInFlight(inFlight: boolean): void;
+  started?(reason: LifecycleSyncReason, allowRender: boolean): void;
   sync(reason: LifecycleSyncReason): Promise<T>;
   recover(error: unknown): Promise<T | null>;
   accept(result: T, allowRender: boolean): void;
+  reject?(error: unknown, allowRender: boolean): void;
 }
 
 export class LifecycleSyncCoordinator<T> {
@@ -22,6 +24,7 @@ export class LifecycleSyncCoordinator<T> {
   private scheduled = false;
   private destroyed = false;
   private syncInFlight = false;
+  private foregroundRetryRequested = false;
   private lifecycleRevision = 0;
   private foregroundSyncPending = false;
   private backgroundSyncPending = false;
@@ -74,6 +77,17 @@ export class LifecycleSyncCoordinator<T> {
     if (!this.destroyed) this.drainPendingSync();
   }
 
+  requestForegroundSync(): void {
+    if (this.destroyed || !this.started || !this.foreground) return;
+    if (this.syncInFlight) {
+      this.foregroundRetryRequested = true;
+      return;
+    }
+    if (this.foregroundSyncPending) return;
+    this.foregroundSyncPending = true;
+    this.drainPendingSync();
+  }
+
   captureRenderToken(): LifecycleRenderToken | null {
     return this.destroyed || !this.foreground
       ? null
@@ -94,6 +108,7 @@ export class LifecycleSyncCoordinator<T> {
     this.destroyed = true;
     this.foregroundSyncPending = false;
     this.backgroundSyncPending = false;
+    this.foregroundRetryRequested = false;
     this.stopSchedule();
   }
 
@@ -128,30 +143,42 @@ export class LifecycleSyncCoordinator<T> {
     const startedAtRevision = this.lifecycleRevision;
     this.syncInFlight = true;
     this.callbacks.setSyncInFlight(true);
+    this.callbacks.started?.(reason, startedInForeground);
+    let completedSuccessfully = false;
 
     try {
       let result: T | null = null;
+      let failure: unknown;
       try {
         result = await this.callbacks.sync(reason);
       } catch (error) {
+        failure = error;
         if (!this.destroyed) {
           try {
             result = await this.callbacks.recover(error);
-          } catch {
+          } catch (recoveryError) {
+            failure = recoveryError;
             result = null;
           }
         }
       }
 
-      if (result !== null && !this.destroyed) {
+      if (!this.destroyed) {
         const allowRender =
-          startedInForeground &&
-          this.foreground &&
-          startedAtRevision === this.lifecycleRevision;
-        this.callbacks.accept(result, allowRender);
+          startedInForeground && this.foreground && startedAtRevision === this.lifecycleRevision;
+        if (result !== null) {
+          completedSuccessfully = true;
+          this.callbacks.accept(result, allowRender);
+        } else if (failure !== undefined) {
+          this.callbacks.reject?.(failure, allowRender);
+        }
       }
     } finally {
       this.syncInFlight = false;
+      if (this.foregroundRetryRequested) {
+        if (!completedSuccessfully && this.foreground) this.foregroundSyncPending = true;
+        this.foregroundRetryRequested = false;
+      }
       this.callbacks.setSyncInFlight(false);
       if (!this.destroyed) this.drainPendingSync();
     }

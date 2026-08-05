@@ -1,5 +1,6 @@
 import { DEV, WECHAT } from "cc/env";
 import { CLIENT_CONFIG } from "../core/ClientConfig";
+import { withRequestTimeout } from "../core/ClientTypes";
 import type {
   HttpRequest,
   HttpResponse,
@@ -11,12 +12,17 @@ interface WechatRequestOptions {
   method: "GET" | "POST";
   header?: Record<string, string>;
   data?: unknown;
+  timeout?: number;
   success(result: { statusCode: number; data: unknown }): void;
   fail(error: { errMsg?: string }): void;
 }
 
+interface WechatRequestTask {
+  abort?(): void;
+}
+
 interface WechatApi {
-  request(options: WechatRequestOptions): void;
+  request(options: WechatRequestOptions): WechatRequestTask | void;
   login(options: {
     success(result: { code?: string }): void;
     fail(error: { errMsg?: string }): void;
@@ -27,12 +33,19 @@ interface WechatApi {
   onHide(callback: () => void): void;
   offShow?(callback: () => void): void;
   offHide?(callback: () => void): void;
+  onNetworkStatusChange?(callback: (result: { isConnected: boolean }) => void): void;
+  offNetworkStatusChange?(callback: (result: { isConnected: boolean }) => void): void;
   vibrateShort?(options: { type: "light" }): void;
 }
 
 export interface PlatformLifecycleHandlers {
   onShow(): void;
   onHide(): void;
+}
+
+export interface PlatformNetworkHandlers {
+  onOnline(): void;
+  onOffline(): void;
 }
 
 export interface PlatformAdapter {
@@ -42,6 +55,7 @@ export interface PlatformAdapter {
   load<T>(key: string): T | null;
   save<T>(key: string, value: T): void;
   subscribeLifecycle(handlers: PlatformLifecycleHandlers): () => void;
+  subscribeNetworkStatus(handlers: PlatformNetworkHandlers): () => void;
   feedback(): void;
 }
 
@@ -56,15 +70,24 @@ class BrowserPlatformAdapter implements PlatformAdapter {
   readonly kind = "browser" as const;
 
   async request<T>(request: HttpRequest): Promise<HttpResponse<T>> {
-    const response = await fetch(request.url, {
-      method: request.method,
-      ...(request.headers === undefined ? {} : { headers: request.headers }),
-      ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }),
-    });
-    return {
-      statusCode: response.status,
-      data: (await response.json()) as T,
-    };
+    const controller = typeof AbortController === "undefined" ? null : new AbortController();
+    const response = withRequestTimeout(
+      (async (): Promise<HttpResponse<T>> => {
+        const fetchResponse = await fetch(request.url, {
+          method: request.method,
+          ...(request.headers === undefined ? {} : { headers: request.headers }),
+          ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }),
+          ...(controller ? { signal: controller.signal } : {}),
+        });
+        return {
+          statusCode: fetchResponse.status,
+          data: (await fetchResponse.json()) as T,
+        };
+      })(),
+      CLIENT_CONFIG.requestTimeoutMilliseconds,
+      () => controller?.abort(),
+    );
+    return response;
   }
 
   async getLoginIntent(): Promise<LoginIntent> {
@@ -118,6 +141,27 @@ class BrowserPlatformAdapter implements PlatformAdapter {
     };
   }
 
+  subscribeNetworkStatus(handlers: PlatformNetworkHandlers): () => void {
+    let online = navigator.onLine;
+    let disposed = false;
+    const update = (nextOnline: boolean): void => {
+      if (disposed || online === nextOnline) return;
+      online = nextOnline;
+      if (nextOnline) handlers.onOnline();
+      else handlers.onOffline();
+    };
+    const onOnline = (): void => update(true);
+    const onOffline = (): void => update(false);
+
+    window.addEventListener("online", onOnline);
+    window.addEventListener("offline", onOffline);
+    return () => {
+      disposed = true;
+      window.removeEventListener("online", onOnline);
+      window.removeEventListener("offline", onOffline);
+    };
+  }
+
   feedback(): void {
     // Browser preview keeps feedback visual-only.
   }
@@ -138,20 +182,26 @@ class WechatPlatformAdapter implements PlatformAdapter {
   constructor(private readonly api: WechatApi) {}
 
   request<T>(request: HttpRequest): Promise<HttpResponse<T>> {
-    return new Promise((resolve, reject) => {
-      this.api.request({
-        url: request.url,
-        method: request.method,
-        ...(request.headers === undefined ? {} : { header: request.headers }),
-        ...(request.body === undefined ? {} : { data: request.body }),
-        success: (result) => {
-          resolve({ statusCode: result.statusCode, data: result.data as T });
-        },
-        fail: (error) => {
-          reject(new Error(error.errMsg || "网络请求失败"));
-        },
-      });
-    });
+    let requestTask: WechatRequestTask | void;
+    return withRequestTimeout(
+      new Promise((resolve, reject) => {
+        requestTask = this.api.request({
+          url: request.url,
+          method: request.method,
+          timeout: CLIENT_CONFIG.requestTimeoutMilliseconds,
+          ...(request.headers === undefined ? {} : { header: request.headers }),
+          ...(request.body === undefined ? {} : { data: request.body }),
+          success: (result) => {
+            resolve({ statusCode: result.statusCode, data: result.data as T });
+          },
+          fail: (error) => {
+            reject(new Error(error.errMsg || "网络请求失败"));
+          },
+        });
+      }),
+      CLIENT_CONFIG.requestTimeoutMilliseconds,
+      () => requestTask?.abort?.(),
+    );
   }
 
   async getLoginIntent(): Promise<LoginIntent> {
@@ -165,15 +215,18 @@ class WechatPlatformAdapter implements PlatformAdapter {
       return { kind: "development", accountId };
     }
 
-    const code = await new Promise<string>((resolve, reject) => {
-      this.api.login({
-        success: (result) => {
-          if (result.code) resolve(result.code);
-          else reject(new Error("微信登录未返回有效凭证"));
-        },
-        fail: (error) => reject(new Error(error.errMsg || "微信登录失败")),
-      });
-    });
+    const code = await withRequestTimeout(
+      new Promise<string>((resolve, reject) => {
+        this.api.login({
+          success: (result) => {
+            if (result.code) resolve(result.code);
+            else reject(new Error("微信登录未返回有效凭证"));
+          },
+          fail: (error) => reject(new Error(error.errMsg || "微信登录失败")),
+        });
+      }),
+      CLIENT_CONFIG.requestTimeoutMilliseconds,
+    );
     return { kind: "wechat", code };
   }
 
@@ -214,6 +267,25 @@ class WechatPlatformAdapter implements PlatformAdapter {
       disposed = true;
       this.api.offShow?.(onShow);
       this.api.offHide?.(onHide);
+    };
+  }
+
+  subscribeNetworkStatus(handlers: PlatformNetworkHandlers): () => void {
+    if (!this.api.onNetworkStatusChange) return () => undefined;
+
+    let connected: boolean | null = null;
+    let disposed = false;
+    const onStatusChange = (result: { isConnected: boolean }): void => {
+      if (disposed || connected === result.isConnected) return;
+      connected = result.isConnected;
+      if (result.isConnected) handlers.onOnline();
+      else handlers.onOffline();
+    };
+
+    this.api.onNetworkStatusChange(onStatusChange);
+    return () => {
+      disposed = true;
+      this.api.offNetworkStatusChange?.(onStatusChange);
     };
   }
 

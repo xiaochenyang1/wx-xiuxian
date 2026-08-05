@@ -98,6 +98,7 @@ interface ButtonStyle {
   stroke?: Color;
   text?: Color;
   fontSize?: number;
+  enabled?: boolean;
 }
 
 type PagedList =
@@ -165,6 +166,7 @@ export class AppView {
         break;
     }
     this.drawNavigation(state.selectedTab);
+    this.drawSyncStatus(state);
     if (state.activeFeature) {
       this.drawFeaturePanel(state, state.activeFeature);
     }
@@ -395,8 +397,37 @@ export class AppView {
     divider.stroke();
   }
 
+  private drawSyncStatus(state: Readonly<AppState>): void {
+    if (state.syncStatus === "online") return;
+
+    const reconnecting = state.syncStatus === "reconnecting";
+    drawBand(
+      this.root,
+      "SyncStatus",
+      0,
+      520,
+      750,
+      30,
+      reconnecting ? COLORS.inkGreenLight : COLORS.red,
+    );
+    addLabel(
+      this.root,
+      reconnecting
+        ? "正在重连 · 当前显示上次同步数据"
+        : `离线数据 · ${formatLastSync(state.lastSuccessfulSyncAt)} · 联网后自动核对`,
+      0,
+      520,
+      710,
+      24,
+      15,
+      COLORS.text,
+      true,
+    );
+  }
+
   private drawCultivation(state: Readonly<AppState>): void {
     const data = state.bootstrap!;
+    const mutationsEnabled = state.syncStatus === "online";
     this.drawCultivationScene();
     this.idleLabel = addLabel(
       this.root,
@@ -451,7 +482,13 @@ export class AppView {
         -238,
         420,
         66,
-        { fill: COLORS.red, stroke: COLORS.gold, text: COLORS.text, fontSize: 23 },
+        {
+          fill: COLORS.red,
+          stroke: COLORS.gold,
+          text: COLORS.text,
+          fontSize: 23,
+          enabled: mutationsEnabled,
+        },
         () => this.actions.breakthrough(),
       );
     } else {
@@ -751,12 +788,36 @@ export class AppView {
         17,
         COLORS.gold,
       );
+    } else if (state.syncStatus !== "online") {
+      drawBand(
+        overlay,
+        "FeatureSyncStatus",
+        0,
+        -473,
+        620,
+        54,
+        state.syncStatus === "reconnecting" ? COLORS.inkGreenLight : COLORS.red,
+      );
+      addLabel(
+        overlay,
+        state.syncStatus === "reconnecting"
+          ? "正在重连 · 操作暂不可用"
+          : `离线数据 · ${formatLastSync(state.lastSuccessfulSyncAt)} · 操作暂不可用`,
+        0,
+        -473,
+        590,
+        38,
+        16,
+        COLORS.text,
+        true,
+      );
     }
   }
 
   private drawProfilePanel(overlay: Node, state: Readonly<AppState>): void {
     const data = state.bootstrap!;
     const player = data.player;
+    const mutationsEnabled = state.syncStatus === "online";
 
     drawBand(overlay, "AvatarProfile", 0, 302, 620, 220, COLORS.inkGreen);
     addLabel(
@@ -827,7 +888,12 @@ export class AppView {
           216,
           335,
           44,
-          { fill: COLORS.red, stroke: COLORS.goldMuted, fontSize: 16 },
+          {
+            fill: COLORS.red,
+            stroke: COLORS.goldMuted,
+            fontSize: 16,
+            enabled: mutationsEnabled,
+          },
           () => this.actions.chooseAvatar(this.profileAvatarDraft!),
         );
       }
@@ -918,6 +984,7 @@ export class AppView {
         this.profileNameDraft = value;
       },
       (value) => this.actions.renamePlayer(value),
+      mutationsEnabled,
     );
     createButton(
       overlay,
@@ -926,7 +993,12 @@ export class AppView {
       27,
       126,
       60,
-      { fill: COLORS.inkGreenLight, stroke: COLORS.gold, fontSize: 17 },
+      {
+        fill: COLORS.inkGreenLight,
+        stroke: COLORS.gold,
+        fontSize: 17,
+        enabled: mutationsEnabled,
+      },
       () => this.actions.renamePlayer(nameInput.string),
     );
     addLabel(
@@ -955,6 +1027,7 @@ export class AppView {
 
   private drawInventoryPanel(overlay: Node, state: Readonly<AppState>): void {
     const data = state.bootstrap!;
+    const mutationsEnabled = state.syncStatus === "online";
     const usedSlots = data.inventory.stacks.length + data.equipment.length;
     const stackWindow = this.pageWindow(
       "inventoryStacks",
@@ -1003,7 +1076,12 @@ export class AppView {
         390,
         250,
         58,
-        { fill: COLORS.inkGreenLight, stroke: COLORS.gold, fontSize: 17 },
+        {
+          fill: COLORS.inkGreenLight,
+          stroke: COLORS.gold,
+          fontSize: 17,
+          enabled: mutationsEnabled,
+        },
         () => this.actions.expandInventory(),
       );
     } else {
@@ -1076,7 +1154,12 @@ export class AppView {
               y,
               104,
               40,
-              { fill: COLORS.inkGreenLight, stroke: COLORS.goldMuted, fontSize: 15 },
+              {
+                fill: COLORS.inkGreenLight,
+                stroke: COLORS.goldMuted,
+                fontSize: 15,
+                enabled: mutationsEnabled,
+              },
               () => this.actions.useInventoryItem(stack.itemConfigId),
             );
           }
@@ -1161,7 +1244,12 @@ export class AppView {
           y,
           100,
           48,
-          { fill: COLORS.inkGreenLight, stroke: COLORS.goldMuted, fontSize: 16 },
+          {
+            fill: COLORS.inkGreenLight,
+            stroke: COLORS.goldMuted,
+            fontSize: 16,
+            enabled: mutationsEnabled,
+          },
           () => this.actions.transferHarvest(entry.id),
         );
         if (qualityRank(entry.quality) < QUALITY_ORDER.rare) {
@@ -1172,7 +1260,12 @@ export class AppView {
             y,
             100,
             48,
-            { fill: COLORS.red, stroke: COLORS.goldMuted, fontSize: 16 },
+            {
+              fill: COLORS.red,
+              stroke: COLORS.goldMuted,
+              fontSize: 16,
+              enabled: mutationsEnabled,
+            },
             () => this.actions.salvageHarvest(entry.id),
           );
         } else {
@@ -1183,6 +1276,7 @@ export class AppView {
 
   private drawTechniquePanel(overlay: Node, state: Readonly<AppState>): void {
     const techniques = state.bootstrap!.techniques;
+    const mutationsEnabled = state.syncStatus === "online";
     const techniqueWindow = this.pageWindow("techniques", techniques.length, 8);
     addLabel(
       overlay,
@@ -1264,6 +1358,7 @@ export class AppView {
           fill: equipped ? COLORS.red : COLORS.inkGreenLight,
           stroke: COLORS.goldMuted,
           fontSize: 15,
+          enabled: mutationsEnabled,
         },
         () =>
           equipped
@@ -1285,6 +1380,7 @@ export class AppView {
 
   private drawEquipmentPanel(overlay: Node, state: Readonly<AppState>): void {
     const equipment = state.bootstrap!.equipment;
+    const mutationsEnabled = state.syncStatus === "online";
     const equipmentWindow = this.pageWindow("equipment", equipment.length, 7);
     addLabel(
       overlay,
@@ -1361,7 +1457,12 @@ export class AppView {
           y,
           92,
           44,
-          { fill: COLORS.red, stroke: COLORS.goldMuted, fontSize: 15 },
+          {
+            fill: COLORS.red,
+            stroke: COLORS.goldMuted,
+            fontSize: 15,
+            enabled: mutationsEnabled,
+          },
           () => this.actions.unequipEquipment(item.id),
         );
       } else if (item.slot === "accessory") {
@@ -1372,7 +1473,12 @@ export class AppView {
           y,
           58,
           42,
-          { fill: COLORS.inkGreenLight, stroke: COLORS.goldMuted, fontSize: 14 },
+          {
+            fill: COLORS.inkGreenLight,
+            stroke: COLORS.goldMuted,
+            fontSize: 14,
+            enabled: mutationsEnabled,
+          },
           () => this.actions.equipEquipment(item.id, "accessory_left"),
         );
         createButton(
@@ -1382,7 +1488,12 @@ export class AppView {
           y,
           58,
           42,
-          { fill: COLORS.inkGreenLight, stroke: COLORS.goldMuted, fontSize: 14 },
+          {
+            fill: COLORS.inkGreenLight,
+            stroke: COLORS.goldMuted,
+            fontSize: 14,
+            enabled: mutationsEnabled,
+          },
           () => this.actions.equipEquipment(item.id, "accessory_right"),
         );
       } else {
@@ -1397,7 +1508,12 @@ export class AppView {
             y,
             92,
             44,
-            { fill: COLORS.inkGreenLight, stroke: COLORS.goldMuted, fontSize: 15 },
+            {
+              fill: COLORS.inkGreenLight,
+              stroke: COLORS.goldMuted,
+              fontSize: 15,
+              enabled: mutationsEnabled,
+            },
             () => this.actions.equipEquipment(item.id, equippedSlot),
           );
         }
@@ -1607,24 +1723,36 @@ function createButton(
   style: ButtonStyle,
   onClick: () => void,
 ): Node {
+  const enabled = style.enabled ?? true;
   const node = createUiNode(parent, `Button-${text}`);
   node.setPosition(x, y);
   setSize(node, width, height);
   const background = node.addComponent(Graphics);
-  background.fillColor = style.fill;
+  background.fillColor = enabled ? style.fill : COLORS.panel;
   background.roundRect(-width / 2, -height / 2, width, height, 6);
   background.fill();
   if (style.stroke) {
-    background.strokeColor = style.stroke;
+    background.strokeColor = enabled ? style.stroke : COLORS.textMuted;
     background.lineWidth = 2;
     background.roundRect(-width / 2, -height / 2, width, height, 6);
     background.stroke();
   }
   const button = node.addComponent(Button);
+  button.interactable = enabled;
   button.transition = Button.Transition.SCALE;
   button.zoomScale = 0.96;
-  node.on(Button.EventType.CLICK, onClick);
-  addLabel(node, text, 0, 0, width - 20, height - 10, style.fontSize ?? 21, style.text ?? COLORS.text, true);
+  if (enabled) node.on(Button.EventType.CLICK, onClick);
+  addLabel(
+    node,
+    text,
+    0,
+    0,
+    width - 20,
+    height - 10,
+    style.fontSize ?? 21,
+    enabled ? (style.text ?? COLORS.text) : COLORS.textMuted,
+    true,
+  );
   return node;
 }
 
@@ -1638,16 +1766,17 @@ function createTextInput(
   height: number,
   onChange: (value: string) => void,
   onSubmit: (value: string) => void,
+  enabled = true,
 ): EditBox {
   const node = createUiNode(parent, "ProfileNameInput");
   node.setPosition(x, y);
   setSize(node, width, height);
 
   const background = node.addComponent(Graphics);
-  background.fillColor = COLORS.black;
+  background.fillColor = enabled ? COLORS.black : COLORS.panel;
   background.roundRect(-width / 2, -height / 2, width, height, 6);
   background.fill();
-  background.strokeColor = COLORS.goldMuted;
+  background.strokeColor = enabled ? COLORS.goldMuted : COLORS.textMuted;
   background.lineWidth = 2;
   background.roundRect(-width / 2, -height / 2, width, height, 6);
   background.stroke();
@@ -1679,6 +1808,7 @@ function createTextInput(
     HorizontalTextAlignment.LEFT,
   );
   const editBox = node.addComponent(EditBox);
+  editBox.enabled = enabled;
   editBox.textLabel = textLabel;
   editBox.placeholderLabel = placeholderLabel;
   editBox.inputMode = EditBox.InputMode.SINGLE_LINE;
@@ -1700,6 +1830,14 @@ function createTextInput(
     },
   );
   return editBox;
+}
+
+function formatLastSync(value: string | null): string {
+  if (!value) return "尚未记录同步时间";
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "同步时间未知";
+  const pad = (part: number): string => (part < 10 ? `0${part}` : String(part));
+  return `上次同步 ${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
 function drawPagination(

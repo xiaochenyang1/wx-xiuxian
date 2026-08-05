@@ -4,4 +4,5 @@ export const CLIENT_CONFIG = {
   developmentAccountStorageKey: "cultivation-diary.dev-account.v1",
   bootstrapCacheStorageKey: "cultivation-diary.bootstrap-cache.v1",
   heartbeatIntervalSeconds: 30,
+  requestTimeoutMilliseconds: 10_000,
 } as const;
