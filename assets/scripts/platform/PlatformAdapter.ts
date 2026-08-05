@@ -54,7 +54,7 @@ export interface PlatformAdapter {
   request<T>(request: HttpRequest): Promise<HttpResponse<T>>;
   getLoginIntent(): Promise<LoginIntent>;
   load<T>(key: string): T | null;
-  save<T>(key: string, value: T): void;
+  save<T>(key: string, value: T): boolean;
   remove(key: string): void;
   subscribeLifecycle(handlers: PlatformLifecycleHandlers): () => void;
   subscribeNetworkStatus(handlers: PlatformNetworkHandlers): () => void;
@@ -108,11 +108,13 @@ class BrowserPlatformAdapter implements PlatformAdapter {
     }
   }
 
-  save<T>(key: string, value: T): void {
+  save<T>(key: string, value: T): boolean {
     try {
       localStorage.setItem(key, JSON.stringify(value));
+      return true;
     } catch {
       // Storage can be unavailable in privacy mode; login still works for the current session.
+      return false;
     }
   }
 
@@ -249,11 +251,13 @@ class WechatPlatformAdapter implements PlatformAdapter {
     }
   }
 
-  save<T>(key: string, value: T): void {
+  save<T>(key: string, value: T): boolean {
     try {
       this.api.setStorageSync(key, value);
+      return true;
     } catch {
       // Storage failures are non-fatal; the player can authenticate again.
+      return false;
     }
   }
 

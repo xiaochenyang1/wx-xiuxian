@@ -15,6 +15,7 @@ import type {
   FeaturePanel,
   MainTab,
 } from "../core/ClientTypes";
+import { canRunLoadoutMutation } from "../core/ClientTypes";
 import {
   Button,
   BlockInputEvents,
@@ -407,6 +408,9 @@ export class AppView {
     if (state.syncStatus === "online") return;
 
     const reconnecting = state.syncStatus === "reconnecting";
+    const queueStatus = state.pendingLoadoutOperationCount > 0
+      ? ` · 待同步 ${state.pendingLoadoutOperationCount} 项`
+      : "";
     drawBand(
       this.root,
       "SyncStatus",
@@ -419,8 +423,8 @@ export class AppView {
     addLabel(
       this.root,
       reconnecting
-        ? `正在重连 · ${formatLastSync(state.lastSuccessfulSyncAt)} · 当前显示缓存数据`
-        : `离线数据 · ${formatLastSync(state.lastSuccessfulSyncAt)} · 联网后自动核对`,
+        ? `正在重连 · ${formatLastSync(state.lastSuccessfulSyncAt)}${queueStatus}`
+        : `离线数据 · ${formatLastSync(state.lastSuccessfulSyncAt)}${queueStatus}`,
       0,
       520,
       710,
@@ -795,6 +799,10 @@ export class AppView {
         COLORS.gold,
       );
     } else if (state.syncStatus !== "online") {
+      const loadoutPanel = feature === "techniques" || feature === "equipment";
+      const queueStatus = state.pendingLoadoutOperationCount > 0
+        ? ` · 待同步 ${state.pendingLoadoutOperationCount} 项`
+        : "";
       drawBand(
         overlay,
         "FeatureSyncStatus",
@@ -807,8 +815,10 @@ export class AppView {
       addLabel(
         overlay,
         state.syncStatus === "reconnecting"
-          ? `正在重连 · ${formatLastSync(state.lastSuccessfulSyncAt)} · 操作暂不可用`
-          : `离线数据 · ${formatLastSync(state.lastSuccessfulSyncAt)} · 操作暂不可用`,
+          ? `正在重连 · ${formatLastSync(state.lastSuccessfulSyncAt)}${queueStatus}`
+          : loadoutPanel
+            ? `离线装备队列${queueStatus || " · 0 项"}`
+            : `离线数据 · ${formatLastSync(state.lastSuccessfulSyncAt)} · 操作暂不可用`,
         0,
         -473,
         590,
@@ -1290,11 +1300,14 @@ export class AppView {
 
   private drawTechniquePanel(overlay: Node, state: Readonly<AppState>): void {
     const techniques = state.bootstrap!.techniques;
-    const mutationsEnabled = state.syncStatus === "online";
+    const mutationsEnabled = canRunLoadoutMutation(state);
+    const queueStatus = state.pendingLoadoutOperationCount > 0
+      ? ` · 待同步 ${state.pendingLoadoutOperationCount}`
+      : "";
     const techniqueWindow = this.pageWindow("techniques", techniques.length, 8);
     addLabel(
       overlay,
-      `已收录 ${techniques.length} 本 · 功法/法宝战力 +${formatLargeNumber(state.bootstrap!.progress.loadoutFixedPower)} · 修炼 +${formatBasisPoints(state.bootstrap!.progress.experienceBonusBp)}`,
+      `功法 ${techniques.length} 本 · 装备战力 +${formatLargeNumber(state.bootstrap!.progress.loadoutFixedPower)} · 修炼 +${formatBasisPoints(state.bootstrap!.progress.experienceBonusBp)}${queueStatus}`,
       0,
       393,
       590,
@@ -1394,11 +1407,14 @@ export class AppView {
 
   private drawEquipmentPanel(overlay: Node, state: Readonly<AppState>): void {
     const equipment = state.bootstrap!.equipment;
-    const mutationsEnabled = state.syncStatus === "online";
+    const mutationsEnabled = canRunLoadoutMutation(state);
+    const queueStatus = state.pendingLoadoutOperationCount > 0
+      ? ` · 待同步 ${state.pendingLoadoutOperationCount}`
+      : "";
     const equipmentWindow = this.pageWindow("equipment", equipment.length, 7);
     addLabel(
       overlay,
-      `持有法宝 ${equipment.length} 件 · 法宝加成会同步影响战力与挂机效率`,
+      `法宝 ${equipment.length} 件 · 装备影响战力与挂机效率${queueStatus}`,
       0,
       393,
       590,

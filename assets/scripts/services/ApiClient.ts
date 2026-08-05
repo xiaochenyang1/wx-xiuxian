@@ -54,7 +54,8 @@ export function requiresAuthoritativeRecovery(error: unknown): error is ClientAp
     error instanceof ClientApiError &&
     (error.code === "PLAYER_VERSION_CONFLICT" ||
       error.code === "UNAUTHENTICATED" ||
-      error.code === "SESSION_EXPIRED")
+      error.code === "SESSION_EXPIRED" ||
+      error.code === "STALE_PLAYER_RESPONSE")
   );
 }
 
@@ -67,6 +68,11 @@ export function classifyAuthoritativeFailure(
     return "reconnecting";
   }
   return null;
+}
+
+export interface AuthoritativeMutationOptions {
+  idempotencyKey?: string;
+  expectedPlayerVersion?: string;
 }
 
 export class ApiClient {
@@ -138,14 +144,24 @@ export class ApiClient {
     return this.capture(unwrap(response.statusCode, response.data));
   }
 
-  async settleCultivation(): Promise<CultivationSettleResult> {
+  async settleCultivation(
+    options?: AuthoritativeMutationOptions,
+  ): Promise<CultivationSettleResult> {
     return this.authorizedMutation<CultivationSettleResult>(
       "/api/v1/cultivation/settle",
+      {},
+      options,
     );
   }
 
-  async syncHeartbeat(): Promise<SyncHeartbeatResult> {
-    return this.authorizedMutation<SyncHeartbeatResult>("/api/v1/sync/heartbeat");
+  async syncHeartbeat(
+    options?: AuthoritativeMutationOptions,
+  ): Promise<SyncHeartbeatResult> {
+    return this.authorizedMutation<SyncHeartbeatResult>(
+      "/api/v1/sync/heartbeat",
+      {},
+      options,
+    );
   }
 
   getAuthoritativeSnapshotMetadata(): AuthoritativeSnapshotMetadata | null {
@@ -211,34 +227,48 @@ export class ApiClient {
     );
   }
 
-  async equipTechnique(techniqueConfigId: string): Promise<LoadoutMutationResult> {
+  async equipTechnique(
+    techniqueConfigId: string,
+    options?: AuthoritativeMutationOptions,
+  ): Promise<LoadoutMutationResult> {
     return this.authorizedMutation<LoadoutMutationResult>(
       "/api/v1/techniques/equip",
       { techniqueConfigId },
+      options,
     );
   }
 
-  async unequipTechnique(techniqueConfigId: string): Promise<LoadoutMutationResult> {
+  async unequipTechnique(
+    techniqueConfigId: string,
+    options?: AuthoritativeMutationOptions,
+  ): Promise<LoadoutMutationResult> {
     return this.authorizedMutation<LoadoutMutationResult>(
       "/api/v1/techniques/unequip",
       { techniqueConfigId },
+      options,
     );
   }
 
   async equipEquipment(
     equipmentInstanceId: string,
     equippedSlot: EquippedEquipmentSlot,
+    options?: AuthoritativeMutationOptions,
   ): Promise<LoadoutMutationResult> {
     return this.authorizedMutation<LoadoutMutationResult>(
       "/api/v1/equipment/equip",
       { equipmentInstanceId, equippedSlot },
+      options,
     );
   }
 
-  async unequipEquipment(equipmentInstanceId: string): Promise<LoadoutMutationResult> {
+  async unequipEquipment(
+    equipmentInstanceId: string,
+    options?: AuthoritativeMutationOptions,
+  ): Promise<LoadoutMutationResult> {
     return this.authorizedMutation<LoadoutMutationResult>(
       "/api/v1/equipment/unequip",
       { equipmentInstanceId },
+      options,
     );
   }
 
@@ -271,14 +301,19 @@ export class ApiClient {
     return this.capture(unwrap(response.statusCode, response.data));
   }
 
-  private async authorizedMutation<T>(path: string, body: unknown = {}): Promise<T> {
+  private async authorizedMutation<T>(
+    path: string,
+    body: unknown = {},
+    options: AuthoritativeMutationOptions = {},
+  ): Promise<T> {
     const stored = this.loadStoredSession();
     if (!stored) {
       throw new ClientApiError("UNAUTHENTICATED", "请先登录", false);
     }
 
-    const idempotencyKey = createUuid();
-    const expectedPlayerVersion = this.playerVersion;
+    const idempotencyKey = options.idempotencyKey ?? createClientUuid();
+    const expectedPlayerVersion =
+      options.expectedPlayerVersion ?? this.playerVersion;
     const request = async (accessToken: string): Promise<T> => {
       const response = await this.send<ApiSuccess<T> | ApiFailure>({
         method: "POST",
@@ -428,14 +463,14 @@ function unwrap<T>(statusCode: number, response: ApiSuccess<T> | ApiFailure): Ap
   throw new ClientApiError("NETWORK_ERROR", "服务器返回了无法识别的响应", true);
 }
 
-function jsonMutationHeaders(idempotencyKey = createUuid()): Record<string, string> {
+function jsonMutationHeaders(idempotencyKey = createClientUuid()): Record<string, string> {
   return {
     "Content-Type": "application/json",
     "Idempotency-Key": idempotencyKey,
   };
 }
 
-function createUuid(): string {
+export function createClientUuid(): string {
   const bytes = Array.from({ length: 16 }, () => Math.floor(Math.random() * 256));
   bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x40;
   bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80;

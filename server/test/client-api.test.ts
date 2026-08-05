@@ -3,6 +3,7 @@ import type {
   ApiSuccess,
   AuthLoginResult,
   CultivationSettleResult,
+  LoadoutMutationResult,
   PlayerAvatarResult,
   PlayerRenameResult,
   RefreshSessionResult,
@@ -33,20 +34,23 @@ describe("Cocos API client", () => {
   it("sends the latest player version and preserves mutation identity across token refresh", async () => {
     const platform = new ScriptedPlatform();
     const client = new ApiClient(platform, "http://game.test");
+    const idempotencyKey = "00000000-0000-4000-8000-000000000099";
 
     await client.authenticate();
-    const settled = await client.settleCultivation();
+    const settled = await client.settleCultivation({
+      idempotencyKey,
+      expectedPlayerVersion: "6",
+    });
 
     expect(settled.bootstrap.progress.level).toBe(1);
     const mutationRequests = platform.requests.filter((request) =>
       request.url.endsWith("/api/v1/cultivation/settle"),
     );
     expect(mutationRequests).toHaveLength(2);
-    expect(mutationRequests[0]?.headers?.["If-Player-Version"]).toBe("7");
-    expect(mutationRequests[1]?.headers?.["If-Player-Version"]).toBe("7");
-    expect(mutationRequests[1]?.headers?.["Idempotency-Key"]).toBe(
-      mutationRequests[0]?.headers?.["Idempotency-Key"],
-    );
+    expect(mutationRequests[0]?.headers?.["If-Player-Version"]).toBe("6");
+    expect(mutationRequests[1]?.headers?.["If-Player-Version"]).toBe("6");
+    expect(mutationRequests[0]?.headers?.["Idempotency-Key"]).toBe(idempotencyKey);
+    expect(mutationRequests[1]?.headers?.["Idempotency-Key"]).toBe(idempotencyKey);
     expect(mutationRequests[0]?.headers?.Authorization).toBe("Bearer access-1");
     expect(mutationRequests[1]?.headers?.Authorization).toBe("Bearer access-2");
     expect(platform.load(CLIENT_CONFIG.sessionStorageKey)).toMatchObject({
@@ -157,9 +161,13 @@ describe("Cocos API client", () => {
   it("uses the formal heartbeat route and captures its authoritative metadata", async () => {
     const platform = new ScriptedPlatform();
     const client = new ApiClient(platform, "http://game.test");
+    const idempotencyKey = "00000000-0000-4000-8000-000000000098";
 
     await client.authenticate();
-    const heartbeat = await client.syncHeartbeat();
+    const heartbeat = await client.syncHeartbeat({
+      idempotencyKey,
+      expectedPlayerVersion: "7",
+    });
 
     expect(heartbeat.bootstrap.progress.experience).toBe("1");
     const request = platform.requests.find((candidate) =>
@@ -174,12 +182,72 @@ describe("Cocos API client", () => {
         "If-Player-Version": "7",
       },
     });
-    expect(request?.headers?.["Idempotency-Key"]).toMatch(
-      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
-    );
+    expect(request?.headers?.["Idempotency-Key"]).toBe(idempotencyKey);
     expect(client.getAuthoritativeSnapshotMetadata()).toEqual({
       playerVersion: "8",
       lastSuccessfulSyncAt: SERVER_TIME,
+    });
+
+    const loadoutKey = "00000000-0000-4000-8000-000000000097";
+    await client.equipTechnique("quiet_breathing_art", {
+      idempotencyKey: loadoutKey,
+      expectedPlayerVersion: "8",
+    });
+    const loadoutRequest = platform.requests.find((candidate) =>
+      candidate.url.endsWith("/api/v1/techniques/equip"),
+    );
+    expect(loadoutRequest).toMatchObject({
+      method: "POST",
+      body: { techniqueConfigId: "quiet_breathing_art" },
+      headers: {
+        Authorization: "Bearer access-1",
+        "Idempotency-Key": loadoutKey,
+        "If-Player-Version": "8",
+      },
+    });
+  });
+
+  it("rejects a historical heartbeat replay after refreshing to a newer version", async () => {
+    const platform = new StaleHeartbeatAfterRefreshPlatform();
+    const client = new ApiClient(platform, "http://game.test");
+    const idempotencyKey = "00000000-0000-4000-8000-000000000095";
+    platform.save(CLIENT_CONFIG.sessionStorageKey, {
+      ...tokens("stored"),
+      accountId: bootstrapFixture().account.id,
+      playerId: bootstrapFixture().player.id,
+    });
+
+    await expect(client.syncHeartbeat({
+      idempotencyKey,
+      expectedPlayerVersion: "7",
+    })).rejects.toMatchObject({
+      code: "STALE_PLAYER_RESPONSE",
+      retryable: true,
+    });
+
+    const heartbeatRequests = platform.requests.filter((request) =>
+      request.url.endsWith("/api/v1/sync/heartbeat"),
+    );
+    expect(heartbeatRequests).toHaveLength(2);
+    for (const request of heartbeatRequests) {
+      expect(request.headers?.["Idempotency-Key"]).toBe(idempotencyKey);
+      expect(request.headers?.["If-Player-Version"]).toBe("7");
+      expect(request.body).toEqual({});
+    }
+    expect(heartbeatRequests[0]?.headers?.Authorization).toBe(
+      "Bearer access-stored",
+    );
+    expect(heartbeatRequests[1]?.headers?.Authorization).toBe(
+      "Bearer access-refreshed",
+    );
+    expect(client.getAuthoritativeSnapshotMetadata()).toEqual({
+      playerVersion: "9",
+      lastSuccessfulSyncAt: SERVER_TIME,
+    });
+    expect(platform.load(CLIENT_CONFIG.sessionStorageKey)).toMatchObject({
+      accessToken: "access-refreshed",
+      accountId: bootstrapFixture().account.id,
+      playerId: bootstrapFixture().player.id,
     });
   });
 
@@ -206,6 +274,11 @@ describe("Cocos API client", () => {
     expect(
       classifyAuthoritativeFailure(
         new ClientApiError("PLAYER_VERSION_CONFLICT", "stale", true),
+      ),
+    ).toBe("reconnecting");
+    expect(
+      classifyAuthoritativeFailure(
+        new ClientApiError("STALE_PLAYER_RESPONSE", "stale", true),
       ),
     ).toBe("reconnecting");
     expect(classifyAuthoritativeFailure(businessError, true)).toBe("reconnecting");
@@ -417,6 +490,21 @@ class ScriptedPlatform implements PlatformAdapter {
         bootstrap: bootstrapFixture(),
       }));
     }
+    if (request.url.endsWith("/api/v1/techniques/equip")) {
+      const bootstrap = bootstrapFixture();
+      return response<T>(200, success<LoadoutMutationResult>("9", {
+        operationId: "00000000-0000-4000-8000-000000000096",
+        assetType: "technique",
+        action: "equip",
+        assetId: "quiet_breathing_art",
+        equippedSlot: "mind",
+        replacedAssetId: null,
+        previousTotalPower: "100",
+        totalPower: "140",
+        powerDelta: "40",
+        bootstrap,
+      }));
+    }
     throw new Error(`Unexpected request: ${request.url}`);
   }
 
@@ -428,12 +516,68 @@ class ScriptedPlatform implements PlatformAdapter {
     return (this.storage.get(key) as T | undefined) ?? null;
   }
 
-  save<T>(key: string, value: T): void {
+  save<T>(key: string, value: T): boolean {
     this.storage.set(key, value);
+    return true;
   }
 
   remove(key: string): void {
     this.removedKeys.push(key);
+    this.storage.delete(key);
+  }
+
+  subscribeLifecycle(_handlers: PlatformLifecycleHandlers): () => void {
+    return () => undefined;
+  }
+
+  subscribeNetworkStatus(_handlers: PlatformNetworkHandlers): () => void {
+    return () => undefined;
+  }
+
+  feedback(): void {}
+}
+
+class StaleHeartbeatAfterRefreshPlatform implements PlatformAdapter {
+  readonly kind = "browser" as const;
+  readonly requests: HttpRequest[] = [];
+  private readonly storage = new Map<string, unknown>();
+  private heartbeatAttempts = 0;
+
+  async request<T>(request: HttpRequest): Promise<HttpResponse<T>> {
+    this.requests.push(request);
+    if (request.url.endsWith("/api/v1/auth/refresh")) {
+      return response<T>(200, success<RefreshSessionResult>("9", {
+        tokens: tokens("refreshed"),
+        bootstrap: bootstrapFixture(),
+      }));
+    }
+    if (request.url.endsWith("/api/v1/sync/heartbeat")) {
+      this.heartbeatAttempts += 1;
+      if (this.heartbeatAttempts === 1) {
+        return response<T>(401, failure("UNAUTHENTICATED", "登录状态已过期"));
+      }
+      return response<T>(200, success<SyncHeartbeatResult>("8", {
+        settlement: settlementSummary(),
+        bootstrap: bootstrapFixture(),
+      }));
+    }
+    throw new Error(`Unexpected request: ${request.url}`);
+  }
+
+  async getLoginIntent(): Promise<LoginIntent> {
+    throw new Error("Login should not be requested");
+  }
+
+  load<T>(key: string): T | null {
+    return (this.storage.get(key) as T | undefined) ?? null;
+  }
+
+  save<T>(key: string, value: T): boolean {
+    this.storage.set(key, value);
+    return true;
+  }
+
+  remove(key: string): void {
     this.storage.delete(key);
   }
 
@@ -499,8 +643,9 @@ class FailurePlatform implements PlatformAdapter {
     return (this.storage.get(key) as T | undefined) ?? null;
   }
 
-  save<T>(key: string, value: T): void {
+  save<T>(key: string, value: T): boolean {
     this.storage.set(key, value);
+    return true;
   }
 
   remove(key: string): void {

@@ -1,7 +1,10 @@
 import type { OfflineSettlementSummary } from "@cultivation-diary/shared";
 import { describe, expect, it } from "vitest";
 import { AppStore } from "../../assets/scripts/state/AppStore";
-import { canRunAuthoritativeMutation } from "../../assets/scripts/core/ClientTypes";
+import {
+  canRunAuthoritativeMutation,
+  canRunLoadoutMutation,
+} from "../../assets/scripts/core/ClientTypes";
 import { bootstrapFixture } from "./fixtures/bootstrap";
 
 describe("Cocos app store", () => {
@@ -27,6 +30,7 @@ describe("Cocos app store", () => {
     expect(store.snapshot.bootstrap).toBe(bootstrap);
     expect(store.snapshot.lastSuccessfulSyncAt).toBe("2026-08-05T07:59:00.000Z");
     expect(canRunAuthoritativeMutation(store.snapshot)).toBe(false);
+    expect(canRunLoadoutMutation(store.snapshot)).toBe(false);
   });
 
   it("preserves the exact cached snapshot and sync time when reconnecting becomes offline", () => {
@@ -44,6 +48,7 @@ describe("Cocos app store", () => {
     });
     expect(store.snapshot.bootstrap).toBe(bootstrap);
     expect(canRunAuthoritativeMutation(store.snapshot)).toBe(false);
+    expect(canRunLoadoutMutation(store.snapshot)).toBe(true);
   });
 
   it("keeps the selected feature panel open while authoritative snapshots refresh", () => {

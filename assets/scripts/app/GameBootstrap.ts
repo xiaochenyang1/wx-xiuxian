@@ -8,13 +8,28 @@ import type {
 import { CLIENT_CONFIG } from "../core/ClientConfig";
 import {
   canRunAuthoritativeMutation,
+  canRunLoadoutMutation,
   createStoredBootstrapCache,
   dismissCachedOfflineSettlement,
   getRestorableBootstrapCache,
   hasSameBootstrapIdentity,
+  isStoredBootstrapCacheEnvelope,
   shouldInstallDeferredIdentityPreview,
 } from "../core/ClientTypes";
 import type { StoredBootstrapCache } from "../core/ClientTypes";
+import {
+  acceptOfflineLoadoutHead,
+  acceptOfflineLoadoutSettlement,
+  appendOfflineLoadoutOperation,
+  applyOfflineLoadoutOperations,
+  beginOfflineLoadoutHead,
+  beginOfflineLoadoutSettlement,
+  classifyOfflineLoadoutResume,
+  createStoredOfflineLoadoutQueue,
+  restartOfflineLoadoutSettlement,
+  type PendingLoadoutOperation,
+  type StoredOfflineLoadoutQueue,
+} from "../core/OfflineLoadoutQueue";
 import {
   LifecycleSyncCoordinator,
   type LifecycleRenderToken,
@@ -23,15 +38,32 @@ import {
   ApiClient,
   ClientApiError,
   classifyAuthoritativeFailure,
+  createClientUuid,
   isClientTransportError,
   isTerminalAuthenticationError,
   requiresAuthoritativeRecovery,
 } from "../services/ApiClient";
+import type { AuthoritativeMutationOptions } from "../services/ApiClient";
 import { createPlatformAdapter } from "../platform/PlatformAdapter";
 import { AppStore } from "../state/AppStore";
 import { AppView } from "../ui/AppView";
 
 const { ccclass } = _decorator;
+
+interface AuthoritativeSyncResult {
+  bootstrap: BootstrapSnapshot;
+  completedSettlement: boolean;
+}
+
+type OfflineLoadoutIntent =
+  | { kind: "technique.equip"; techniqueConfigId: string }
+  | { kind: "technique.unequip"; techniqueConfigId: string }
+  | {
+      kind: "equipment.equip";
+      equipmentInstanceId: string;
+      equippedSlot: EquippedEquipmentSlot;
+    }
+  | { kind: "equipment.unequip"; equipmentInstanceId: string };
 
 @ccclass("GameBootstrap")
 export class GameBootstrap extends Component {
@@ -50,16 +82,30 @@ export class GameBootstrap extends Component {
   private modalInputLockedUntil = 0;
   private pendingProfileBootstrap: BootstrapSnapshot | null = null;
   private lastAuthoritativeCache: StoredBootstrapCache | null = null;
-  private readonly lifecycleSync = new LifecycleSyncCoordinator<BootstrapSnapshot>({
+  private pendingLoadoutQueue: StoredOfflineLoadoutQueue | null = null;
+  private loadoutDrainRequested = false;
+  private queueSettlementRetryRequested = false;
+  private loadoutDrainRetryScheduled = false;
+  private loadoutDrainRetryAttempt = 0;
+  private foregroundSyncRetryScheduled = false;
+  private foregroundSyncRetryAttempt = 0;
+  private confirmingPreviouslyAttemptedSettlement = false;
+  private canReplayFreshlySettledLoadout = false;
+  private pendingLoadoutRollbackMessage: string | null = null;
+  private requiresFreshAuthoritativeBaseline = false;
+  private queuedLoadoutNotice: string | null = null;
+  private readonly lifecycleSync = new LifecycleSyncCoordinator<AuthoritativeSyncResult>({
     intervalSeconds: CLIENT_CONFIG.heartbeatIntervalSeconds,
     schedule: (callback, intervalSeconds) => this.schedule(callback, intervalSeconds),
     unschedule: (callback) => this.unschedule(callback),
     persistCurrentSnapshot: () => this.persistCurrentBootstrap(),
     canStartSync: () =>
       !this.mutationInFlight &&
+      !this.hasLoadoutHeadToDrain() &&
       (this.store.snapshot.phase === "ready" || this.lastAuthoritativeCache !== null),
     setSyncInFlight: (inFlight) => {
-      this.mutationInFlight = inFlight;
+      if (inFlight) this.mutationInFlight = true;
+      else this.finishMutation();
     },
     started: (reason, allowRender) => {
       if (
@@ -69,11 +115,16 @@ export class GameBootstrap extends Component {
         this.store.markReconnecting();
       }
     },
-    sync: async () => (await this.apiClient.syncHeartbeat()).bootstrap,
+    sync: async () => {
+      const result = await this.apiClient.syncHeartbeat(
+        this.prepareOfflineLoadoutSettlement(),
+      );
+      return { bootstrap: result.bootstrap, completedSettlement: true };
+    },
     recover: (error) => this.recoverHeartbeat(error),
     reject: (error, allowRender) => this.handleHeartbeatFailure(error, allowRender),
-    accept: (bootstrap, allowRender) =>
-      this.acceptHeartbeatBootstrap(bootstrap, allowRender),
+    accept: (result, allowRender) =>
+      this.acceptHeartbeatBootstrap(result, allowRender),
   });
 
   onLoad(): void {
@@ -86,7 +137,10 @@ export class GameBootstrap extends Component {
     this.appView = new AppView(appRoot, {
       retry: () => void this.startGame(),
       selectTab: (tab) => this.store.selectTab(tab),
-      openFeature: (feature) => this.store.openFeature(feature),
+      openFeature: (feature) => {
+        this.store.openFeature(feature);
+        this.showQueuedLoadoutNotice();
+      },
       closeFeature: () => this.closeFeature(),
       breakthrough: () => void this.breakthrough(),
       chooseAvatar: (avatarVariant) => void this.chooseAvatar(avatarVariant),
@@ -113,6 +167,7 @@ export class GameBootstrap extends Component {
     this.unsubscribeLifecycle = this.platform.subscribeLifecycle({
       onShow: () => {
         this.lifecycleSync.handleShow();
+        this.resumeOfflineLoadoutWork();
         if (
           this.lastAuthoritativeCache === null &&
           this.store.snapshot.phase !== "ready"
@@ -120,7 +175,10 @@ export class GameBootstrap extends Component {
           void this.startGame();
         }
       },
-      onHide: () => this.lifecycleSync.handleHide(),
+      onHide: () => {
+        this.canReplayFreshlySettledLoadout = false;
+        this.lifecycleSync.handleHide();
+      },
     });
     this.unsubscribeNetworkStatus = this.platform.subscribeNetworkStatus({
       onOnline: () => this.handleNetworkOnline(),
@@ -155,12 +213,29 @@ export class GameBootstrap extends Component {
     let retryAfterConnectivityHint = false;
     try {
       const bootstrap = await this.authenticateAuthoritatively();
+      this.reconcileOfflineLoadoutQueue(bootstrap);
       const allowRender = this.lifecycleSync.canRender(renderToken);
-      this.persistBootstrap(bootstrap, allowRender);
-      if (allowRender) {
-        this.setAuthoritativeReady(bootstrap);
-        settleAfterAuthentication = true;
+      const canInstallBootstrap = this.canInstallBootstrapForPendingQueue();
+      if (canInstallBootstrap) this.persistBootstrap(bootstrap, allowRender);
+      if (allowRender && canInstallBootstrap) {
+        if (!this.showQueuedLoadoutPreview(bootstrap)) {
+          this.setAuthoritativeReady(bootstrap);
+          this.showQueuedLoadoutNotice();
+        }
+      } else if (allowRender) {
+        this.store.markReconnecting();
       }
+      const hasHeadToDrain = this.hasLoadoutHeadToDrain();
+      this.requiresFreshAuthoritativeBaseline =
+        this.pendingLoadoutRollbackMessage !== null;
+      this.loadoutDrainRequested = hasHeadToDrain;
+      if (this.pendingLoadoutRollbackMessage) {
+        this.queueSettlementRetryRequested = true;
+      }
+      settleAfterAuthentication =
+        allowRender &&
+        !hasHeadToDrain &&
+        this.pendingLoadoutRollbackMessage === null;
     } catch (error) {
       if (this.lifecycleSync.canRender(renderToken)) {
         if (this.store.snapshot.bootstrap) {
@@ -205,27 +280,25 @@ export class GameBootstrap extends Component {
     const renderToken = this.lifecycleSync.captureRenderToken();
     this.mutationInFlight = true;
     try {
-      const result = await this.apiClient.settleCultivation();
+      const settlementOptions = this.prepareOfflineLoadoutSettlement();
+      const result = settlementOptions
+        ? await this.apiClient.syncHeartbeat(settlementOptions)
+        : await this.apiClient.settleCultivation();
       const allowRender = this.lifecycleSync.canRender(renderToken);
-      this.persistBootstrap(result.bootstrap, allowRender);
-      if (!allowRender) return;
-      this.applySyncedBootstrap(result.bootstrap);
+      this.acceptSettledBootstrap(result.bootstrap, allowRender);
     } catch (error) {
-      let recoveredBootstrap: BootstrapSnapshot | null = null;
+      let recoveredResult: AuthoritativeSyncResult | null = null;
       try {
-        recoveredBootstrap = await this.recoverHeartbeat(error);
+        recoveredResult = await this.recoverHeartbeat(error);
       } catch (recoveryError) {
         if (this.lifecycleSync.canRender(renderToken)) {
           this.markReadOnlyAfterAuthoritativeFailure(recoveryError, true);
         }
         return;
       }
-      if (recoveredBootstrap) {
+      if (recoveredResult) {
         const allowRender = this.lifecycleSync.canRender(renderToken);
-        this.persistBootstrap(recoveredBootstrap, allowRender);
-        if (allowRender) {
-          this.applySyncedBootstrap(recoveredBootstrap);
-        }
+        this.acceptRecoveredBootstrap(recoveredResult.bootstrap, allowRender);
         return;
       }
       if (this.lifecycleSync.canRender(renderToken)) {
@@ -238,11 +311,14 @@ export class GameBootstrap extends Component {
   }
 
   private acceptHeartbeatBootstrap(
-    bootstrap: BootstrapSnapshot,
+    result: AuthoritativeSyncResult,
     allowRender: boolean,
   ): void {
-    this.persistBootstrap(bootstrap, allowRender);
-    if (allowRender && !this.destroyed) this.applySyncedBootstrap(bootstrap);
+    if (result.completedSettlement) {
+      this.acceptSettledBootstrap(result.bootstrap, allowRender);
+    } else {
+      this.acceptRecoveredBootstrap(result.bootstrap, allowRender);
+    }
   }
 
   private applySyncedBootstrap(bootstrap: BootstrapSnapshot): void {
@@ -259,31 +335,40 @@ export class GameBootstrap extends Component {
     }
   }
 
-  private persistCurrentBootstrap(): void {
+  private persistCurrentBootstrap(): boolean {
     if (this.lastAuthoritativeCache) {
-      this.platform.save(
+      return this.platform.save(
         CLIENT_CONFIG.bootstrapCacheStorageKey,
         this.lastAuthoritativeCache,
       );
     }
+    return false;
   }
 
   private persistBootstrap(
     bootstrap: BootstrapSnapshot,
     allowRender: boolean,
-  ): void {
-    if (this.destroyed) return;
+  ): boolean {
+    if (this.pendingLoadoutQueue) {
+      return this.persistBootstrapWithOfflineLoadoutQueue(
+        bootstrap,
+        this.pendingLoadoutQueue,
+        allowRender,
+      );
+    }
+    if (this.destroyed) return false;
     const metadata = this.apiClient.getAuthoritativeSnapshotMetadata();
-    if (!metadata) return;
+    if (!metadata) return false;
     const cache = createStoredBootstrapCache(
       bootstrap,
       metadata,
       this.store.snapshot.bootstrap,
+      this.pendingLoadoutQueue,
     );
-    if (!cache) return;
+    if (!cache) return false;
 
     this.lastAuthoritativeCache = cache;
-    this.platform.save(CLIENT_CONFIG.bootstrapCacheStorageKey, cache);
+    const persisted = this.platform.save(CLIENT_CONFIG.bootstrapCacheStorageKey, cache);
     if (
       shouldInstallDeferredIdentityPreview(
         this.store.snapshot.bootstrap,
@@ -292,8 +377,316 @@ export class GameBootstrap extends Component {
       )
     ) {
       this.pendingProfileBootstrap = null;
-      this.store.setCachedPreview(cache.bootstrap, cache.lastSuccessfulSyncAt);
+      this.store.setCachedPreview(
+        cache.bootstrap,
+        cache.lastSuccessfulSyncAt,
+        0,
+      );
     }
+    return persisted;
+  }
+
+  private persistBootstrapWithOfflineLoadoutQueue(
+    bootstrap: BootstrapSnapshot,
+    queue: StoredOfflineLoadoutQueue | null,
+    allowRender: boolean,
+  ): boolean {
+    if (this.destroyed || this.pendingLoadoutRollbackMessage) return false;
+    const metadata = this.apiClient.getAuthoritativeSnapshotMetadata();
+    if (!metadata) return false;
+    const cache = createStoredBootstrapCache(
+      bootstrap,
+      metadata,
+      this.store.snapshot.bootstrap,
+      queue,
+    );
+    if (
+      !cache ||
+      !this.platform.save(CLIENT_CONFIG.bootstrapCacheStorageKey, cache)
+    ) {
+      return false;
+    }
+
+    this.pendingLoadoutQueue = queue;
+    this.lastAuthoritativeCache = cache;
+    if (
+      shouldInstallDeferredIdentityPreview(
+        this.store.snapshot.bootstrap,
+        bootstrap,
+        allowRender,
+      )
+    ) {
+      this.pendingProfileBootstrap = null;
+      const preview = queue
+        ? applyOfflineLoadoutOperations(cache.bootstrap, queue.operations)
+        : null;
+      this.store.setCachedPreview(
+        preview ?? cache.bootstrap,
+        cache.lastSuccessfulSyncAt,
+        preview ? queue?.operations.length ?? 0 : 0,
+      );
+    }
+    return true;
+  }
+
+  private prepareOfflineLoadoutSettlement():
+    | AuthoritativeMutationOptions
+    | undefined {
+    this.confirmingPreviouslyAttemptedSettlement = false;
+    if (!this.finalizePendingLoadoutRollback()) {
+      throw new ClientApiError(
+        "LOCAL_STORAGE_UNAVAILABLE",
+        "无法清理离线装备队列，请稍后重试",
+        true,
+      );
+    }
+    const queue = this.pendingLoadoutQueue;
+    if (!queue) return undefined;
+    if (queue.phase !== "needs_settlement") {
+      throw new ClientApiError(
+        "OFFLINE_LOADOUT_REPLAY_PENDING",
+        "正在确认离线装备操作，请稍后重试",
+        true,
+      );
+    }
+    const authoritativeVersion =
+      this.apiClient.getAuthoritativeSnapshotMetadata()?.playerVersion;
+    const confirmsPreviousAttempt =
+      queue.settlementRequestPending ||
+      (authoritativeVersion !== undefined &&
+        authoritativeVersion !== queue.expectedPlayerVersion);
+    const pending = beginOfflineLoadoutSettlement(queue);
+    if (!pending || (pending !== queue && !this.persistOfflineLoadoutQueue(pending))) {
+      throw new ClientApiError(
+        "LOCAL_STORAGE_UNAVAILABLE",
+        "无法保存离线结算请求，请稍后重试",
+        true,
+      );
+    }
+    this.confirmingPreviouslyAttemptedSettlement = confirmsPreviousAttempt;
+    return {
+      idempotencyKey: pending.settlementIdempotencyKey,
+      expectedPlayerVersion: pending.expectedPlayerVersion,
+    };
+  }
+
+  private acceptSettledBootstrap(
+    bootstrap: BootstrapSnapshot,
+    allowRender: boolean,
+  ): void {
+    const queue = this.pendingLoadoutQueue;
+    const requiresFreshSettlement =
+      this.confirmingPreviouslyAttemptedSettlement || !allowRender;
+    this.confirmingPreviouslyAttemptedSettlement = false;
+    if (queue?.phase === "needs_settlement") {
+      const version = this.apiClient.getAuthoritativeSnapshotMetadata()?.playerVersion;
+      const replaying = version
+        ? acceptOfflineLoadoutSettlement(queue, version)
+        : null;
+      if (!replaying) {
+        this.rollbackOfflineLoadoutQueue(
+          "离线装备队列版本异常，已按服务器状态回滚",
+        );
+        this.persistBootstrap(bootstrap, allowRender);
+        if (allowRender) {
+          this.applySyncedBootstrap(bootstrap);
+          this.showQueuedLoadoutNotice();
+        }
+        return;
+      }
+
+      const nextQueue = requiresFreshSettlement
+        ? restartOfflineLoadoutSettlement(replaying, createClientUuid())
+        : replaying;
+      if (
+        !nextQueue ||
+        !this.persistBootstrapWithOfflineLoadoutQueue(
+          bootstrap,
+          nextQueue,
+          allowRender,
+        )
+      ) {
+        this.queueSettlementRetryRequested = true;
+        if (allowRender) {
+          this.store.setFeatureMessage("正在保存离线结算结果，请稍后重试");
+        }
+        return;
+      }
+      this.foregroundSyncRetryAttempt = 0;
+      this.queueSettlementRetryRequested = requiresFreshSettlement;
+      this.loadoutDrainRequested = !requiresFreshSettlement;
+      this.canReplayFreshlySettledLoadout = !requiresFreshSettlement;
+      if (allowRender && !this.showQueuedLoadoutPreview(bootstrap)) {
+        this.applySyncedBootstrap(bootstrap);
+        this.showQueuedLoadoutNotice();
+      }
+      return;
+    }
+
+    if (this.persistBootstrap(bootstrap, allowRender)) {
+      this.foregroundSyncRetryAttempt = 0;
+      this.queueSettlementRetryRequested = false;
+    }
+    if (allowRender && !this.destroyed) {
+      this.applySyncedBootstrap(bootstrap);
+      this.showQueuedLoadoutNotice();
+    }
+  }
+
+  private acceptRecoveredBootstrap(
+    bootstrap: BootstrapSnapshot,
+    allowRender: boolean,
+  ): void {
+    this.reconcileOfflineLoadoutQueue(bootstrap);
+    const canInstallBootstrap = this.canInstallBootstrapForPendingQueue();
+    if (canInstallBootstrap) this.persistBootstrap(bootstrap, allowRender);
+    this.requiresFreshAuthoritativeBaseline =
+      this.pendingLoadoutRollbackMessage !== null;
+    if (this.hasLoadoutHeadToDrain()) this.loadoutDrainRequested = true;
+    this.queueSettlementRetryRequested = !this.hasLoadoutHeadToDrain();
+    if (!allowRender || this.destroyed) {
+      return;
+    }
+    if (!canInstallBootstrap) {
+      this.store.markReconnecting();
+    } else if (this.showQueuedLoadoutPreview(bootstrap)) {
+      this.store.markReconnecting();
+    } else {
+      this.pendingProfileBootstrap = null;
+      this.store.replaceSnapshot(bootstrap, 0);
+      this.store.markReconnecting();
+      this.showQueuedLoadoutNotice();
+    }
+  }
+
+  private reconcileOfflineLoadoutQueue(bootstrap: BootstrapSnapshot): void {
+    const queue = this.pendingLoadoutQueue;
+    if (!queue || this.pendingLoadoutRollbackMessage) return;
+    const version = this.apiClient.getAuthoritativeSnapshotMetadata()?.playerVersion;
+    const action = version
+      ? classifyOfflineLoadoutResume(
+          queue,
+          { accountId: bootstrap.account.id, playerId: bootstrap.player.id },
+          version,
+        )
+      : "rollback";
+    if (action === "rollback") {
+      this.requiresFreshAuthoritativeBaseline = true;
+      this.rollbackOfflineLoadoutQueue(
+        "服务器数据已更新，离线装备操作已回滚",
+      );
+    }
+  }
+
+  private canInstallBootstrapForPendingQueue(): boolean {
+    if (this.pendingLoadoutRollbackMessage) return false;
+    const queue = this.pendingLoadoutQueue;
+    if (!queue) return true;
+    return (
+      this.apiClient.getAuthoritativeSnapshotMetadata()?.playerVersion ===
+      queue.expectedPlayerVersion
+    );
+  }
+
+  private showQueuedLoadoutPreview(bootstrap: BootstrapSnapshot): boolean {
+    const queue = this.pendingLoadoutQueue;
+    if (!queue || this.pendingLoadoutRollbackMessage) return false;
+    const preview = applyOfflineLoadoutOperations(bootstrap, queue.operations);
+    const syncAt = this.apiClient.getAuthoritativeSnapshotMetadata()?.lastSuccessfulSyncAt ??
+      this.lastAuthoritativeCache?.lastSuccessfulSyncAt;
+    if (!preview || !syncAt) {
+      this.rollbackOfflineLoadoutQueue(
+        "离线装备操作已失效，当前显示服务器状态",
+      );
+      return false;
+    }
+    this.store.setQueuedLoadoutPreview(
+      preview,
+      syncAt,
+      queue.operations.length,
+    );
+    return true;
+  }
+
+  private persistOfflineLoadoutQueue(
+    queue: StoredOfflineLoadoutQueue,
+  ): boolean {
+    const cache = this.lastAuthoritativeCache;
+    if (!cache || this.pendingLoadoutRollbackMessage) return false;
+    const nextCache: StoredBootstrapCache = {
+      ...cache,
+      pendingLoadoutQueue: queue,
+    };
+    if (!isStoredBootstrapCacheEnvelope(nextCache)) return false;
+    if (!this.platform.save(CLIENT_CONFIG.bootstrapCacheStorageKey, nextCache)) {
+      return false;
+    }
+    this.pendingLoadoutQueue = queue;
+    this.lastAuthoritativeCache = nextCache;
+    return true;
+  }
+
+  private rollbackOfflineLoadoutQueue(message: string): boolean {
+    this.loadoutDrainRequested = false;
+    this.queueSettlementRetryRequested = false;
+    this.foregroundSyncRetryAttempt = 0;
+    this.confirmingPreviouslyAttemptedSettlement = false;
+    this.canReplayFreshlySettledLoadout = false;
+    const cache = this.lastAuthoritativeCache;
+    if (cache) {
+      const nextCache: StoredBootstrapCache = {
+        ...cache,
+        pendingLoadoutQueue: null,
+      };
+      if (isStoredBootstrapCacheEnvelope(nextCache)) {
+        if (!this.platform.save(CLIENT_CONFIG.bootstrapCacheStorageKey, nextCache)) {
+          this.pendingLoadoutRollbackMessage = message;
+          this.queuedLoadoutNotice =
+            "设备存储暂不可用，离线装备队列已停止并等待清理";
+          if (
+            hasSameBootstrapIdentity(
+              this.store.snapshot.bootstrap,
+              nextCache.bootstrap,
+            )
+          ) {
+            this.store.replaceSnapshot(nextCache.bootstrap, 0);
+            this.store.markReconnecting();
+          }
+          this.showQueuedLoadoutNotice();
+          return false;
+        }
+        this.lastAuthoritativeCache = nextCache;
+        if (
+          hasSameBootstrapIdentity(this.store.snapshot.bootstrap, nextCache.bootstrap)
+        ) {
+          this.store.replaceSnapshot(nextCache.bootstrap, 0);
+        }
+      }
+    }
+    this.pendingLoadoutQueue = null;
+    this.pendingLoadoutRollbackMessage = null;
+    this.loadoutDrainRetryAttempt = 0;
+    this.queuedLoadoutNotice = message;
+    this.showQueuedLoadoutNotice();
+    return true;
+  }
+
+  private finalizePendingLoadoutRollback(): boolean {
+    const message = this.pendingLoadoutRollbackMessage;
+    return message ? this.rollbackOfflineLoadoutQueue(message) : true;
+  }
+
+  private showQueuedLoadoutNotice(): void {
+    if (
+      !this.queuedLoadoutNotice ||
+      (this.store.snapshot.activeFeature !== "techniques" &&
+        this.store.snapshot.activeFeature !== "equipment")
+    ) {
+      return;
+    }
+    const message = this.queuedLoadoutNotice;
+    this.queuedLoadoutNotice = null;
+    this.store.setFeatureMessage(message);
   }
 
   private applyMutationBootstrap(
@@ -311,7 +704,9 @@ export class GameBootstrap extends Component {
     return true;
   }
 
-  private async recoverHeartbeat(error: unknown): Promise<BootstrapSnapshot | null> {
+  private async recoverHeartbeat(
+    error: unknown,
+  ): Promise<AuthoritativeSyncResult | null> {
     if (isTerminalAuthenticationError(error)) {
       this.apiClient.consumeRejectedStoredSession();
       this.invalidateCachedIdentity(error.message);
@@ -321,8 +716,23 @@ export class GameBootstrap extends Component {
       return null;
     }
 
+    if (isPlayerVersionConflict(error) || isStalePlayerResponse(error)) {
+      this.requiresFreshAuthoritativeBaseline = true;
+    }
+    if (isPlayerVersionConflict(error)) {
+      if (this.pendingLoadoutQueue) {
+        this.rollbackOfflineLoadoutQueue(
+          "离线装备操作与服务器数据冲突，已按服务器状态回滚",
+        );
+      }
+    }
+
     try {
-      return await this.authenticateAuthoritatively();
+      const bootstrap = await this.authenticateAuthoritatively();
+      this.reconcileOfflineLoadoutQueue(bootstrap);
+      this.requiresFreshAuthoritativeBaseline =
+        this.pendingLoadoutRollbackMessage !== null;
+      return { bootstrap, completedSettlement: false };
     } catch (recoveryError) {
       if (isClientTransportError(recoveryError)) throw recoveryError;
       return null;
@@ -340,7 +750,12 @@ export class GameBootstrap extends Component {
       if (this.startupAuthenticationInFlight) {
         this.startupRetryRequested = true;
       }
-      this.lifecycleSync.requestForegroundSync();
+      if (this.hasLoadoutHeadToDrain()) {
+        this.loadoutDrainRetryAttempt = 0;
+        this.requestOfflineLoadoutDrain();
+      } else {
+        this.lifecycleSync.requestForegroundSync();
+      }
     } else if (this.mutationInFlight) {
       this.startupRetryRequested = true;
     } else if (this.store.snapshot.phase === "error") {
@@ -350,6 +765,7 @@ export class GameBootstrap extends Component {
 
   private handleNetworkOffline(): void {
     if (this.destroyed || !this.store.snapshot.bootstrap) return;
+    this.canReplayFreshlySettledLoadout = false;
     this.persistCurrentBootstrap();
     this.markAuthoritativeOffline();
   }
@@ -599,16 +1015,18 @@ export class GameBootstrap extends Component {
 
   private equipTechnique(techniqueConfigId: string): Promise<void> {
     return this.runLoadoutMutation(
+      { kind: "technique.equip", techniqueConfigId },
       "正在运转功法……",
-      () => this.apiClient.equipTechnique(techniqueConfigId),
+      (options) => this.apiClient.equipTechnique(techniqueConfigId, options),
       "功法已装备",
     );
   }
 
   private unequipTechnique(techniqueConfigId: string): Promise<void> {
     return this.runLoadoutMutation(
+      { kind: "technique.unequip", techniqueConfigId },
       "正在卸下功法……",
-      () => this.apiClient.unequipTechnique(techniqueConfigId),
+      (options) => this.apiClient.unequipTechnique(techniqueConfigId, options),
       "功法已卸下",
     );
   }
@@ -618,26 +1036,37 @@ export class GameBootstrap extends Component {
     equippedSlot: EquippedEquipmentSlot,
   ): Promise<void> {
     return this.runLoadoutMutation(
+      { kind: "equipment.equip", equipmentInstanceId, equippedSlot },
       "正在祭炼法宝……",
-      () => this.apiClient.equipEquipment(equipmentInstanceId, equippedSlot),
+      (options) =>
+        this.apiClient.equipEquipment(equipmentInstanceId, equippedSlot, options),
       "法宝已装备",
     );
   }
 
   private unequipEquipment(equipmentInstanceId: string): Promise<void> {
     return this.runLoadoutMutation(
+      { kind: "equipment.unequip", equipmentInstanceId },
       "正在收起法宝……",
-      () => this.apiClient.unequipEquipment(equipmentInstanceId),
+      (options) => this.apiClient.unequipEquipment(equipmentInstanceId, options),
       "法宝已卸下",
     );
   }
 
   private async runLoadoutMutation(
+    intent: OfflineLoadoutIntent,
     pendingMessage: string,
-    mutation: () => Promise<LoadoutMutationResult>,
+    mutation: (
+      options?: AuthoritativeMutationOptions,
+    ) => Promise<LoadoutMutationResult>,
     completedMessage: string,
   ): Promise<void> {
-    if (!this.canStartFeatureMutation()) return;
+    const mode = this.loadoutMutationMode();
+    if (!mode) return;
+    if (mode === "offline") {
+      this.enqueueOfflineLoadoutOperation(intent);
+      return;
+    }
     const renderToken = this.lifecycleSync.captureRenderToken();
     if (!renderToken) return;
     this.mutationInFlight = true;
@@ -657,9 +1086,401 @@ export class GameBootstrap extends Component {
     }
   }
 
+  private enqueueOfflineLoadoutOperation(intent: OfflineLoadoutIntent): void {
+    const cache = this.lastAuthoritativeCache;
+    const bootstrap = this.store.snapshot.bootstrap;
+    if (!cache || !bootstrap) return;
+
+    const queue = this.pendingLoadoutQueue;
+    const sequence = queue?.nextSequence ?? 1;
+    const operation = createPendingLoadoutOperation(
+      intent,
+      createClientUuid(),
+      sequence,
+    );
+    const nextQueue = queue
+      ? appendOfflineLoadoutOperation(queue, operation)
+      : createStoredOfflineLoadoutQueue(
+          { accountId: cache.accountId, playerId: cache.playerId },
+          cache.playerVersion,
+          createClientUuid(),
+          operation,
+        );
+    if (!nextQueue) {
+      this.store.setFeatureMessage("离线装备队列已满或操作无效");
+      return;
+    }
+
+    const preview = applyOfflineLoadoutOperations(
+      cache.bootstrap,
+      nextQueue.operations,
+    );
+    const nextCache: StoredBootstrapCache = {
+      ...cache,
+      pendingLoadoutQueue: nextQueue,
+    };
+    if (!preview || !isStoredBootstrapCacheEnvelope(nextCache)) {
+      this.store.setFeatureMessage("当前装备状态不支持这项离线操作");
+      return;
+    }
+    if (!this.platform.save(CLIENT_CONFIG.bootstrapCacheStorageKey, nextCache)) {
+      this.store.setFeatureMessage("设备存储不可用，离线操作未保存");
+      return;
+    }
+
+    this.pendingLoadoutQueue = nextQueue;
+    this.lastAuthoritativeCache = nextCache;
+    if (!queue) {
+      this.loadoutDrainRetryAttempt = 0;
+      this.foregroundSyncRetryAttempt = 0;
+    }
+    this.store.replaceSnapshot(preview, nextQueue.operations.length);
+    this.store.setFeatureMessage(
+      `已加入离线装备队列，待同步 ${nextQueue.operations.length} 项`,
+    );
+  }
+
+  private async drainOfflineLoadoutQueue(): Promise<void> {
+    if (this.mutationInFlight || this.destroyed) return;
+    const renderToken = this.lifecycleSync.captureRenderToken();
+    if (!renderToken || !this.hasLoadoutHeadToDrain()) return;
+
+    this.mutationInFlight = true;
+    let synchronizedCount = 0;
+    try {
+      while (this.hasLoadoutHeadToDrain()) {
+        let queue: StoredOfflineLoadoutQueue = this.pendingLoadoutQueue!;
+        const resumedAwaitingConfirmation =
+          queue.phase === "awaiting_confirmation";
+        if (queue.phase === "replaying") {
+          if (!this.canReplayFreshlySettledLoadout) {
+            const restarted = restartOfflineLoadoutSettlement(
+              queue,
+              createClientUuid(),
+            );
+            if (!restarted || !this.persistOfflineLoadoutQueue(restarted)) {
+              this.scheduleOfflineLoadoutDrainRetry();
+              if (this.lifecycleSync.canRender(renderToken)) {
+                this.store.setFeatureMessage(
+                  "设备存储不可用，装备操作尚未发送",
+                );
+              }
+              return;
+            }
+            this.foregroundSyncRetryAttempt = 0;
+            this.queueSettlementRetryRequested = true;
+            return;
+          }
+          this.canReplayFreshlySettledLoadout = false;
+          const awaiting = beginOfflineLoadoutHead(queue);
+          if (!awaiting || !this.persistOfflineLoadoutQueue(awaiting)) {
+            this.scheduleOfflineLoadoutDrainRetry();
+            if (this.lifecycleSync.canRender(renderToken)) {
+              this.store.setFeatureMessage(
+                "设备存储不可用，装备操作尚未发送",
+              );
+            }
+            return;
+          }
+          queue = awaiting;
+        }
+        if (queue.phase !== "awaiting_confirmation") return;
+        const operation: PendingLoadoutOperation | undefined = queue.operations[0];
+        if (!operation) {
+          this.rollbackOfflineLoadoutQueue("离线装备队列为空，已恢复服务器状态");
+          return;
+        }
+        const result = await this.submitPendingLoadoutOperation(operation, {
+          idempotencyKey: operation.operationId,
+          expectedPlayerVersion: queue.expectedPlayerVersion,
+        });
+        const version = this.apiClient.getAuthoritativeSnapshotMetadata()?.playerVersion;
+        const isLastOperation = queue.operations.length === 1;
+        const remaining: StoredOfflineLoadoutQueue | null = version
+          ? acceptOfflineLoadoutHead(queue, operation.operationId, version)
+          : null;
+        const allowRender = this.lifecycleSync.canRender(renderToken);
+        if (!isLastOperation && !remaining) {
+          const rolledBack = this.rollbackOfflineLoadoutQueue(
+            "离线装备队列响应异常，已恢复服务器状态",
+          );
+          if (rolledBack) {
+            this.persistBootstrap(result.bootstrap, allowRender);
+            if (allowRender) {
+              this.applySyncedBootstrap(result.bootstrap);
+              this.showQueuedLoadoutNotice();
+            }
+          }
+          return;
+        }
+
+        const requiresSettlementBeforeTail =
+          remaining !== null &&
+          (!allowRender || resumedAwaitingConfirmation);
+        const nextQueue =
+          requiresSettlementBeforeTail
+            ? restartOfflineLoadoutSettlement(remaining, createClientUuid())
+            : remaining;
+        if (
+          (remaining && !nextQueue) ||
+          !this.persistBootstrapWithOfflineLoadoutQueue(
+            result.bootstrap,
+            nextQueue,
+            allowRender,
+          )
+        ) {
+          this.scheduleOfflineLoadoutDrainRetry();
+          if (allowRender) {
+            this.store.setFeatureMessage(
+              "正在保存同步结果，将使用相同操作编号重试",
+            );
+          }
+          return;
+        }
+        this.loadoutDrainRetryAttempt = 0;
+        synchronizedCount += 1;
+        this.canReplayFreshlySettledLoadout =
+          allowRender && remaining !== null && !requiresSettlementBeforeTail;
+        if (requiresSettlementBeforeTail) {
+          this.foregroundSyncRetryAttempt = 0;
+          this.queueSettlementRetryRequested = true;
+          if (allowRender && !this.showQueuedLoadoutPreview(result.bootstrap)) {
+            this.applySyncedBootstrap(result.bootstrap);
+            this.showQueuedLoadoutNotice();
+          }
+          return;
+        }
+        if (!allowRender) return;
+        if (remaining) {
+          if (!this.showQueuedLoadoutPreview(result.bootstrap)) {
+            this.applySyncedBootstrap(result.bootstrap);
+            this.showQueuedLoadoutNotice();
+            return;
+          }
+          continue;
+        }
+
+        this.setAuthoritativeReady(result.bootstrap);
+        this.requiresFreshAuthoritativeBaseline = false;
+        this.store.setFeatureMessage(
+          `离线装备操作已同步 ${synchronizedCount} 项`,
+        );
+        return;
+      }
+    } catch (error) {
+      await this.resolveOfflineLoadoutFailure(error, renderToken);
+    } finally {
+      this.finishMutation();
+    }
+  }
+
+  private submitPendingLoadoutOperation(
+    operation: PendingLoadoutOperation,
+    options: AuthoritativeMutationOptions,
+  ): Promise<LoadoutMutationResult> {
+    if (operation.kind === "technique.equip") {
+      return this.apiClient.equipTechnique(operation.techniqueConfigId, options);
+    }
+    if (operation.kind === "technique.unequip") {
+      return this.apiClient.unequipTechnique(operation.techniqueConfigId, options);
+    }
+    if (operation.kind === "equipment.equip") {
+      return this.apiClient.equipEquipment(
+        operation.equipmentInstanceId,
+        operation.equippedSlot,
+        options,
+      );
+    }
+    return this.apiClient.unequipEquipment(
+      operation.equipmentInstanceId,
+      options,
+    );
+  }
+
+  private async resolveOfflineLoadoutFailure(
+    error: unknown,
+    renderToken: LifecycleRenderToken,
+  ): Promise<void> {
+    if (isTerminalAuthenticationError(error)) {
+      this.apiClient.consumeRejectedStoredSession();
+      this.invalidateCachedIdentity(error.message);
+      return;
+    }
+    if (requiresOfflineLoadoutAuthenticationRecovery(error)) {
+      if (isStalePlayerResponse(error)) {
+        this.requiresFreshAuthoritativeBaseline = true;
+      }
+      await this.recoverOfflineLoadoutAuthentication(error, renderToken);
+      return;
+    }
+    if (error instanceof ClientApiError && error.retryable) {
+      this.retainOfflineLoadoutForRetry(error, renderToken);
+      return;
+    }
+
+    this.requiresFreshAuthoritativeBaseline = true;
+    const message = `${errorMessage(error, "装备操作未通过服务器校验")}，离线队列已回滚`;
+    this.rollbackOfflineLoadoutQueue(message);
+    try {
+      const bootstrap = await this.authenticateAuthoritatively();
+      const allowRender = this.lifecycleSync.canRender(renderToken);
+      this.requiresFreshAuthoritativeBaseline =
+        this.pendingLoadoutRollbackMessage !== null;
+      if (!this.pendingLoadoutRollbackMessage) {
+        this.persistBootstrap(bootstrap, allowRender);
+      }
+      if (allowRender) {
+        this.store.replaceSnapshot(bootstrap, 0);
+        this.store.markReconnecting();
+        this.showQueuedLoadoutNotice();
+      }
+      this.queueSettlementRetryRequested = true;
+    } catch (recoveryError) {
+      if (this.lifecycleSync.canRender(renderToken)) {
+        this.markReadOnlyAfterAuthoritativeFailure(recoveryError, true);
+        this.showQueuedLoadoutNotice();
+      }
+    }
+  }
+
+  private async recoverOfflineLoadoutAuthentication(
+    error: ClientApiError,
+    renderToken: LifecycleRenderToken,
+  ): Promise<void> {
+    try {
+      const bootstrap = await this.authenticateAuthoritatively();
+      this.reconcileOfflineLoadoutQueue(bootstrap);
+      const allowRender = this.lifecycleSync.canRender(renderToken);
+      const canInstallBootstrap = this.canInstallBootstrapForPendingQueue();
+      if (canInstallBootstrap) this.persistBootstrap(bootstrap, allowRender);
+      this.requiresFreshAuthoritativeBaseline =
+        this.pendingLoadoutRollbackMessage !== null;
+      if (allowRender) {
+        if (!canInstallBootstrap) {
+          this.store.markReconnecting();
+        } else if (!this.showQueuedLoadoutPreview(bootstrap)) {
+          this.store.replaceSnapshot(bootstrap, 0);
+          this.store.markReconnecting();
+          this.showQueuedLoadoutNotice();
+        }
+      }
+      if (this.hasLoadoutHeadToDrain()) {
+        this.loadoutDrainRequested = false;
+        this.scheduleOfflineLoadoutDrainRetry();
+      } else {
+        this.queueSettlementRetryRequested = true;
+      }
+    } catch (recoveryError) {
+      if (isTerminalAuthenticationError(recoveryError)) {
+        this.apiClient.consumeRejectedStoredSession();
+        this.invalidateCachedIdentity(recoveryError.message);
+        return;
+      }
+      this.retainOfflineLoadoutForRetry(
+        recoveryError instanceof ClientApiError ? recoveryError : error,
+        renderToken,
+      );
+    }
+  }
+
+  private retainOfflineLoadoutForRetry(
+    error: ClientApiError,
+    renderToken: LifecycleRenderToken,
+  ): void {
+    this.loadoutDrainRequested = false;
+    this.scheduleOfflineLoadoutDrainRetry();
+    if (!this.lifecycleSync.canRender(renderToken)) return;
+    if (isClientTransportError(error)) this.markAuthoritativeOffline();
+    else this.store.markReconnecting();
+    const pendingCount = this.pendingLoadoutQueue?.operations.length ?? 0;
+    this.store.setFeatureMessage(
+      `${error.message}，仍有 ${pendingCount} 项装备操作待同步`,
+    );
+  }
+
   private finishMutation(): void {
     this.mutationInFlight = false;
+    if (
+      this.pendingLoadoutRollbackMessage &&
+      this.finalizePendingLoadoutRollback()
+    ) {
+      this.queueSettlementRetryRequested = true;
+    }
+    if (this.loadoutDrainRequested && this.hasLoadoutHeadToDrain()) {
+      this.requestOfflineLoadoutDrain();
+      return;
+    }
+    if (this.queueSettlementRetryRequested) {
+      this.scheduleForegroundSyncRetry();
+    }
     this.lifecycleSync.notifySyncAvailable();
+  }
+
+  private hasLoadoutHeadToDrain(): boolean {
+    const phase = this.pendingLoadoutQueue?.phase;
+    return (
+      !this.pendingLoadoutRollbackMessage &&
+      (phase === "replaying" || phase === "awaiting_confirmation")
+    );
+  }
+
+  private requestOfflineLoadoutDrain(): void {
+    if (!this.hasLoadoutHeadToDrain() || this.destroyed) return;
+    if (this.mutationInFlight || !this.lifecycleSync.captureRenderToken()) {
+      this.loadoutDrainRequested = true;
+      return;
+    }
+    this.loadoutDrainRequested = false;
+    void this.drainOfflineLoadoutQueue();
+  }
+
+  private resumeOfflineLoadoutWork(): void {
+    if (this.hasLoadoutHeadToDrain()) {
+      this.requestOfflineLoadoutDrain();
+    } else if (this.queueSettlementRetryRequested) {
+      this.scheduleForegroundSyncRetry();
+    }
+  }
+
+  private scheduleOfflineLoadoutDrainRetry(): void {
+    if (this.loadoutDrainRetryScheduled || this.destroyed) return;
+    const delaySeconds = Math.min(
+      30,
+      2 ** Math.min(this.loadoutDrainRetryAttempt, 5),
+    );
+    this.loadoutDrainRetryAttempt += 1;
+    this.loadoutDrainRetryScheduled = true;
+    this.scheduleOnce(() => {
+      this.loadoutDrainRetryScheduled = false;
+      this.requestOfflineLoadoutDrain();
+    }, delaySeconds);
+  }
+
+  private scheduleForegroundSyncRetry(): void {
+    if (
+      this.foregroundSyncRetryScheduled ||
+      this.destroyed ||
+      !this.lifecycleSync.captureRenderToken()
+    ) {
+      return;
+    }
+    const delaySeconds = Math.min(
+      30,
+      2 ** Math.min(this.foregroundSyncRetryAttempt, 5),
+    );
+    this.foregroundSyncRetryAttempt += 1;
+    this.foregroundSyncRetryScheduled = true;
+    this.scheduleOnce(() => {
+      this.foregroundSyncRetryScheduled = false;
+      if (
+        !this.queueSettlementRetryRequested ||
+        !this.lifecycleSync.captureRenderToken()
+      ) {
+        return;
+      }
+      this.queueSettlementRetryRequested = false;
+      this.lifecycleSync.requestForegroundSync();
+    }, delaySeconds);
   }
 
   private handleFeatureMutationFailure(
@@ -690,6 +1511,44 @@ export class GameBootstrap extends Component {
     );
   }
 
+  private loadoutMutationMode(): "online" | "offline" | null {
+    if (
+      this.requiresFreshAuthoritativeBaseline ||
+      this.pendingLoadoutRollbackMessage
+    ) {
+      this.store.setFeatureMessage("服务器数据尚未核对完成，请稍后再试");
+      return null;
+    }
+    if (!canRunLoadoutMutation(this.store.snapshot)) {
+      if (this.store.snapshot.bootstrap) {
+        this.store.setFeatureMessage("正在核对服务器状态，请稍后再试");
+      }
+      return null;
+    }
+    if (
+      this.mutationInFlight ||
+      this.offlineDismissPending ||
+      Date.now() < this.modalInputLockedUntil ||
+      this.store.snapshot.bootstrap?.offlineSettlement
+    ) {
+      return null;
+    }
+    if (this.store.snapshot.syncStatus === "online") return "online";
+
+    const cache = this.lastAuthoritativeCache;
+    const bootstrap = this.store.snapshot.bootstrap;
+    if (
+      !cache ||
+      !bootstrap ||
+      cache.accountId !== bootstrap.account.id ||
+      cache.playerId !== bootstrap.player.id
+    ) {
+      this.store.setFeatureMessage("本地权威基线不可用，联网核对后再试");
+      return null;
+    }
+    return "offline";
+  }
+
   private applyPendingProfileBootstrap(): void {
     const pendingBootstrap = this.pendingProfileBootstrap;
     this.pendingProfileBootstrap = null;
@@ -717,9 +1576,13 @@ export class GameBootstrap extends Component {
     if (!requiresAuthoritativeRecovery(error)) {
       return false;
     }
+    if (isPlayerVersionConflict(error)) {
+      this.requiresFreshAuthoritativeBaseline = true;
+    }
 
     try {
       const bootstrap = await this.authenticateAuthoritatively();
+      this.requiresFreshAuthoritativeBaseline = false;
       const allowRender = this.lifecycleSync.canRender(renderToken);
       this.persistBootstrap(bootstrap, allowRender);
       if (!allowRender) return true;
@@ -743,6 +1606,12 @@ export class GameBootstrap extends Component {
   }
 
   private setAuthoritativeReady(bootstrap: BootstrapSnapshot): void {
+    if (this.pendingLoadoutRollbackMessage) {
+      this.store.replaceSnapshot(bootstrap, 0);
+      this.store.markReconnecting();
+      return;
+    }
+    this.requiresFreshAuthoritativeBaseline = false;
     const current = this.store.snapshot.bootstrap;
     if (current && !hasSameBootstrapIdentity(current, bootstrap)) {
       this.pendingProfileBootstrap = null;
@@ -753,12 +1622,20 @@ export class GameBootstrap extends Component {
   }
 
   private markAuthoritativeOnline(): void {
+    if (this.pendingLoadoutRollbackMessage) {
+      this.store.markReconnecting();
+      return;
+    }
     const syncAt = this.apiClient.getAuthoritativeSnapshotMetadata()?.lastSuccessfulSyncAt;
     if (syncAt) this.store.markOnline(syncAt);
     else this.store.markOnline();
   }
 
   private markAuthoritativeOffline(): void {
+    if (this.requiresFreshAuthoritativeBaseline) {
+      this.store.markReconnecting();
+      return;
+    }
     const syncAt = this.apiClient.getAuthoritativeSnapshotMetadata()?.lastSuccessfulSyncAt;
     if (syncAt) this.store.markOffline(syncAt);
     else this.store.markOffline();
@@ -782,11 +1659,33 @@ export class GameBootstrap extends Component {
     );
     if (!cache) return;
 
+    this.pendingLoadoutQueue = cache.pendingLoadoutQueue;
     this.lastAuthoritativeCache = cache;
-    this.store.setCachedPreview(cache.bootstrap, cache.lastSuccessfulSyncAt);
+    let preview = this.pendingLoadoutQueue
+      ? applyOfflineLoadoutOperations(
+          cache.bootstrap,
+          this.pendingLoadoutQueue.operations,
+        )
+      : cache.bootstrap;
+    if (!preview) {
+      this.rollbackOfflineLoadoutQueue(
+        "离线装备操作已失效，当前显示服务器状态",
+      );
+      preview = this.lastAuthoritativeCache?.bootstrap ?? cache.bootstrap;
+    }
+
+    this.store.setCachedPreview(
+      preview,
+      this.lastAuthoritativeCache?.lastSuccessfulSyncAt ??
+        cache.lastSuccessfulSyncAt,
+      this.pendingLoadoutRollbackMessage
+        ? 0
+        : this.pendingLoadoutQueue?.operations.length ?? 0,
+    );
   }
 
   private async authenticateAuthoritatively(): Promise<BootstrapSnapshot> {
+    this.canReplayFreshlySettledLoadout = false;
     try {
       const bootstrap = await this.apiClient.authenticate();
       this.apiClient.consumeRejectedStoredSession();
@@ -802,6 +1701,16 @@ export class GameBootstrap extends Component {
   private invalidateCachedIdentity(message: string): void {
     this.lastAuthoritativeCache = null;
     this.pendingProfileBootstrap = null;
+    this.pendingLoadoutQueue = null;
+    this.loadoutDrainRequested = false;
+    this.queueSettlementRetryRequested = false;
+    this.loadoutDrainRetryAttempt = 0;
+    this.foregroundSyncRetryAttempt = 0;
+    this.confirmingPreviouslyAttemptedSettlement = false;
+    this.canReplayFreshlySettledLoadout = false;
+    this.pendingLoadoutRollbackMessage = null;
+    this.requiresFreshAuthoritativeBaseline = false;
+    this.queuedLoadoutNotice = null;
     this.platform.remove(CLIENT_CONFIG.sessionStorageKey);
     this.platform.remove(CLIENT_CONFIG.bootstrapCacheStorageKey);
     this.store.setAuthenticationError(message);
@@ -825,6 +1734,33 @@ function errorMessage(error: unknown, fallback: string): string {
   return error instanceof ClientApiError || error instanceof Error
     ? error.message
     : fallback;
+}
+
+function isPlayerVersionConflict(error: unknown): boolean {
+  return error instanceof ClientApiError && error.code === "PLAYER_VERSION_CONFLICT";
+}
+
+function isStalePlayerResponse(error: unknown): boolean {
+  return error instanceof ClientApiError && error.code === "STALE_PLAYER_RESPONSE";
+}
+
+function requiresOfflineLoadoutAuthenticationRecovery(
+  error: unknown,
+): error is ClientApiError {
+  return (
+    error instanceof ClientApiError &&
+    (error.code === "UNAUTHENTICATED" ||
+      error.code === "SESSION_EXPIRED" ||
+      error.code === "STALE_PLAYER_RESPONSE")
+  );
+}
+
+function createPendingLoadoutOperation(
+  intent: OfflineLoadoutIntent,
+  operationId: string,
+  sequence: number,
+): PendingLoadoutOperation {
+  return { ...intent, operationId, sequence };
 }
 
 function describePowerDelta(powerDelta: string): string {

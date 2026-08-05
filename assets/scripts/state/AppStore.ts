@@ -12,6 +12,7 @@ export class AppStore {
     loadingMessage: "正在叩问仙门",
     errorMessage: null,
     bootstrap: null,
+    pendingLoadoutOperationCount: 0,
     selectedTab: "cultivation",
     activeFeature: null,
     featureMessage: null,
@@ -41,16 +42,43 @@ export class AppStore {
   setCachedPreview(
     bootstrap: BootstrapSnapshot,
     lastSuccessfulSyncAt: string,
+    pendingLoadoutOperationCount = 0,
   ): void {
     this.update({
       phase: "ready",
       syncStatus: "reconnecting",
       lastSuccessfulSyncAt,
       bootstrap,
+      pendingLoadoutOperationCount,
       errorMessage: null,
       selectedTab: "cultivation",
       activeFeature: null,
       featureMessage: null,
+    });
+  }
+
+  setQueuedLoadoutPreview(
+    bootstrap: BootstrapSnapshot,
+    lastSuccessfulSyncAt: string,
+    pendingLoadoutOperationCount: number,
+  ): void {
+    const sameIdentity = hasSameBootstrapIdentity(this.state.bootstrap, bootstrap);
+    this.update({
+      phase: "ready",
+      syncStatus: "reconnecting",
+      lastSuccessfulSyncAt,
+      bootstrap: sameIdentity
+        ? this.mergePendingOfflineSettlement(bootstrap)
+        : bootstrap,
+      pendingLoadoutOperationCount,
+      errorMessage: null,
+      ...(sameIdentity
+        ? {}
+        : {
+            selectedTab: "cultivation" as const,
+            activeFeature: null,
+            featureMessage: null,
+          }),
     });
   }
 
@@ -67,6 +95,7 @@ export class AppStore {
       bootstrap: sameIdentity
         ? this.mergePendingOfflineSettlement(bootstrap)
         : bootstrap,
+      pendingLoadoutOperationCount: 0,
       errorMessage: null,
       ...(sameIdentity
         ? {}
@@ -78,13 +107,17 @@ export class AppStore {
     });
   }
 
-  replaceSnapshot(bootstrap: BootstrapSnapshot): void {
+  replaceSnapshot(
+    bootstrap: BootstrapSnapshot,
+    pendingLoadoutOperationCount = this.state.pendingLoadoutOperationCount,
+  ): void {
     const sameIdentity = hasSameBootstrapIdentity(this.state.bootstrap, bootstrap);
     this.update({
       phase: "ready",
       bootstrap: sameIdentity
         ? this.mergePendingOfflineSettlement(bootstrap)
         : bootstrap,
+      pendingLoadoutOperationCount,
       errorMessage: null,
       ...(sameIdentity
         ? {}
@@ -145,6 +178,7 @@ export class AppStore {
       syncStatus: "reconnecting",
       lastSuccessfulSyncAt: null,
       bootstrap: null,
+      pendingLoadoutOperationCount: 0,
       errorMessage: message,
       selectedTab: "cultivation",
       activeFeature: null,

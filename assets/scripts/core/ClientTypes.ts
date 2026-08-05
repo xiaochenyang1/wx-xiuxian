@@ -1,6 +1,10 @@
 import type { AuthTokens, BootstrapSnapshot } from "@cultivation-diary/shared";
+import {
+  isStoredOfflineLoadoutQueue,
+  type StoredOfflineLoadoutQueue,
+} from "./OfflineLoadoutQueue";
 
-export const BOOTSTRAP_CACHE_SCHEMA_VERSION = 2 as const;
+export const BOOTSTRAP_CACHE_SCHEMA_VERSION = 3 as const;
 
 export type MainTab = "cultivation" | "partner" | "ranking" | "cave";
 export type SyncStatus = "online" | "reconnecting" | "offline";
@@ -30,6 +34,7 @@ export interface StoredBootstrapCache extends AuthoritativeSnapshotMetadata {
   accountId: string;
   playerId: string;
   bootstrap: BootstrapSnapshot;
+  pendingLoadoutQueue: StoredOfflineLoadoutQueue | null;
 }
 
 export interface AppState {
@@ -39,6 +44,7 @@ export interface AppState {
   loadingMessage: string;
   errorMessage: string | null;
   bootstrap: BootstrapSnapshot | null;
+  pendingLoadoutOperationCount: number;
   selectedTab: MainTab;
   activeFeature: FeaturePanel | null;
   featureMessage: string | null;
@@ -46,6 +52,14 @@ export interface AppState {
 
 export function canRunAuthoritativeMutation(state: Readonly<AppState>): boolean {
   return state.phase === "ready" && state.bootstrap !== null && state.syncStatus === "online";
+}
+
+export function canRunLoadoutMutation(state: Readonly<AppState>): boolean {
+  return (
+    state.phase === "ready" &&
+    state.bootstrap !== null &&
+    (state.syncStatus === "online" || state.syncStatus === "offline")
+  );
 }
 
 export function hasSameBootstrapIdentity(
@@ -138,7 +152,13 @@ export function isStoredBootstrapCacheEnvelope(
 
   return (
     value.accountId === value.bootstrap.account.id &&
-    value.playerId === value.bootstrap.player.id
+    value.playerId === value.bootstrap.player.id &&
+    (value.pendingLoadoutQueue === null ||
+      isStoredOfflineLoadoutQueue(
+        value.pendingLoadoutQueue,
+        { accountId: value.accountId, playerId: value.playerId },
+        value.playerVersion,
+      ))
   );
 }
 
@@ -182,6 +202,7 @@ export function createStoredBootstrapCache(
   bootstrap: BootstrapSnapshot,
   metadata: AuthoritativeSnapshotMetadata,
   visibleBootstrap: BootstrapSnapshot | null,
+  pendingLoadoutQueue: StoredOfflineLoadoutQueue | null = null,
 ): StoredBootstrapCache | null {
   const sameVisibleIdentity = hasSameBootstrapIdentity(
     visibleBootstrap,
@@ -202,6 +223,7 @@ export function createStoredBootstrapCache(
     playerId: bootstrap.player.id,
     ...metadata,
     bootstrap: cachedBootstrap,
+    pendingLoadoutQueue,
   };
   return isStoredBootstrapCacheEnvelope(cache) ? cache : null;
 }

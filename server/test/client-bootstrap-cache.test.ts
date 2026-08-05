@@ -11,6 +11,10 @@ import {
   type StoredBootstrapCache,
   type StoredSession,
 } from "../../assets/scripts/core/ClientTypes";
+import {
+  createStoredOfflineLoadoutQueue,
+  type StoredOfflineLoadoutQueue,
+} from "../../assets/scripts/core/OfflineLoadoutQueue";
 import { bootstrapFixture } from "./fixtures/bootstrap";
 
 const TEST_NOW = Date.parse("2026-08-05T08:05:00.000Z");
@@ -123,6 +127,58 @@ describe("Cocos bootstrap cache", () => {
           ...cache.bootstrap,
           activeEffects: Array.from({ length: 513 }, () => null),
         },
+      }),
+    ).toBe(false);
+  });
+
+  it("restores a pending loadout queue only for the cache identity and player version", () => {
+    const cache = cacheFixture();
+    const queue = pendingLoadoutQueueFixture(cache);
+    const queuedCache = { ...cache, pendingLoadoutQueue: queue };
+
+    expect(isStoredBootstrapCacheEnvelope(queuedCache)).toBe(true);
+    expect(
+      getRestorableBootstrapCache(sessionFixture(), queuedCache, TEST_NOW),
+    ).toBe(queuedCache);
+    expect(
+      isStoredBootstrapCacheEnvelope({
+        ...queuedCache,
+        pendingLoadoutQueue: {
+          ...queue,
+          accountId: "00000000-0000-4000-8000-000000000401",
+        },
+      }),
+    ).toBe(false);
+    expect(
+      isStoredBootstrapCacheEnvelope({
+        ...queuedCache,
+        pendingLoadoutQueue: {
+          ...queue,
+          playerId: "00000000-0000-4000-8000-000000000402",
+        },
+      }),
+    ).toBe(false);
+    expect(
+      isStoredBootstrapCacheEnvelope({
+        ...queuedCache,
+        pendingLoadoutQueue: { ...queue, expectedPlayerVersion: "19" },
+      }),
+    ).toBe(false);
+  });
+
+  it("rejects cache envelopes with a missing or malformed pending loadout queue", () => {
+    const cache = cacheFixture();
+    const queue = pendingLoadoutQueueFixture(cache);
+    const { pendingLoadoutQueue: _pendingLoadoutQueue, ...missingQueue } = cache;
+
+    expect(isStoredBootstrapCacheEnvelope(missingQueue)).toBe(false);
+    expect(
+      isStoredBootstrapCacheEnvelope({ ...cache, pendingLoadoutQueue: {} }),
+    ).toBe(false);
+    expect(
+      isStoredBootstrapCacheEnvelope({
+        ...cache,
+        pendingLoadoutQueue: { ...queue, operations: [null] },
       }),
     ).toBe(false);
   });
@@ -305,6 +361,7 @@ function cacheFixture(
     playerVersion: "18",
     lastSuccessfulSyncAt: "2026-08-05T08:00:00.000Z",
     bootstrap,
+    pendingLoadoutQueue: null,
   };
 }
 
@@ -318,6 +375,24 @@ function sessionFixture(): StoredSession {
     accountId: bootstrap.account.id,
     playerId: bootstrap.player.id,
   };
+}
+
+function pendingLoadoutQueueFixture(
+  cache: StoredBootstrapCache,
+): StoredOfflineLoadoutQueue {
+  const queue = createStoredOfflineLoadoutQueue(
+    { accountId: cache.accountId, playerId: cache.playerId },
+    cache.playerVersion,
+    "00000000-0000-4000-8000-000000000403",
+    {
+      operationId: "00000000-0000-4000-8000-000000000404",
+      sequence: 1,
+      kind: "technique.equip",
+      techniqueConfigId: "quiet_breathing_art",
+    },
+  );
+  if (!queue) throw new Error("Invalid pending loadout queue fixture");
+  return queue;
 }
 
 function offlineSettlementFixture(): OfflineSettlementSummary {
