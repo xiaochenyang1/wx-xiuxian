@@ -1,0 +1,256 @@
+import type {
+  ApiFailure,
+  ApiSuccess,
+  AuthLoginResult,
+  BootstrapSnapshot,
+  CultivationBreakthroughResult,
+  CultivationSettleResult,
+  HarvestSalvageResult,
+  HarvestTransferResult,
+  InventoryExpandResult,
+  InventoryUseResult,
+  LoadoutMutationResult,
+  EquippedEquipmentSlot,
+  RefreshSessionResult,
+} from "@cultivation-diary/shared";
+import { CLIENT_CONFIG } from "../core/ClientConfig";
+import type { LoginIntent, StoredSession } from "../core/ClientTypes";
+import type { PlatformAdapter } from "../platform/PlatformAdapter";
+
+export class ClientApiError extends Error {
+  constructor(
+    public readonly code: string,
+    message: string,
+    public readonly retryable: boolean,
+  ) {
+    super(message);
+    this.name = "ClientApiError";
+  }
+}
+
+export class ApiClient {
+  private playerVersion: string | null = null;
+
+  constructor(
+    private readonly platform: PlatformAdapter,
+    private readonly baseUrl: string = CLIENT_CONFIG.apiBaseUrl,
+  ) {}
+
+  async authenticate(): Promise<BootstrapSnapshot> {
+    const stored = this.platform.load<StoredSession>(CLIENT_CONFIG.sessionStorageKey);
+    if (stored) {
+      try {
+        return await this.bootstrap(stored.accessToken);
+      } catch (error) {
+        if (!(error instanceof ClientApiError) || error.code !== "UNAUTHENTICATED") {
+          throw error;
+        }
+
+        try {
+          const refreshed = await this.refresh(stored.refreshToken);
+          this.persistSession(refreshed.tokens);
+          return refreshed.bootstrap;
+        } catch {
+          // A rejected refresh falls through to a new platform login.
+        }
+      }
+    }
+
+    const intent = await this.platform.getLoginIntent();
+    const login = await this.login(intent);
+    this.persistSession(login.tokens);
+    return login.bootstrap;
+  }
+
+  async bootstrap(accessToken: string): Promise<BootstrapSnapshot> {
+    const response = await this.platform.request<
+      ApiSuccess<BootstrapSnapshot> | ApiFailure
+    >({
+      method: "GET",
+      url: `${this.baseUrl}/api/v1/bootstrap`,
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    return this.capture(unwrap(response.statusCode, response.data));
+  }
+
+  async settleCultivation(): Promise<CultivationSettleResult> {
+    return this.authorizedMutation<CultivationSettleResult>(
+      "/api/v1/cultivation/settle",
+    );
+  }
+
+  async breakthrough(): Promise<CultivationBreakthroughResult> {
+    return this.authorizedMutation<CultivationBreakthroughResult>(
+      "/api/v1/cultivation/breakthrough",
+    );
+  }
+
+  async expandInventory(): Promise<InventoryExpandResult> {
+    return this.authorizedMutation<InventoryExpandResult>(
+      "/api/v1/inventory/expand",
+    );
+  }
+
+  async useInventoryItem(
+    itemConfigId: string,
+    quantity = 1,
+  ): Promise<InventoryUseResult> {
+    return this.authorizedMutation<InventoryUseResult>(
+      "/api/v1/inventory/use",
+      { itemConfigId, quantity },
+    );
+  }
+
+  async transferHarvest(entryIds: readonly string[]): Promise<HarvestTransferResult> {
+    return this.authorizedMutation<HarvestTransferResult>(
+      "/api/v1/harvest/transfer",
+      { entryIds },
+    );
+  }
+
+  async salvageHarvest(
+    entryIds: readonly string[],
+    confirmHighQuality = false,
+  ): Promise<HarvestSalvageResult> {
+    return this.authorizedMutation<HarvestSalvageResult>(
+      "/api/v1/harvest/salvage",
+      { entryIds, confirmHighQuality },
+    );
+  }
+
+  async equipTechnique(techniqueConfigId: string): Promise<LoadoutMutationResult> {
+    return this.authorizedMutation<LoadoutMutationResult>(
+      "/api/v1/techniques/equip",
+      { techniqueConfigId },
+    );
+  }
+
+  async unequipTechnique(techniqueConfigId: string): Promise<LoadoutMutationResult> {
+    return this.authorizedMutation<LoadoutMutationResult>(
+      "/api/v1/techniques/unequip",
+      { techniqueConfigId },
+    );
+  }
+
+  async equipEquipment(
+    equipmentInstanceId: string,
+    equippedSlot: EquippedEquipmentSlot,
+  ): Promise<LoadoutMutationResult> {
+    return this.authorizedMutation<LoadoutMutationResult>(
+      "/api/v1/equipment/equip",
+      { equipmentInstanceId, equippedSlot },
+    );
+  }
+
+  async unequipEquipment(equipmentInstanceId: string): Promise<LoadoutMutationResult> {
+    return this.authorizedMutation<LoadoutMutationResult>(
+      "/api/v1/equipment/unequip",
+      { equipmentInstanceId },
+    );
+  }
+
+  private async login(intent: LoginIntent): Promise<AuthLoginResult> {
+    const path = intent.kind === "development" ? "/api/v1/auth/dev" : "/api/v1/auth/wechat";
+    const body =
+      intent.kind === "development"
+        ? { accountId: intent.accountId }
+        : { code: intent.code };
+    const response = await this.platform.request<
+      ApiSuccess<AuthLoginResult> | ApiFailure
+    >({
+      method: "POST",
+      url: `${this.baseUrl}${path}`,
+      headers: jsonMutationHeaders(),
+      body,
+    });
+    return this.capture(unwrap(response.statusCode, response.data));
+  }
+
+  private async refresh(refreshToken: string): Promise<RefreshSessionResult> {
+    const response = await this.platform.request<
+      ApiSuccess<RefreshSessionResult> | ApiFailure
+    >({
+      method: "POST",
+      url: `${this.baseUrl}/api/v1/auth/refresh`,
+      headers: jsonMutationHeaders(),
+      body: { refreshToken },
+    });
+    return this.capture(unwrap(response.statusCode, response.data));
+  }
+
+  private async authorizedMutation<T>(path: string, body: unknown = {}): Promise<T> {
+    const stored = this.platform.load<StoredSession>(CLIENT_CONFIG.sessionStorageKey);
+    if (!stored) {
+      throw new ClientApiError("UNAUTHENTICATED", "请先登录", false);
+    }
+
+    const idempotencyKey = createUuid();
+    const expectedPlayerVersion = this.playerVersion;
+    const request = async (accessToken: string): Promise<T> => {
+      const response = await this.platform.request<ApiSuccess<T> | ApiFailure>({
+        method: "POST",
+        url: `${this.baseUrl}${path}`,
+        headers: {
+          ...jsonMutationHeaders(idempotencyKey),
+          Authorization: `Bearer ${accessToken}`,
+          ...(expectedPlayerVersion === null
+            ? {}
+            : { "If-Player-Version": expectedPlayerVersion }),
+        },
+        body,
+      });
+      return this.capture(unwrap(response.statusCode, response.data));
+    };
+
+    try {
+      return await request(stored.accessToken);
+    } catch (error) {
+      if (!(error instanceof ClientApiError) || error.code !== "UNAUTHENTICATED") {
+        throw error;
+      }
+
+      const refreshed = await this.refresh(stored.refreshToken);
+      this.persistSession(refreshed.tokens);
+      return request(refreshed.tokens.accessToken);
+    }
+  }
+
+  private persistSession(session: StoredSession): void {
+    this.platform.save(CLIENT_CONFIG.sessionStorageKey, session);
+  }
+
+  private capture<T>(response: ApiSuccess<T>): T {
+    this.playerVersion = response.playerVersion;
+    return response.data;
+  }
+}
+
+function unwrap<T>(statusCode: number, response: ApiSuccess<T> | ApiFailure): ApiSuccess<T> {
+  if (statusCode >= 200 && statusCode < 300 && "data" in response) {
+    return response;
+  }
+
+  if ("error" in response) {
+    throw new ClientApiError(
+      response.error.code,
+      response.error.message,
+      response.error.retryable,
+    );
+  }
+  throw new ClientApiError("NETWORK_ERROR", "服务器返回了无法识别的响应", true);
+}
+
+function jsonMutationHeaders(idempotencyKey = createUuid()): Record<string, string> {
+  return {
+    "Content-Type": "application/json",
+    "Idempotency-Key": idempotencyKey,
+  };
+}
+
+function createUuid(): string {
+  const bytes = Array.from({ length: 16 }, () => Math.floor(Math.random() * 256));
+  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x40;
+  bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80;
+  const value = bytes.map((byte) => `0${byte.toString(16)}`.slice(-2)).join("");
+  return `${value.slice(0, 8)}-${value.slice(8, 12)}-${value.slice(12, 16)}-${value.slice(16, 20)}-${value.slice(20)}`;
+}

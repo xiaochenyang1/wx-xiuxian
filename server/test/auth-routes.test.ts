@@ -1,0 +1,213 @@
+import { randomUUID } from "node:crypto";
+import { describe, expect, it, vi } from "vitest";
+import { buildApp, type ReadinessChecks } from "../src/app";
+import { loadAppConfig } from "../src/config/env";
+import type { AuthServicePort } from "../src/modules/auth/auth-service";
+import type { CultivationServicePort } from "../src/modules/cultivation/cultivation-service";
+import { bootstrapFixture } from "./fixtures/bootstrap";
+
+function readiness(): ReadinessChecks {
+  return {
+    checkDatabase: vi.fn().mockResolvedValue(undefined),
+    checkRedis: vi.fn().mockResolvedValue(undefined),
+  };
+}
+
+function authService(): AuthServicePort {
+  const snapshot = bootstrapFixture();
+  const tokens = {
+    accessToken: "access-token",
+    accessTokenExpiresAt: new Date(Date.now() + 900_000).toISOString(),
+    refreshToken: "refresh-token",
+    refreshTokenExpiresAt: new Date(Date.now() + 2_592_000_000).toISOString(),
+  };
+
+  return {
+    loginDev: vi.fn().mockResolvedValue({
+      playerVersion: "1",
+      data: { isNewPlayer: true, tokens, bootstrap: snapshot },
+    }),
+    loginWechat: vi.fn().mockResolvedValue({
+      playerVersion: "1",
+      data: { isNewPlayer: true, tokens, bootstrap: snapshot },
+    }),
+    refresh: vi.fn().mockResolvedValue({
+      playerVersion: "1",
+      data: { tokens, bootstrap: snapshot },
+    }),
+    bootstrap: vi.fn().mockResolvedValue({ playerVersion: "1", data: snapshot }),
+    authenticate: vi.fn().mockResolvedValue({
+      sessionId: "session-id",
+      accountId: snapshot.account.id,
+      playerId: snapshot.player.id,
+    }),
+  };
+}
+
+function cultivationService(): CultivationServicePort {
+  const snapshot = bootstrapFixture();
+  return {
+    settle: vi.fn().mockResolvedValue({
+      playerVersion: "2",
+      data: {
+        settlement: {
+          settlementId: randomUUID(),
+          mode: "online",
+          efficiencyBp: 10_000,
+          elapsedMilliseconds: 1_000,
+          experienceGained: "1",
+          experienceDiscarded: "0",
+          spiritStoneGained: "0",
+          dropAttempts: 0,
+          events: [],
+          newcomerRewardGranted: false,
+          offlineSettlement: null,
+        },
+        bootstrap: snapshot,
+      },
+    }),
+    breakthrough: vi.fn().mockResolvedValue({
+      playerVersion: "3",
+      data: {
+        breakthroughId: randomUUID(),
+        fromLevel: 10,
+        toLevel: 11,
+        consumedPills: 1,
+        bootstrap: snapshot,
+      },
+    }),
+  };
+}
+
+function services() {
+  return {
+    authService: authService(),
+    cultivationService: cultivationService(),
+  };
+}
+
+describe("authentication routes", () => {
+  it("maps schema failures to the stable INVALID_REQUEST envelope", async () => {
+    const service = authService();
+    const app = await buildApp({
+      config: loadAppConfig({ NODE_ENV: "development" }),
+      readiness: readiness(),
+      services: { authService: service, cultivationService: cultivationService() },
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/dev",
+      payload: { accountId: "local-player" },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      error: { code: "INVALID_REQUEST", retryable: false },
+    });
+    expect(service.loginDev).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it("returns the complete login envelope for a valid development login", async () => {
+    const service = authService();
+    const app = await buildApp({
+      config: loadAppConfig({ NODE_ENV: "development" }),
+      readiness: readiness(),
+      services: { authService: service, cultivationService: cultivationService() },
+    });
+    const idempotencyKey = randomUUID();
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/dev",
+      headers: { "idempotency-key": idempotencyKey },
+      payload: { accountId: "local-player" },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      playerVersion: "1",
+      data: {
+        isNewPlayer: true,
+        bootstrap: { progress: { level: 1 }, unlocks: { partner: false, cave: false } },
+      },
+    });
+    expect(service.loginDev).toHaveBeenCalledWith(
+      { accountId: "local-player" },
+      idempotencyKey,
+    );
+    await app.close();
+  });
+
+  it("publishes the registered authentication schemas through OpenAPI", async () => {
+    const app = await buildApp({
+      config: loadAppConfig({ NODE_ENV: "development" }),
+      readiness: readiness(),
+      services: services(),
+    });
+
+    const response = await app.inject({ method: "GET", url: "/openapi.json" });
+    const document = response.json() as { paths: Record<string, unknown> };
+
+    expect(response.statusCode).toBe(200);
+    expect(document.paths).toHaveProperty("/api/v1/auth/dev");
+    expect(document.paths).toHaveProperty("/api/v1/auth/wechat");
+    expect(document.paths).toHaveProperty("/api/v1/auth/refresh");
+    expect(document.paths).toHaveProperty("/api/v1/bootstrap");
+    expect(document.paths).toHaveProperty("/api/v1/cultivation/settle");
+    expect(document.paths).toHaveProperty("/api/v1/cultivation/breakthrough");
+    await app.close();
+  });
+
+  it("allows local Cocos browser previews without opening arbitrary origins", async () => {
+    const app = await buildApp({
+      config: loadAppConfig({ NODE_ENV: "development" }),
+      readiness: readiness(),
+      services: services(),
+    });
+    const allowed = await app.inject({
+      method: "OPTIONS",
+      url: "/api/v1/auth/dev",
+      headers: {
+        origin: "http://localhost:7456",
+        "access-control-request-method": "POST",
+      },
+    });
+    const denied = await app.inject({
+      method: "OPTIONS",
+      url: "/api/v1/auth/dev",
+      headers: {
+        origin: "https://untrusted.example",
+        "access-control-request-method": "POST",
+      },
+    });
+
+    expect(allowed.headers["access-control-allow-origin"]).toBe("http://localhost:7456");
+    expect(denied.headers["access-control-allow-origin"]).toBeUndefined();
+    await app.close();
+  });
+
+  it("does not register development authentication in production", async () => {
+    const app = await buildApp({
+      config: loadAppConfig({
+        NODE_ENV: "production",
+        ENABLE_DEV_AUTH: "false",
+        ACCESS_TOKEN_SECRET: "a".repeat(32),
+        REFRESH_TOKEN_SECRET: "b".repeat(32),
+      }),
+      readiness: readiness(),
+      services: services(),
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/dev",
+      headers: { "idempotency-key": randomUUID() },
+      payload: { accountId: "must-not-exist" },
+    });
+
+    expect(response.statusCode).toBe(404);
+    await app.close();
+  });
+});

@@ -1,0 +1,31 @@
+{
+  "name": "xiuxian",
+  "version": "0.1.0",
+  "private": true,
+  "uuid": "6218fd6c-ab57-4a29-b4aa-ae4b5ffcd985",
+  "packageManager": "pnpm@11.15.0",
+  "engines": {
+    "node": ">=22 <23"
+  },
+  "scripts": {
+    "build:shared": "pnpm --filter @cultivation-diary/shared build",
+    "build:server": "pnpm --filter @cultivation-diary/shared build && pnpm --filter @cultivation-diary/server build",
+    "dev:server": "pnpm --filter @cultivation-diary/shared build && pnpm --filter @cultivation-diary/server dev",
+    "start:server": "pnpm --filter @cultivation-diary/shared build && pnpm --filter @cultivation-diary/server build && pnpm --filter @cultivation-diary/server start",
+    "typecheck:client": "pnpm --filter @cultivation-diary/shared build && tsc -p tsconfig.json --noEmit",
+    "typecheck": "pnpm --filter @cultivation-diary/shared typecheck && pnpm --filter @cultivation-diary/shared build && tsc -p tsconfig.json --noEmit && pnpm --filter @cultivation-diary/server typecheck",
+    "test": "pnpm --filter @cultivation-diary/shared test && pnpm --filter @cultivation-diary/server test",
+    "test:integration": "pnpm --filter @cultivation-diary/server test:integration",
+    "db:generate": "pnpm --filter @cultivation-diary/server db:generate",
+    "db:migrate": "pnpm --filter @cultivation-diary/server db:migrate"
+  },
+  "creator": {
+    "version": "3.8.8"
+  },
+  "dependencies": {
+    "@cultivation-diary/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3"
+  }
+}
