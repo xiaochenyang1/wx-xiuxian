@@ -1,6 +1,8 @@
 import { Type } from "@sinclair/typebox";
 import type { FastifyInstance } from "fastify";
+import type { DebugGrantTarget } from "@cultivation-diary/shared";
 import { errorEnvelopeSchema, successEnvelopeSchema } from "../../common/http-schema";
+import type { AppConfig } from "../../config/env";
 import type { AuthServicePort } from "../auth/auth-service";
 import { bootstrapSnapshotSchema } from "../bootstrap/bootstrap-schema";
 import type { InventoryServicePort } from "./inventory-service";
@@ -9,6 +11,12 @@ const mutationHeadersSchema = Type.Object({
   authorization: Type.Optional(Type.String()),
   "idempotency-key": Type.String({ format: "uuid" }),
   "if-player-version": Type.Optional(Type.String({ pattern: "^[0-9]+$" })),
+});
+
+const debugMutationHeadersSchema = Type.Object({
+  authorization: Type.Optional(Type.String()),
+  "idempotency-key": Type.String({ format: "uuid" }),
+  "if-player-version": Type.String({ pattern: "^[0-9]+$" }),
 });
 
 const entryIdsSchema = Type.Array(Type.String({ format: "uuid" }), {
@@ -61,6 +69,27 @@ const useResponseSchema = successEnvelopeSchema(
   }),
 );
 
+const debugGrantTargetSchema = Type.Union([
+  Type.Literal("fill_experience"),
+  Type.Literal("spirit_stone"),
+  Type.Literal("breakthrough_pill"),
+]);
+
+const debugGrantResponseSchema = successEnvelopeSchema(
+  Type.Object({
+    operationId: Type.String({ format: "uuid" }),
+    target: debugGrantTargetSchema,
+    grantedAmount: Type.String(),
+    balanceAfter: Type.String(),
+    fromLevel: Type.Integer({ minimum: 1 }),
+    toLevel: Type.Integer({ minimum: 1 }),
+    reachedBreakthrough: Type.Boolean(),
+    newcomerRewardGranted: Type.Boolean(),
+    events: Type.Array(progressionEventSchema),
+    bootstrap: bootstrapSnapshotSchema,
+  }),
+);
+
 const transferResponseSchema = successEnvelopeSchema(
   Type.Object({
     operationId: Type.String({ format: "uuid" }),
@@ -94,9 +123,17 @@ interface MutationHeaders {
   "if-player-version"?: string;
 }
 
+interface DebugMutationHeaders extends MutationHeaders {
+  "if-player-version": string;
+}
+
 interface UseBody {
   itemConfigId: string;
   quantity: number;
+}
+
+interface DebugGrantBody {
+  target: DebugGrantTarget;
 }
 
 interface HarvestBody {
@@ -111,7 +148,37 @@ export async function registerInventoryRoutes(
   app: FastifyInstance,
   authService: AuthServicePort,
   inventoryService: InventoryServicePort,
+  config: Pick<AppConfig, "enableDevAuth">,
 ): Promise<void> {
+  if (config.enableDevAuth) {
+    app.post<{ Body: DebugGrantBody; Headers: DebugMutationHeaders }>(
+      "/api/v1/debug/inventory/grant",
+      {
+        schema: {
+          tags: ["debug"],
+          summary: "开发环境注入修为或基础资源",
+          security: [{ bearerAuth: [] }],
+          headers: debugMutationHeadersSchema,
+          body: Type.Object(
+            { target: debugGrantTargetSchema },
+            { additionalProperties: false },
+          ),
+          response: { 200: debugGrantResponseSchema, ...mutationErrorResponses },
+        },
+      },
+      async (request) => {
+        const identity = await authService.authenticate(request.headers.authorization);
+        const result = await inventoryService.debugGrant(
+          identity,
+          request.headers["idempotency-key"],
+          request.body.target,
+          request.headers["if-player-version"],
+        );
+        return success(request.id, result.playerVersion, result.data);
+      },
+    );
+  }
+
   app.post<{ Body: UseBody; Headers: MutationHeaders }>(
     "/api/v1/inventory/use",
     {

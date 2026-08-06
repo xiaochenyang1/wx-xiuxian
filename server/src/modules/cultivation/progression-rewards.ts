@@ -17,7 +17,11 @@ export async function grantLevelEightRewardIfNeeded(
   playerId: string,
   level: number,
   referenceId: string,
-  referenceType: "settlement" | "offline_settlement" | "inventory_operation",
+  referenceType:
+    | "settlement"
+    | "offline_settlement"
+    | "inventory_operation"
+    | "debug_operation",
   now: Date,
 ): Promise<boolean> {
   if (level < 8) return false;

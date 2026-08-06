@@ -6,6 +6,8 @@ import type {
   ChosenAvatarVariant,
   CultivationBreakthroughResult,
   CultivationSettleResult,
+  DebugGrantResult,
+  DebugGrantTarget,
   HarvestSalvageResult,
   HarvestTransferResult,
   InventoryExpandResult,
@@ -158,6 +160,13 @@ export class ApiClient {
     return this.authorizedMutation<CultivationSettleResult>(
       "/api/v1/debug/cultivation/settle",
       { elapsedSeconds },
+    );
+  }
+
+  async debugGrant(target: DebugGrantTarget): Promise<DebugGrantResult> {
+    return this.authorizedMutation<DebugGrantResult>(
+      "/api/v1/debug/inventory/grant",
+      { target },
     );
   }
 

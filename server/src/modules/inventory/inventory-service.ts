@@ -1,5 +1,7 @@
 import type {
   BootstrapSnapshot,
+  DebugGrantResult,
+  DebugGrantTarget,
   HarvestSalvageResult,
   HarvestTransferResult,
   InventoryExpandResult,
@@ -31,6 +33,12 @@ export interface InventoryServicePort {
     quantity: number,
     expectedPlayerVersion?: string,
   ): Promise<InventoryOperationResult<InventoryUseResult>>;
+  debugGrant(
+    identity: AccessIdentity,
+    idempotencyKey: string,
+    target: DebugGrantTarget,
+    expectedPlayerVersion: string,
+  ): Promise<InventoryOperationResult<DebugGrantResult>>;
   expandBag(
     identity: AccessIdentity,
     idempotencyKey: string,
@@ -85,6 +93,33 @@ export class InventoryService implements InventoryServicePort {
       itemConfigId,
       quantity,
       effect,
+    );
+    return this.withBootstrap(identity, result);
+  }
+
+  async debugGrant(
+    identity: AccessIdentity,
+    idempotencyKey: string,
+    target: DebugGrantTarget,
+    expectedPlayerVersion: string,
+  ): Promise<InventoryOperationResult<DebugGrantResult>> {
+    if (!isDebugGrantTarget(target)) {
+      throw new AppError(
+        "INVALID_DEBUG_GRANT_TARGET",
+        "不支持该调试注入类型",
+        400,
+        false,
+      );
+    }
+    const result = await this.repository.debugGrant(
+      this.command(
+        identity,
+        idempotencyKey,
+        "debug.grant",
+        { target },
+        expectedPlayerVersion,
+      ),
+      target,
     );
     return this.withBootstrap(identity, result);
   }
@@ -198,5 +233,13 @@ function getUsableItemEffect(itemConfigId: string): ItemUseEffect {
     400,
     false,
     { itemConfigId },
+  );
+}
+
+function isDebugGrantTarget(value: unknown): value is DebugGrantTarget {
+  return (
+    value === "fill_experience" ||
+    value === "spirit_stone" ||
+    value === "breakthrough_pill"
   );
 }

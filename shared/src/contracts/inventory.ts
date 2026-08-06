@@ -44,6 +44,24 @@ export interface InventoryUseResult {
   bootstrap: BootstrapSnapshot;
 }
 
+export type DebugGrantTarget =
+  | "fill_experience"
+  | "spirit_stone"
+  | "breakthrough_pill";
+
+export interface DebugGrantResult {
+  operationId: string;
+  target: DebugGrantTarget;
+  grantedAmount: BigNumberString;
+  balanceAfter: BigNumberString;
+  fromLevel: number;
+  toLevel: number;
+  reachedBreakthrough: boolean;
+  newcomerRewardGranted: boolean;
+  events: ProgressionEvent[];
+  bootstrap: BootstrapSnapshot;
+}
+
 export interface HarvestTransferResult {
   operationId: string;
   transferredEquipment: number;

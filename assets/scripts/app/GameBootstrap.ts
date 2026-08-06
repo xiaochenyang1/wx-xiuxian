@@ -3,6 +3,8 @@ import { DEBUG } from "cc/env";
 import type {
   BootstrapSnapshot,
   ChosenAvatarVariant,
+  DebugGrantResult,
+  DebugGrantTarget,
   EquippedEquipmentSlot,
   LoadoutMutationResult,
   ProgressionEvent,
@@ -180,6 +182,7 @@ export class GameBootstrap extends Component {
         void this.unequipEquipment(equipmentInstanceId),
       dismissOfflineSettlement: () => this.dismissOfflineSettlement(),
       simulateOffline: (seconds) => this.debugSimulateOffline(seconds),
+      grantDebug: (target) => this.debugGrant(target),
       feedback: () => this.platform.feedback(),
     });
     this.unsubscribe = this.store.subscribe((state) => this.appView?.render(state));
@@ -348,19 +351,70 @@ export class GameBootstrap extends Component {
 
   private debugSimulateOffline(seconds: number): void {
     if (
-      !DEBUG ||
       !Number.isSafeInteger(seconds) ||
       seconds < 1 ||
       seconds > 86_400 ||
-      this.mutationInFlight ||
-      !canRunAuthoritativeMutation(this.store.snapshot) ||
-      this.store.snapshot.activeFeature !== null ||
-      this.store.snapshot.bootstrap?.offlineSettlement !== null ||
-      this.store.snapshot.pendingLoadoutOperationCount > 0
+      !this.canStartDebugMutation()
     ) {
       return;
     }
     void this.settleGame(seconds);
+  }
+
+  private debugGrant(target: DebugGrantTarget): void {
+    if (
+      !isDebugGrantTarget(target) ||
+      !this.canStartDebugMutation() ||
+      (target === "fill_experience" &&
+        this.store.snapshot.bootstrap?.progress.status !== "gaining")
+    ) {
+      return;
+    }
+    void this.runDebugGrant(target);
+  }
+
+  private canStartDebugMutation(): boolean {
+    return (
+      DEBUG &&
+      !this.mutationInFlight &&
+      canRunAuthoritativeMutation(this.store.snapshot) &&
+      this.store.snapshot.activeFeature === null &&
+      this.store.snapshot.bootstrap?.offlineSettlement === null &&
+      this.store.snapshot.pendingLoadoutOperationCount === 0
+    );
+  }
+
+  private async runDebugGrant(target: DebugGrantTarget): Promise<void> {
+    const renderToken = this.lifecycleSync.captureRenderToken();
+    if (!renderToken) return;
+    this.mutationInFlight = true;
+    this.store.setFeatureMessage("正在注入开发测试资源……");
+    try {
+      const result = await this.apiClient.debugGrant(target);
+      const presentation = hasLevelUpEvent(result.events)
+        ? ({
+            trigger: "level_up",
+            sourceId: result.operationId,
+          } satisfies CultivationPresentationEvidence)
+        : undefined;
+      if (
+        !this.applyMutationBootstrap(
+          result.bootstrap,
+          renderToken,
+          undefined,
+          presentation,
+        )
+      ) {
+        return;
+      }
+      this.store.setFeatureMessage(debugGrantSuccessMessage(result));
+    } catch (error) {
+      if (!(await this.recoverPlayerVersionConflict(error, renderToken))) {
+        this.handleFeatureMutationFailure(error, "调试资源注入失败", renderToken);
+      }
+    } finally {
+      this.finishMutation();
+    }
   }
 
   private acceptHeartbeatBootstrap(
@@ -1923,6 +1977,27 @@ function describePowerDelta(powerDelta: string): string {
   if (normalized.startsWith("-")) return `战力 ${normalized}`;
   if (/^[0-9]+$/.test(normalized)) return `战力 +${normalized}`;
   return "战力不变";
+}
+
+function isDebugGrantTarget(value: unknown): value is DebugGrantTarget {
+  return (
+    value === "fill_experience" ||
+    value === "spirit_stone" ||
+    value === "breakthrough_pill"
+  );
+}
+
+function debugGrantSuccessMessage(result: DebugGrantResult): string {
+  if (result.target === "spirit_stone") {
+    return `灵石注入完成：+${result.grantedAmount}，当前 ${result.balanceAfter}`;
+  }
+  if (result.target === "breakthrough_pill") {
+    return `突破丹注入完成：+${result.grantedAmount}，当前 ${result.balanceAfter}`;
+  }
+  if (result.reachedBreakthrough) {
+    return `修为注入完成：+${result.grantedAmount}，已到达突破瓶颈`;
+  }
+  return `修为注入完成：+${result.grantedAmount}，Lv.${result.fromLevel} → Lv.${result.toLevel}`;
 }
 
 function hasLevelUpEvent(events: readonly ProgressionEvent[]): boolean {

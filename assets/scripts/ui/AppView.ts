@@ -2,6 +2,7 @@ import {
   type AssetQuality,
   type AvatarVariant,
   type ChosenAvatarVariant,
+  type DebugGrantTarget,
   type EquippedEquipmentSlot,
   type OfflineSettlementSummary,
 } from "@cultivation-diary/shared";
@@ -104,6 +105,7 @@ interface AppViewActions {
   unequipEquipment(equipmentInstanceId: string): void;
   dismissOfflineSettlement(): void;
   simulateOffline(seconds: number): void;
+  grantDebug(target: DebugGrantTarget): void;
   feedback(): void;
 }
 
@@ -268,18 +270,18 @@ export class AppView {
     }
 
     const panel = createUiNode(this.debugRoot, "DebugPanel");
-    panel.setPosition(180, 170);
-    setSize(panel, 338, 650);
+    panel.setPosition(180, 110);
+    setSize(panel, 338, 770);
     panel.addComponent(UIOpacity).opacity = 238;
-    drawBand(panel, "DebugPanelBackground", 0, 0, 338, 650, COLORS.panelStrong, COLORS.goldMuted);
+    drawBand(panel, "DebugPanelBackground", 0, 0, 338, 770, COLORS.panelStrong, COLORS.goldMuted);
 
-    addLabel(panel, "开发调试", -78, 298, 190, 34, 19, COLORS.gold, true, 1, HorizontalTextAlignment.LEFT);
-    addLabel(panel, "DEV", 123, 298, 62, 28, 14, COLORS.jade, true, 1, HorizontalTextAlignment.RIGHT);
+    addLabel(panel, "开发调试", -78, 358, 190, 34, 19, COLORS.gold, true, 1, HorizontalTextAlignment.LEFT);
+    addLabel(panel, "DEV", 123, 358, 62, 28, 14, COLORS.jade, true, 1, HorizontalTextAlignment.RIGHT);
     createButton(
       panel,
       "关闭",
       124,
-      297,
+      357,
       68,
       32,
       { fill: COLORS.inkGreen, stroke: COLORS.goldMuted, fontSize: 14 },
@@ -328,16 +330,44 @@ export class AppView {
       ["页面", `${state.selectedTab}${state.activeFeature ? ` · ${state.activeFeature}` : ""}`, COLORS.textMuted],
     ];
     rows.forEach(([label, value, valueColor], index) => {
-      const y = 252 - index * 40;
+      const y = 312 - index * 40;
       addLabel(panel, label, -141, y, 72, 30, 14, COLORS.textMuted, false, 1, HorizontalTextAlignment.LEFT);
       addLabel(panel, value, 30, y, 218, 30, 14, valueColor, true, 1, HorizontalTextAlignment.RIGHT);
     });
-    const canSimulateOffline =
+    const canUseDebugMutation =
       canRunAuthoritativeMutation(state) &&
       state.activeFeature === null &&
       state.bootstrap?.offlineSettlement === null &&
       state.pendingLoadoutOperationCount === 0;
-    addLabel(panel, "离线模拟", -141, -157, 72, 30, 14, COLORS.textMuted, false, 1, HorizontalTextAlignment.LEFT);
+    addLabel(panel, "资源注入", -141, -93, 72, 30, 14, COLORS.textMuted, false, 1, HorizontalTextAlignment.LEFT);
+    for (const [target, x, text] of [
+      ["fill_experience", -102, "修满本级"],
+      ["spirit_stone", 0, "灵石 +1万"],
+      ["breakthrough_pill", 102, "突破丹 +1"],
+    ] as const) {
+      createButton(
+        panel,
+        text,
+        x,
+        -141,
+        94,
+        36,
+        {
+          fill: COLORS.inkGreenLight,
+          stroke: COLORS.goldMuted,
+          fontSize: 14,
+          enabled:
+            canUseDebugMutation &&
+            (target !== "fill_experience" ||
+              state.bootstrap?.progress.status === "gaining"),
+        },
+        () => {
+          this.actions.feedback();
+          this.actions.grantDebug(target);
+        },
+      );
+    }
+    addLabel(panel, "离线模拟", -141, -189, 72, 30, 14, COLORS.textMuted, false, 1, HorizontalTextAlignment.LEFT);
     for (const [seconds, x, text] of [
       [3_600, -102, "离线 1h"],
       [28_800, 0, "离线 8h"],
@@ -347,14 +377,14 @@ export class AppView {
         panel,
         text,
         x,
-        -205,
+        -237,
         94,
         36,
         {
           fill: COLORS.inkGreenLight,
           stroke: COLORS.goldMuted,
           fontSize: 14,
-          enabled: canSimulateOffline,
+          enabled: canUseDebugMutation,
         },
         () => {
           this.actions.feedback();
@@ -367,11 +397,11 @@ export class AppView {
         panel,
         state.errorMessage ?? state.featureMessage ?? "",
         0,
-        -282,
+        -342,
         300,
         32,
         13,
-        COLORS.red,
+        state.errorMessage ? COLORS.red : COLORS.jade,
         false,
         1,
       );

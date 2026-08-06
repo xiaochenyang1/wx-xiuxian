@@ -1842,6 +1842,121 @@ describe("authentication and bootstrap PostgreSQL integration", () => {
     });
   });
 
+  it("injects fixed development resources through the authoritative inventory transaction", async () => {
+    const loggedIn = await login(app, "debug-grant-player", randomUUID());
+    const loginData = loggedIn.json().data;
+    const playerId = loginData.bootstrap.player.id as string;
+    const accessToken = loginData.tokens.accessToken as string;
+
+    const experienceKey = randomUUID();
+    const experience = await debugGrantMutation(
+      app,
+      accessToken,
+      experienceKey,
+      "fill_experience",
+      "1",
+    );
+    expect(experience.statusCode).toBe(200);
+    expect(experience.json().data).toMatchObject({
+      target: "fill_experience",
+      grantedAmount: requiredExperienceForLevel(1),
+      fromLevel: 1,
+      toLevel: 2,
+      reachedBreakthrough: false,
+      events: [{ type: "level_up", fromLevel: 1, toLevel: 2 }],
+    });
+
+    const experienceReplay = await debugGrantMutation(
+      app,
+      accessToken,
+      experienceKey,
+      "fill_experience",
+      "1",
+    );
+    expect(experienceReplay.statusCode).toBe(200);
+    expect(experienceReplay.json().data.operationId).toBe(
+      experience.json().data.operationId,
+    );
+
+    const conflictingReplay = await debugGrantMutation(
+      app,
+      accessToken,
+      experienceKey,
+      "spirit_stone",
+      "2",
+    );
+    expect(conflictingReplay.statusCode).toBe(409);
+    expect(conflictingReplay.json()).toMatchObject({
+      error: { code: "IDEMPOTENCY_KEY_REUSED", retryable: false },
+    });
+
+    const spirit = await debugGrantMutation(
+      app,
+      accessToken,
+      randomUUID(),
+      "spirit_stone",
+      "2",
+      { amount: "999999999999" },
+    );
+    expect(spirit.statusCode).toBe(200);
+    expect(spirit.json().data).toMatchObject({
+      target: "spirit_stone",
+      grantedAmount: "10000",
+      balanceAfter: "10000",
+      fromLevel: 2,
+      toLevel: 2,
+    });
+
+    const pill = await debugGrantMutation(
+      app,
+      accessToken,
+      randomUUID(),
+      "breakthrough_pill",
+      "3",
+    );
+    expect(pill.statusCode).toBe(200);
+    expect(pill.json().data).toMatchObject({
+      target: "breakthrough_pill",
+      grantedAmount: "1",
+      balanceAfter: "1",
+      fromLevel: 2,
+      toLevel: 2,
+    });
+
+    const persisted = await infrastructure.pool.query<{
+      level: number;
+      version: string;
+      spiritStone: string;
+      lifetimeSpiritStoneEarned: string;
+      pillQuantity: string;
+      debugLedgerCount: string;
+      debugIdempotencyCount: string;
+    }>(
+      `select
+        pp.level,
+        pp.version::text as version,
+        pw.spirit_stone as "spiritStone",
+        pw.lifetime_spirit_stone_earned as "lifetimeSpiritStoneEarned",
+        (select quantity::text from inventory_stacks where player_id = pp.player_id and item_config_id = 'breakthrough_pill') as "pillQuantity",
+        (select count(*)::text from asset_ledger where player_id = pp.player_id and reason = 'debug_grant') as "debugLedgerCount",
+        (select count(*)::text from idempotency_records where account_id = p.account_id and scope = 'debug.grant') as "debugIdempotencyCount"
+       from player_progress pp
+       join players p on p.id = pp.player_id
+       join player_wallets pw on pw.player_id = pp.player_id
+       where pp.player_id = $1`,
+      [playerId],
+    );
+    expect(persisted.rows[0]).toEqual({
+      level: 2,
+      version: "4",
+      spiritStone: "10000",
+      lifetimeSpiritStoneEarned: "10000",
+      pillQuantity: "1",
+      debugLedgerCount: "2",
+      debugIdempotencyCount: "3",
+    });
+  });
+
   it("rejects a mutation with a stale player version without applying it", async () => {
     const loggedIn = await login(app, "stale-version-player", randomUUID());
     const loginData = loggedIn.json().data;
@@ -2082,6 +2197,26 @@ async function debugCultivationMutation(
       "idempotency-key": idempotencyKey,
     },
     payload: { elapsedSeconds },
+  });
+}
+
+async function debugGrantMutation(
+  app: FastifyInstance,
+  accessToken: string,
+  idempotencyKey: string,
+  target: "fill_experience" | "spirit_stone" | "breakthrough_pill",
+  expectedPlayerVersion: string,
+  extraBody: Record<string, unknown> = {},
+) {
+  return app.inject({
+    method: "POST",
+    url: "/api/v1/debug/inventory/grant",
+    headers: {
+      authorization: `Bearer ${accessToken}`,
+      "idempotency-key": idempotencyKey,
+      "if-player-version": expectedPlayerVersion,
+    },
+    payload: { target, ...extraBody },
   });
 }
 

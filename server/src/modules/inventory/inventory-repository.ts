@@ -1,12 +1,15 @@
 import { randomUUID } from "node:crypto";
 import {
   ASSET_QUALITY_ORDER,
+  applyWholeExperience,
   calculateLoadoutBonuses,
   calculateTotalPower,
   getRealmConfigForLevel,
   isAssetQuality,
+  requiredExperienceForLevel,
   simulateOnlineExperience,
   type AssetQuality,
+  type DebugGrantTarget,
   type ItemUseEffect,
   type ProgressionEvent,
   type ProgressionStatus,
@@ -58,6 +61,18 @@ export interface InventoryUsePersistenceResult {
   effectType: "simulated_online_experience";
   experienceGained: string;
   experienceDiscarded: string;
+  fromLevel: number;
+  toLevel: number;
+  reachedBreakthrough: boolean;
+  newcomerRewardGranted: boolean;
+  events: ProgressionEvent[];
+}
+
+export interface DebugGrantPersistenceResult {
+  operationId: string;
+  target: DebugGrantTarget;
+  grantedAmount: string;
+  balanceAfter: string;
   fromLevel: number;
   toLevel: number;
   reachedBreakthrough: boolean;
@@ -262,6 +277,193 @@ export class InventoryRepository {
         command,
         "inventory.use",
         { kind: "inventory_use", result },
+      );
+      return result;
+    });
+  }
+
+  async debugGrant(
+    command: InventoryMutationCommand,
+    target: DebugGrantTarget,
+  ): Promise<DebugGrantPersistenceResult> {
+    return this.database.transaction(async (transaction) => {
+      const [state] = await transaction
+        .select({
+          version: playerProgress.version,
+          level: playerProgress.level,
+          realmKey: playerProgress.realmKey,
+          experience: playerProgress.exp,
+          experienceRemainderMicros: playerProgress.expRemainderMicros,
+          progressionState: playerProgress.progressionState,
+          cultivationReserve: playerProgress.cultivationReserve,
+        })
+        .from(playerProgress)
+        .where(eq(playerProgress.playerId, command.playerId))
+        .for("update")
+        .limit(1);
+      if (!state) throw missingPlayerState();
+
+      const replay = await loadIdempotentResult(
+        transaction,
+        command,
+        "debug.grant",
+        parseDebugGrantResult,
+      );
+      if (replay) return replay;
+      assertPlayerVersion(state.version, command.expectedPlayerVersion);
+
+      const operationId = randomUUID();
+      let result: DebugGrantPersistenceResult;
+      if (target === "fill_experience") {
+        if (state.progressionState !== "gaining") {
+          throw new AppError(
+            "DEBUG_EXPERIENCE_GRANT_BLOCKED",
+            "当前修为状态不能继续注入经验",
+            409,
+            false,
+            { progressionState: state.progressionState },
+          );
+        }
+        const configuredRealm = getRealmConfigForLevel(state.level);
+        if (configuredRealm.id !== state.realmKey) {
+          throw new Error(`Player realm does not match level for player ${command.playerId}`);
+        }
+        const grantedAmount =
+          BigInt(requiredExperienceForLevel(state.level)) - BigInt(state.experience);
+        if (grantedAmount <= 0n) {
+          throw new Error(`Player experience is not below the level requirement for ${command.playerId}`);
+        }
+        const applied = applyWholeExperience(
+          {
+            level: state.level,
+            experience: state.experience,
+            cultivationReserve: state.cultivationReserve,
+            status: state.progressionState as ProgressionStatus,
+          },
+          grantedAmount.toString(),
+        );
+        const loadoutBonuses = await loadEquippedBonuses(
+          transaction,
+          command.playerId,
+        );
+        const nextRealm = getRealmConfigForLevel(applied.progress.level);
+        await transaction
+          .update(playerProgress)
+          .set({
+            level: applied.progress.level,
+            realmKey: nextRealm.id,
+            exp: applied.progress.experience,
+            expRemainderMicros:
+              applied.progress.status === "breakthrough_ready"
+                ? 0
+                : state.experienceRemainderMicros,
+            progressionState: applied.progress.status,
+            totalPower: calculateTotalPower(applied.progress.level, {
+              fixedPower: loadoutBonuses.fixedPower,
+            }),
+            cultivationReserve: applied.progress.cultivationReserve,
+            version: sql`${playerProgress.version} + 1`,
+            updatedAt: command.now,
+          })
+          .where(eq(playerProgress.playerId, command.playerId));
+        const newcomerRewardGranted = await grantLevelEightRewardIfNeeded(
+          transaction,
+          command.playerId,
+          applied.progress.level,
+          operationId,
+          "debug_operation",
+          command.now,
+        );
+        result = {
+          operationId,
+          target,
+          grantedAmount: grantedAmount.toString(),
+          balanceAfter: applied.progress.experience,
+          fromLevel: state.level,
+          toLevel: applied.progress.level,
+          reachedBreakthrough:
+            applied.progress.status === "breakthrough_ready",
+          newcomerRewardGranted,
+          events: applied.events,
+        };
+      } else if (target === "spirit_stone") {
+        const grantedAmount = 10_000n;
+        const [wallet] = await transaction
+          .update(playerWallets)
+          .set({
+            spiritStone: sql`${playerWallets.spiritStone} + ${grantedAmount.toString()}`,
+            lifetimeSpiritStoneEarned: sql`${playerWallets.lifetimeSpiritStoneEarned} + ${grantedAmount.toString()}`,
+            updatedAt: command.now,
+          })
+          .where(eq(playerWallets.playerId, command.playerId))
+          .returning({ spiritStone: playerWallets.spiritStone });
+        if (!wallet) throw missingPlayerState();
+        await incrementPlayerVersion(transaction, command.playerId, command.now);
+        await transaction.insert(assetLedger).values({
+          id: randomUUID(),
+          playerId: command.playerId,
+          assetType: "currency",
+          assetKey: "spirit_stone",
+          delta: grantedAmount.toString(),
+          balanceAfter: wallet.spiritStone,
+          reason: "debug_grant",
+          referenceType: "debug_operation",
+          referenceId: operationId,
+          metadata: { target },
+          createdAt: command.now,
+        });
+        result = {
+          operationId,
+          target,
+          grantedAmount: grantedAmount.toString(),
+          balanceAfter: wallet.spiritStone,
+          fromLevel: state.level,
+          toLevel: state.level,
+          reachedBreakthrough: false,
+          newcomerRewardGranted: false,
+          events: [],
+        };
+      } else {
+        const grantedAmount = 1n;
+        const balanceAfter = await addInventoryStack(
+          transaction,
+          command.playerId,
+          "breakthrough_pill",
+          grantedAmount,
+          command.now,
+        );
+        await incrementPlayerVersion(transaction, command.playerId, command.now);
+        await transaction.insert(assetLedger).values({
+          id: randomUUID(),
+          playerId: command.playerId,
+          assetType: "item",
+          assetKey: "breakthrough_pill",
+          delta: grantedAmount.toString(),
+          balanceAfter,
+          reason: "debug_grant",
+          referenceType: "debug_operation",
+          referenceId: operationId,
+          metadata: { target },
+          createdAt: command.now,
+        });
+        result = {
+          operationId,
+          target,
+          grantedAmount: grantedAmount.toString(),
+          balanceAfter,
+          fromLevel: state.level,
+          toLevel: state.level,
+          reachedBreakthrough: false,
+          newcomerRewardGranted: false,
+          events: [],
+        };
+      }
+
+      await storeIdempotentResult(
+        transaction,
+        command,
+        "debug.grant",
+        { kind: "debug_grant", result },
       );
       return result;
     });
@@ -908,6 +1110,24 @@ function parseUseResult(value: unknown): InventoryUsePersistenceResult {
   return result as unknown as InventoryUsePersistenceResult;
 }
 
+function parseDebugGrantResult(value: unknown): DebugGrantPersistenceResult {
+  const result = parseStoredResult(value, "debug_grant");
+  if (
+    typeof result.operationId !== "string" ||
+    !isDebugGrantTarget(result.target) ||
+    typeof result.grantedAmount !== "string" ||
+    typeof result.balanceAfter !== "string" ||
+    typeof result.fromLevel !== "number" ||
+    typeof result.toLevel !== "number" ||
+    typeof result.reachedBreakthrough !== "boolean" ||
+    typeof result.newcomerRewardGranted !== "boolean" ||
+    !Array.isArray(result.events)
+  ) {
+    throw invalidStoredResult();
+  }
+  return result as unknown as DebugGrantPersistenceResult;
+}
+
 function parseTransferResult(value: unknown): HarvestTransferPersistenceResult {
   const result = parseStoredResult(value, "harvest_transfer");
   if (
@@ -966,6 +1186,14 @@ function parseEntryType(value: string): "equipment" | "technique" {
     throw new Error(`Unknown harvest entry type: ${value}`);
   }
   return value;
+}
+
+function isDebugGrantTarget(value: unknown): value is DebugGrantTarget {
+  return (
+    value === "fill_experience" ||
+    value === "spirit_stone" ||
+    value === "breakthrough_pill"
+  );
 }
 
 function corruptedHarvestEntry(entryId: string): Error {

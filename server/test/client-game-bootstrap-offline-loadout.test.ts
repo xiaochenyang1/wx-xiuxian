@@ -95,6 +95,146 @@ describe("Cocos offline loadout orchestration", () => {
     expect(settleGame).toHaveBeenCalledWith(3_600);
   });
 
+  it("starts fixed debug grants only from an authoritative idle state", async () => {
+    const { GameBootstrap } = await import(
+      "../../assets/scripts/app/GameBootstrap"
+    );
+    const target = Object.create(GameBootstrap.prototype) as Record<
+      string,
+      unknown
+    >;
+    const runDebugGrant = vi.fn();
+    const state = {
+      phase: "ready",
+      syncStatus: "online",
+      bootstrap: bootstrapFixture(),
+      activeFeature: null as null | "inventory",
+      pendingLoadoutOperationCount: 0,
+    };
+    Object.assign(target, {
+      mutationInFlight: false,
+      store: { snapshot: state },
+      runDebugGrant,
+    });
+    const harness = target as unknown as {
+      debugGrant(target: string): void;
+      mutationInFlight: boolean;
+    };
+
+    harness.debugGrant("fill_experience");
+    harness.debugGrant("spirit_stone");
+    harness.debugGrant("breakthrough_pill");
+    harness.debugGrant("unknown");
+    state.activeFeature = "inventory";
+    harness.debugGrant("spirit_stone");
+    state.activeFeature = null;
+    state.pendingLoadoutOperationCount = 1;
+    harness.debugGrant("spirit_stone");
+    state.pendingLoadoutOperationCount = 0;
+    state.syncStatus = "offline";
+    harness.debugGrant("spirit_stone");
+    state.syncStatus = "online";
+    Object.assign(state.bootstrap, { offlineSettlement: { id: "pending" } });
+    harness.debugGrant("spirit_stone");
+    state.bootstrap.progress.status = "breakthrough_ready";
+    Object.assign(state.bootstrap, { offlineSettlement: null });
+    harness.debugGrant("fill_experience");
+    state.bootstrap.progress.status = "gaining";
+    harness.mutationInFlight = true;
+    harness.debugGrant("spirit_stone");
+
+    expect(runDebugGrant).toHaveBeenCalledTimes(3);
+    expect(runDebugGrant).toHaveBeenNthCalledWith(1, "fill_experience");
+    expect(runDebugGrant).toHaveBeenNthCalledWith(2, "spirit_stone");
+    expect(runDebugGrant).toHaveBeenNthCalledWith(3, "breakthrough_pill");
+  });
+
+  it("applies debug grant snapshots and only presents server-evidenced level ups", async () => {
+    const { GameBootstrap } = await import(
+      "../../assets/scripts/app/GameBootstrap"
+    );
+    const target = Object.create(GameBootstrap.prototype) as Record<
+      string,
+      unknown
+    >;
+    const renderToken = { revision: 3 };
+    const levelBootstrap = bootstrapFixture();
+    levelBootstrap.progress.level = 2;
+    const stoneBootstrap = bootstrapFixture();
+    stoneBootstrap.wallet.spiritStone = "10000";
+    stoneBootstrap.wallet.lifetimeSpiritStoneEarned = "10000";
+    const debugGrant = vi
+      .fn()
+      .mockResolvedValueOnce({
+        operationId: "00000000-0000-4000-8000-000000000811",
+        target: "fill_experience",
+        grantedAmount: "107",
+        balanceAfter: "0",
+        fromLevel: 1,
+        toLevel: 2,
+        reachedBreakthrough: false,
+        newcomerRewardGranted: false,
+        events: [{ type: "level_up", fromLevel: 1, toLevel: 2 }],
+        bootstrap: levelBootstrap,
+      })
+      .mockResolvedValueOnce({
+        operationId: "00000000-0000-4000-8000-000000000812",
+        target: "spirit_stone",
+        grantedAmount: "10000",
+        balanceAfter: "10000",
+        fromLevel: 2,
+        toLevel: 2,
+        reachedBreakthrough: false,
+        newcomerRewardGranted: false,
+        events: [],
+        bootstrap: stoneBootstrap,
+      });
+    const setFeatureMessage = vi.fn();
+    const applyMutationBootstrap = vi.fn(() => true);
+    const finishMutation = vi.fn();
+    Object.assign(target, {
+      mutationInFlight: false,
+      lifecycleSync: { captureRenderToken: vi.fn(() => renderToken) },
+      apiClient: { debugGrant },
+      store: { setFeatureMessage },
+      applyMutationBootstrap,
+      finishMutation,
+    });
+    const harness = target as unknown as {
+      runDebugGrant(target: "fill_experience" | "spirit_stone"): Promise<void>;
+    };
+
+    await harness.runDebugGrant("fill_experience");
+    await harness.runDebugGrant("spirit_stone");
+
+    expect(applyMutationBootstrap).toHaveBeenNthCalledWith(
+      1,
+      levelBootstrap,
+      renderToken,
+      undefined,
+      {
+        trigger: "level_up",
+        sourceId: "00000000-0000-4000-8000-000000000811",
+      },
+    );
+    expect(applyMutationBootstrap).toHaveBeenNthCalledWith(
+      2,
+      stoneBootstrap,
+      renderToken,
+      undefined,
+      undefined,
+    );
+    expect(setFeatureMessage).toHaveBeenNthCalledWith(
+      2,
+      "修为注入完成：+107，Lv.1 → Lv.2",
+    );
+    expect(setFeatureMessage).toHaveBeenNthCalledWith(
+      4,
+      "灵石注入完成：+10000，当前 10000",
+    );
+    expect(finishMutation).toHaveBeenCalledTimes(2);
+  });
+
   it("waits for the backoff timer instead of draining again from finishMutation", async () => {
     const { GameBootstrap } = await import(
       "../../assets/scripts/app/GameBootstrap"

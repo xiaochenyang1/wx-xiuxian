@@ -194,6 +194,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
         app,
         options.services.authService,
         options.services.inventoryService,
+        options.config,
       );
     }
     if (options.services.loadoutService) {

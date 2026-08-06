@@ -3,6 +3,7 @@ import type {
   ApiSuccess,
   AuthLoginResult,
   CultivationSettleResult,
+  DebugGrantResult,
   LoadoutMutationResult,
   PlayerAvatarResult,
   PlayerRenameResult,
@@ -31,6 +32,32 @@ import type {
 import { bootstrapFixture } from "./fixtures/bootstrap";
 
 describe("Cocos API client", () => {
+  it("sends fixed development grants through the dedicated route", async () => {
+    const platform = new ScriptedPlatform();
+    const client = new ApiClient(platform, "http://game.test");
+
+    await client.authenticate();
+    const granted = await client.debugGrant("spirit_stone");
+
+    expect(granted).toMatchObject({
+      target: "spirit_stone",
+      grantedAmount: "10000",
+      balanceAfter: "10000",
+    });
+    const request = platform.requests.find((entry) =>
+      entry.url.endsWith("/api/v1/debug/inventory/grant"),
+    );
+    expect(request).toMatchObject({
+      method: "POST",
+      body: { target: "spirit_stone" },
+      headers: {
+        Authorization: "Bearer access-1",
+        "Idempotency-Key": expect.any(String),
+        "If-Player-Version": "7",
+      },
+    });
+  });
+
   it("sends development offline simulations through the dedicated route", async () => {
     const platform = new ScriptedPlatform();
     const client = new ApiClient(platform, "http://game.test");
@@ -503,6 +530,23 @@ class ScriptedPlatform implements PlatformAdapter {
       return response<T>(200, success<CultivationSettleResult>("8", {
         settlement,
         bootstrap: { ...bootstrapFixture(), offlineSettlement: settlement.offlineSettlement },
+      }));
+    }
+    if (request.url.endsWith("/api/v1/debug/inventory/grant")) {
+      const bootstrap = bootstrapFixture();
+      bootstrap.wallet.spiritStone = "10000";
+      bootstrap.wallet.lifetimeSpiritStoneEarned = "10000";
+      return response<T>(200, success<DebugGrantResult>("8", {
+        operationId: "00000000-0000-4000-8000-000000000811",
+        target: "spirit_stone",
+        grantedAmount: "10000",
+        balanceAfter: "10000",
+        fromLevel: 1,
+        toLevel: 1,
+        reachedBreakthrough: false,
+        newcomerRewardGranted: false,
+        events: [],
+        bootstrap,
       }));
     }
     if (request.url.endsWith("/api/v1/cultivation/settle")) {

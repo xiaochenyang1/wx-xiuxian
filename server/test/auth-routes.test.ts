@@ -4,6 +4,7 @@ import { buildApp, type ReadinessChecks } from "../src/app";
 import { loadAppConfig } from "../src/config/env";
 import type { AuthServicePort } from "../src/modules/auth/auth-service";
 import type { CultivationServicePort } from "../src/modules/cultivation/cultivation-service";
+import type { InventoryServicePort } from "../src/modules/inventory/inventory-service";
 import { bootstrapFixture } from "./fixtures/bootstrap";
 
 function readiness(): ReadinessChecks {
@@ -93,10 +94,38 @@ function cultivationService(): CultivationServicePort {
   };
 }
 
+function inventoryService(): InventoryServicePort {
+  const snapshot = bootstrapFixture();
+  return {
+    useItem: vi.fn(),
+    debugGrant: vi.fn().mockImplementation((_identity, _key, target) =>
+      Promise.resolve({
+        playerVersion: "2",
+        data: {
+          operationId: randomUUID(),
+          target,
+          grantedAmount: "107",
+          balanceAfter: "0",
+          fromLevel: 1,
+          toLevel: 2,
+          reachedBreakthrough: false,
+          newcomerRewardGranted: false,
+          events: [{ type: "level_up", fromLevel: 1, toLevel: 2 }],
+          bootstrap: snapshot,
+        },
+      }),
+    ),
+    expandBag: vi.fn(),
+    transferHarvest: vi.fn(),
+    salvageHarvest: vi.fn(),
+  };
+}
+
 function services() {
   return {
     authService: authService(),
     cultivationService: cultivationService(),
+    inventoryService: inventoryService(),
   };
 }
 
@@ -172,7 +201,80 @@ describe("authentication routes", () => {
     expect(document.paths).toHaveProperty("/api/v1/sync/heartbeat");
     expect(document.paths).toHaveProperty("/api/v1/cultivation/settle");
     expect(document.paths).toHaveProperty("/api/v1/debug/cultivation/settle");
+    expect(document.paths).toHaveProperty("/api/v1/debug/inventory/grant");
     expect(document.paths).toHaveProperty("/api/v1/cultivation/breakthrough");
+    await app.close();
+  });
+
+  it("forwards bounded development resource grants with strict mutation guards", async () => {
+    const auth = authService();
+    const inventory = inventoryService();
+    const app = await buildApp({
+      config: loadAppConfig({ NODE_ENV: "development" }),
+      readiness: readiness(),
+      services: {
+        authService: auth,
+        cultivationService: cultivationService(),
+        inventoryService: inventory,
+      },
+    });
+    const idempotencyKey = randomUUID();
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/debug/inventory/grant",
+      headers: {
+        authorization: "Bearer access-token",
+        "idempotency-key": idempotencyKey,
+        "if-player-version": "1",
+      },
+      payload: { target: "fill_experience" },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      playerVersion: "2",
+      data: {
+        target: "fill_experience",
+        grantedAmount: "107",
+        fromLevel: 1,
+        toLevel: 2,
+      },
+    });
+    expect(inventory.debugGrant).toHaveBeenCalledWith(
+      {
+        sessionId: "session-id",
+        accountId: bootstrapFixture().account.id,
+        playerId: bootstrapFixture().player.id,
+      },
+      idempotencyKey,
+      "fill_experience",
+      "1",
+    );
+
+    for (const [index, invalid] of [
+      { headers: {}, payload: { target: "spirit_stone" } },
+      {
+        headers: { "if-player-version": "1" },
+        payload: { target: "immortal_jade" },
+      },
+    ].entries()) {
+      const invalidResponse = await app.inject({
+        method: "POST",
+        url: "/api/v1/debug/inventory/grant",
+        headers: {
+          authorization: "Bearer access-token",
+          "idempotency-key": randomUUID(),
+          ...invalid.headers,
+        },
+        payload: invalid.payload,
+      });
+      expect(invalidResponse.statusCode, `invalid grant case ${index}`).toBe(400);
+      expect(invalidResponse.json()).toMatchObject({
+        error: { code: "INVALID_REQUEST", retryable: false },
+      });
+    }
+    expect(inventory.debugGrant).toHaveBeenCalledTimes(1);
     await app.close();
   });
 
@@ -339,6 +441,18 @@ describe("authentication routes", () => {
     });
 
     expect(debugResponse.statusCode).toBe(404);
+
+    const debugGrantResponse = await app.inject({
+      method: "POST",
+      url: "/api/v1/debug/inventory/grant",
+      headers: {
+        "idempotency-key": randomUUID(),
+        "if-player-version": "1",
+      },
+      payload: { target: "spirit_stone" },
+    });
+
+    expect(debugGrantResponse.statusCode).toBe(404);
     await app.close();
   });
 });
