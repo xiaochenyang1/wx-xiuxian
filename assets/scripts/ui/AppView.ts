@@ -37,9 +37,12 @@ import {
   VerticalTextAlignment,
   Vec3,
 } from "cc";
+import { DEBUG } from "cc/env";
 
 const DESIGN_WIDTH = 750;
 const DESIGN_HEIGHT = 1334;
+
+type DebugLifecycleStatus = "foreground" | "background";
 
 const QUALITY_ORDER: Readonly<Record<AssetQuality, number>> = {
   common: 0,
@@ -124,9 +127,12 @@ interface PageWindow {
 export class AppView {
   private readonly contentRoot: Node;
   private readonly presentationRoot: Node;
+  private readonly debugRoot: Node | null;
   private idleLabel: Label | null = null;
   private idleFrame = 0;
   private lastState: Readonly<AppState> | null = null;
+  private debugPanelVisible = true;
+  private debugLifecycleStatus: DebugLifecycleStatus = "foreground";
   private profilePlayerId: string | null = null;
   private profileAvatarDraft: ChosenAvatarVariant | null = null;
   private profileNameDraft: string | null = null;
@@ -149,8 +155,11 @@ export class AppView {
     setSize(containerRoot, DESIGN_WIDTH, DESIGN_HEIGHT);
     this.contentRoot = createUiNode(containerRoot, "ContentRoot");
     this.presentationRoot = createUiNode(containerRoot, "PresentationRoot");
+    // Cocos replaces DEBUG at build time; release builds never create this root.
+    this.debugRoot = DEBUG ? createUiNode(containerRoot, "DebugRoot") : null;
     setSize(this.contentRoot, DESIGN_WIDTH, DESIGN_HEIGHT);
     setSize(this.presentationRoot, DESIGN_WIDTH, DESIGN_HEIGHT);
+    if (this.debugRoot) setSize(this.debugRoot, DESIGN_WIDTH, DESIGN_HEIGHT);
   }
 
   private get root(): Node {
@@ -186,10 +195,12 @@ export class AppView {
 
     if (state.phase === "loading") {
       this.drawLoading(state.loadingMessage);
+      this.drawDebugPanel(state);
       return;
     }
     if (state.phase === "error" || !state.bootstrap) {
       this.drawError(state.errorMessage || "暂时无法连接仙门");
+      this.drawDebugPanel(state);
       return;
     }
 
@@ -217,6 +228,120 @@ export class AppView {
       this.drawOfflineSettlement(state.bootstrap.offlineSettlement);
     }
     this.tryStartCultivationPresentation();
+    this.drawDebugPanel(state);
+  }
+
+  setDebugLifecycleStatus(status: DebugLifecycleStatus): void {
+    if (!DEBUG || this.debugLifecycleStatus === status) return;
+    this.debugLifecycleStatus = status;
+    this.refreshDebugPanel();
+  }
+
+  private refreshDebugPanel(): void {
+    if (!DEBUG || !this.debugRoot || !this.lastState) return;
+    this.drawDebugPanel(this.lastState);
+  }
+
+  private drawDebugPanel(state: Readonly<AppState>): void {
+    if (!DEBUG || !this.debugRoot) return;
+    for (const child of [...this.debugRoot.children]) child.destroy();
+
+    if (!this.debugPanelVisible) {
+      createButton(
+        this.debugRoot,
+        "调试",
+        316,
+        474,
+        78,
+        36,
+        { fill: COLORS.inkGreenLight, stroke: COLORS.goldMuted, fontSize: 16 },
+        () => {
+          this.debugPanelVisible = true;
+          this.refreshDebugPanel();
+        },
+      );
+      return;
+    }
+
+    const panel = createUiNode(this.debugRoot, "DebugPanel");
+    panel.setPosition(180, 230);
+    setSize(panel, 338, 530);
+    panel.addComponent(UIOpacity).opacity = 238;
+    drawBand(panel, "DebugPanelBackground", 0, 0, 338, 530, COLORS.panelStrong, COLORS.goldMuted);
+
+    addLabel(panel, "开发调试", -78, 238, 190, 34, 19, COLORS.gold, true, 1, HorizontalTextAlignment.LEFT);
+    addLabel(panel, "DEV", 123, 238, 62, 28, 14, COLORS.jade, true, 1, HorizontalTextAlignment.RIGHT);
+    createButton(
+      panel,
+      "关闭",
+      124,
+      237,
+      68,
+      32,
+      { fill: COLORS.inkGreen, stroke: COLORS.goldMuted, fontSize: 14 },
+      () => {
+        this.debugPanelVisible = false;
+        this.refreshDebugPanel();
+      },
+    );
+
+    const bootstrap = state.bootstrap;
+    const identity = bootstrap
+      ? `${bootstrap.player.displayName} · ${shortId(bootstrap.player.id)}`
+      : "尚未建立角色";
+    const version = bootstrap?.config.version ?? "未知";
+    const sync = `${state.syncStatus} · ${formatDebugTimestamp(state.lastSuccessfulSyncAt)}`;
+    const lifecycle = this.debugLifecycleStatus === "foreground" ? "前台" : "后台";
+    const queueCount = state.pendingLoadoutOperationCount;
+    const queue = queueCount > 0
+      ? `${queueCount} 项待同步`
+      : bootstrap?.offlineSettlement
+        ? "离线结算待确认"
+        : "空";
+    const presentation = this.activePresentation
+      ? `播放 ${presentationKindName(this.activePresentation.kind)}`
+      : this.pendingPresentation
+        ? `排队 ${presentationKindName(this.pendingPresentation.kind)}`
+        : "空闲";
+    const progress = bootstrap
+      ? `Lv.${bootstrap.progress.level} · ${bootstrap.progress.realmName}`
+      : "-";
+    const experience = bootstrap
+      ? `${formatLargeNumber(bootstrap.progress.experience)} / ${formatLargeNumber(bootstrap.progress.requiredExperience)}`
+      : "-";
+    const power = bootstrap ? formatLargeNumber(bootstrap.progress.totalPower) : "-";
+
+    const rows: ReadonlyArray<readonly [string, string, Color]> = [
+      ["同步", sync, state.syncStatus === "online" ? COLORS.jade : COLORS.gold],
+      ["生命周期", lifecycle, this.debugLifecycleStatus === "foreground" ? COLORS.jade : COLORS.red],
+      ["版本", version, COLORS.text],
+      ["队列", queue, queueCount > 0 ? COLORS.gold : COLORS.textMuted],
+      ["表现", presentation, this.activePresentation ? COLORS.gold : COLORS.textMuted],
+      ["角色", identity, COLORS.text],
+      ["修为", progress, COLORS.jade],
+      ["经验", experience, COLORS.text],
+      ["战力", power, COLORS.gold],
+      ["页面", `${state.selectedTab}${state.activeFeature ? ` · ${state.activeFeature}` : ""}`, COLORS.textMuted],
+    ];
+    rows.forEach(([label, value, valueColor], index) => {
+      const y = 192 - index * 40;
+      addLabel(panel, label, -141, y, 72, 30, 14, COLORS.textMuted, false, 1, HorizontalTextAlignment.LEFT);
+      addLabel(panel, value, 30, y, 218, 30, 14, valueColor, true, 1, HorizontalTextAlignment.RIGHT);
+    });
+    if (state.errorMessage || state.featureMessage) {
+      addLabel(
+        panel,
+        state.errorMessage ?? state.featureMessage ?? "",
+        0,
+        -226,
+        300,
+        32,
+        13,
+        COLORS.red,
+        false,
+        1,
+      );
+    }
   }
 
   enqueueCultivationPresentation(plan: CultivationPresentationPlan): void {
@@ -232,6 +357,7 @@ export class AppView {
     } else {
       this.pendingPresentation = plan;
     }
+    this.refreshDebugPanel();
   }
 
   interruptCultivationPresentation(clearQueue = false): void {
@@ -240,6 +366,7 @@ export class AppView {
     this.activePresentation = null;
     for (const child of [...this.presentationRoot.children]) removeAndDestroy(child);
     if (clearQueue) this.pendingPresentation = null;
+    this.refreshDebugPanel();
   }
 
   destroy(): void {
@@ -325,6 +452,7 @@ export class AppView {
       this.activePresentation = null;
       for (const child of [...this.presentationRoot.children]) removeAndDestroy(child);
     }
+    this.refreshDebugPanel();
   }
 
   private deferActivePresentation(): void {
@@ -603,6 +731,7 @@ export class AppView {
     this.activePresentation = null;
     removeAndDestroy(overlay);
     this.tryStartCultivationPresentation();
+    this.refreshDebugPanel();
   }
 
   private drawBackdrop(): void {
@@ -2360,6 +2489,23 @@ function formatLastSync(value: string | null): string {
   if (!Number.isFinite(date.getTime())) return "同步时间未知";
   const pad = (part: number): string => (part < 10 ? `0${part}` : String(part));
   return `上次同步 ${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function formatDebugTimestamp(value: string | null): string {
+  if (!value) return "未同步";
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return "时间未知";
+  return value.replace("T", " ").replace(/\.\d{3}Z$/, "Z");
+}
+
+function shortId(value: string): string {
+  return value.length > 12 ? `${value.slice(0, 6)}...${value.slice(-4)}` : value;
+}
+
+function presentationKindName(kind: CultivationPresentationPlan["kind"]): string {
+  if (kind === "level_up") return "升级";
+  if (kind === "breakthrough") return "突破";
+  return "战力";
 }
 
 function drawPagination(

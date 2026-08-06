@@ -185,6 +185,7 @@ export class GameBootstrap extends Component {
     this.lifecycleSync.start();
     this.unsubscribeLifecycle = this.platform.subscribeLifecycle({
       onShow: () => {
+        this.appView?.setDebugLifecycleStatus("foreground");
         this.lifecycleSync.handleShow();
         this.resumeOfflineLoadoutWork();
         if (
@@ -197,6 +198,7 @@ export class GameBootstrap extends Component {
       onHide: () => {
         this.canReplayFreshlySettledLoadout = false;
         this.appView?.interruptCultivationPresentation(true);
+        this.appView?.setDebugLifecycleStatus("background");
         this.lifecycleSync.handleHide();
       },
     });
@@ -209,7 +211,6 @@ export class GameBootstrap extends Component {
 
   onDestroy(): void {
     this.destroyed = true;
-    this.appView?.interruptCultivationPresentation(true);
     this.unsubscribeLifecycle?.();
     this.unsubscribeLifecycle = null;
     this.unsubscribeNetworkStatus?.();
@@ -217,6 +218,7 @@ export class GameBootstrap extends Component {
     this.lifecycleSync.destroy();
     this.unsubscribe?.();
     this.unsubscribe = null;
+    this.appView?.destroy();
     this.appView = null;
   }
 
