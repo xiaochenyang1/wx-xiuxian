@@ -1,4 +1,4 @@
-import { DEV, WECHAT } from "cc/env";
+import { DEBUG, DEV, WECHAT } from "cc/env";
 import { CLIENT_CONFIG } from "../core/ClientConfig";
 import { withRequestTimeout } from "../core/ClientTypes";
 import type {
@@ -49,8 +49,98 @@ export interface PlatformNetworkHandlers {
   onOffline(): void;
 }
 
+/**
+ * Fixed network fault modes exposed by the development diagnostics surface.
+ * The request layer always treats these as disabled when Cocos builds with
+ * DEBUG=false, even if a caller still holds a controller reference.
+ */
+export const DEBUG_NETWORK_FAULT_MODES = [
+  "normal",
+  "delay",
+  "timeout",
+  "failure",
+] as const;
+
+export type DebugNetworkFaultMode = (typeof DEBUG_NETWORK_FAULT_MODES)[number];
+
+export const DEBUG_NETWORK_FAULT_DELAY_MILLISECONDS = 1_000;
+
+export function isDebugNetworkFaultMode(value: unknown): value is DebugNetworkFaultMode {
+  return (
+    value === "normal" ||
+    value === "delay" ||
+    value === "timeout" ||
+    value === "failure"
+  );
+}
+
+export class DebugNetworkFaultError extends Error {
+  constructor() {
+    super("Debug network failure");
+    this.name = "DebugNetworkFaultError";
+  }
+}
+
+/**
+ * Applies one deterministic fault to a request. The controller deliberately
+ * accepts a request callback so delayed/blocked modes do not construct or
+ * dispatch a platform request until the selected behavior allows it.
+ */
+export class DebugNetworkFaultController {
+  private currentMode: DebugNetworkFaultMode = "normal";
+
+  get mode(): DebugNetworkFaultMode {
+    return DEBUG ? this.currentMode : "normal";
+  }
+
+  setMode(mode: DebugNetworkFaultMode): void {
+    if (!DEBUG) return;
+    if (!isDebugNetworkFaultMode(mode)) {
+      throw new TypeError("Unsupported debug network fault mode");
+    }
+    this.currentMode = mode;
+  }
+
+  reset(): void {
+    this.currentMode = "normal";
+  }
+
+  run<T>(request: () => Promise<T>): Promise<T> {
+    // Keep this check at the request boundary. A release build must not be
+    // able to activate a fault through a stale/debug-only UI reference.
+    if (!DEBUG) return invokeRequest(request);
+
+    switch (this.currentMode) {
+      case "normal":
+        return invokeRequest(request);
+      case "delay":
+        return new Promise<T>((resolve, reject) => {
+          setTimeout(() => {
+            invokeRequest(request).then(resolve, reject);
+          }, DEBUG_NETWORK_FAULT_DELAY_MILLISECONDS);
+        });
+      case "timeout":
+        return withRequestTimeout(
+          new Promise<T>(() => undefined),
+          CLIENT_CONFIG.requestTimeoutMilliseconds,
+        );
+      case "failure":
+        return Promise.reject(new DebugNetworkFaultError());
+      default:
+        // Treat an impossible/corrupted mode as normal traffic.
+        return invokeRequest(request);
+    }
+  }
+}
+
+export function createDebugNetworkFaultController(): DebugNetworkFaultController {
+  return new DebugNetworkFaultController();
+}
+
 export interface PlatformAdapter {
   readonly kind: "browser" | "wechat";
+  /** Present on real adapters; test doubles and custom integrations may omit it. */
+  readonly debugNetworkFault?: DebugNetworkFaultController;
   request<T>(request: HttpRequest): Promise<HttpResponse<T>>;
   getLoginIntent(): Promise<LoginIntent>;
   load<T>(key: string): T | null;
@@ -70,26 +160,29 @@ export function createPlatformAdapter(): PlatformAdapter {
 
 class BrowserPlatformAdapter implements PlatformAdapter {
   readonly kind = "browser" as const;
+  readonly debugNetworkFault = createDebugNetworkFaultController();
 
-  async request<T>(request: HttpRequest): Promise<HttpResponse<T>> {
-    const controller = typeof AbortController === "undefined" ? null : new AbortController();
-    const response = withRequestTimeout(
-      (async (): Promise<HttpResponse<T>> => {
-        const fetchResponse = await fetch(request.url, {
-          method: request.method,
-          ...(request.headers === undefined ? {} : { headers: request.headers }),
-          ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }),
-          ...(controller ? { signal: controller.signal } : {}),
-        });
-        return {
-          statusCode: fetchResponse.status,
-          data: (await fetchResponse.json()) as T,
-        };
-      })(),
-      CLIENT_CONFIG.requestTimeoutMilliseconds,
-      () => controller?.abort(),
-    );
-    return response;
+  request<T>(request: HttpRequest): Promise<HttpResponse<T>> {
+    return this.debugNetworkFault.run(() => {
+      const controller =
+        typeof AbortController === "undefined" ? null : new AbortController();
+      return withRequestTimeout(
+        (async (): Promise<HttpResponse<T>> => {
+          const fetchResponse = await fetch(request.url, {
+            method: request.method,
+            ...(request.headers === undefined ? {} : { headers: request.headers }),
+            ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }),
+            ...(controller ? { signal: controller.signal } : {}),
+          });
+          return {
+            statusCode: fetchResponse.status,
+            data: (await fetchResponse.json()) as T,
+          };
+        })(),
+        CLIENT_CONFIG.requestTimeoutMilliseconds,
+        () => controller?.abort(),
+      );
+    });
   }
 
   async getLoginIntent(): Promise<LoginIntent> {
@@ -190,30 +283,33 @@ class BrowserPlatformAdapter implements PlatformAdapter {
 
 class WechatPlatformAdapter implements PlatformAdapter {
   readonly kind = "wechat" as const;
+  readonly debugNetworkFault = createDebugNetworkFaultController();
 
   constructor(private readonly api: WechatApi) {}
 
   request<T>(request: HttpRequest): Promise<HttpResponse<T>> {
-    let requestTask: WechatRequestTask | void;
-    return withRequestTimeout(
-      new Promise((resolve, reject) => {
-        requestTask = this.api.request({
-          url: request.url,
-          method: request.method,
-          timeout: CLIENT_CONFIG.requestTimeoutMilliseconds,
-          ...(request.headers === undefined ? {} : { header: request.headers }),
-          ...(request.body === undefined ? {} : { data: request.body }),
-          success: (result) => {
-            resolve({ statusCode: result.statusCode, data: result.data as T });
-          },
-          fail: (error) => {
-            reject(new Error(error.errMsg || "网络请求失败"));
-          },
-        });
-      }),
-      CLIENT_CONFIG.requestTimeoutMilliseconds,
-      () => requestTask?.abort?.(),
-    );
+    return this.debugNetworkFault.run(() => {
+      let requestTask: WechatRequestTask | void;
+      return withRequestTimeout(
+        new Promise((resolve, reject) => {
+          requestTask = this.api.request({
+            url: request.url,
+            method: request.method,
+            timeout: CLIENT_CONFIG.requestTimeoutMilliseconds,
+            ...(request.headers === undefined ? {} : { header: request.headers }),
+            ...(request.body === undefined ? {} : { data: request.body }),
+            success: (result) => {
+              resolve({ statusCode: result.statusCode, data: result.data as T });
+            },
+            fail: (error) => {
+              reject(new Error(error.errMsg || "网络请求失败"));
+            },
+          });
+        }),
+        CLIENT_CONFIG.requestTimeoutMilliseconds,
+        () => requestTask?.abort?.(),
+      );
+    });
   }
 
   async getLoginIntent(): Promise<LoginIntent> {
@@ -323,4 +419,12 @@ function getWechatApi(): WechatApi | null {
 
 function randomFragment(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function invokeRequest<T>(request: () => Promise<T>): Promise<T> {
+  try {
+    return request();
+  } catch (error) {
+    return Promise.reject(error);
+  }
 }

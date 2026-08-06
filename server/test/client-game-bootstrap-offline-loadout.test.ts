@@ -51,6 +51,39 @@ vi.mock("cc", () => {
 vi.mock("cc/env", () => ({ DEBUG: true, DEV: true, WECHAT: false }));
 
 describe("Cocos offline loadout orchestration", () => {
+  it("switches only the fixed debug network fault modes", async () => {
+    const { GameBootstrap } = await import(
+      "../../assets/scripts/app/GameBootstrap"
+    );
+    const target = Object.create(GameBootstrap.prototype) as Record<
+      string,
+      unknown
+    >;
+    const controller = {
+      mode: "normal" as "normal" | "delay" | "timeout" | "failure",
+      setMode(mode: "normal" | "delay" | "timeout" | "failure"): void {
+        this.mode = mode;
+      },
+    };
+    const setDebugNetworkFaultMode = vi.fn();
+    Object.assign(target, {
+      platform: { debugNetworkFault: controller },
+      appView: { setDebugNetworkFaultMode },
+    });
+    const harness = target as unknown as {
+      debugSetNetworkFaultMode(mode: string): void;
+    };
+
+    harness.debugSetNetworkFaultMode("failure");
+    harness.debugSetNetworkFaultMode("delay");
+    harness.debugSetNetworkFaultMode("arbitrary");
+
+    expect(controller.mode).toBe("delay");
+    expect(setDebugNetworkFaultMode).toHaveBeenNthCalledWith(1, "failure");
+    expect(setDebugNetworkFaultMode).toHaveBeenNthCalledWith(2, "delay");
+    expect(setDebugNetworkFaultMode).toHaveBeenCalledTimes(2);
+  });
+
   it("starts bounded offline simulations only from an authoritative idle state", async () => {
     const { GameBootstrap } = await import(
       "../../assets/scripts/app/GameBootstrap"

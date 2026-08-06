@@ -25,6 +25,7 @@ import {
   canRunAuthoritativeMutation,
   canRunLoadoutMutation,
 } from "../core/ClientTypes";
+import type { DebugNetworkFaultMode } from "../platform/PlatformAdapter";
 import {
   Button,
   BlockInputEvents,
@@ -106,6 +107,7 @@ interface AppViewActions {
   dismissOfflineSettlement(): void;
   simulateOffline(seconds: number): void;
   grantDebug(target: DebugGrantTarget): void;
+  setNetworkFaultMode(mode: DebugNetworkFaultMode): void;
   feedback(): void;
 }
 
@@ -139,6 +141,7 @@ export class AppView {
   private lastState: Readonly<AppState> | null = null;
   private debugPanelVisible = true;
   private debugLifecycleStatus: DebugLifecycleStatus = "foreground";
+  private debugNetworkFaultMode: DebugNetworkFaultMode = "normal";
   private profilePlayerId: string | null = null;
   private profileAvatarDraft: ChosenAvatarVariant | null = null;
   private profileNameDraft: string | null = null;
@@ -243,6 +246,12 @@ export class AppView {
     this.refreshDebugPanel();
   }
 
+  setDebugNetworkFaultMode(mode: DebugNetworkFaultMode): void {
+    if (!DEBUG || this.debugNetworkFaultMode === mode) return;
+    this.debugNetworkFaultMode = mode;
+    this.refreshDebugPanel();
+  }
+
   private refreshDebugPanel(): void {
     if (!DEBUG || !this.debugRoot || !this.lastState) return;
     this.drawDebugPanel(this.lastState);
@@ -270,18 +279,18 @@ export class AppView {
     }
 
     const panel = createUiNode(this.debugRoot, "DebugPanel");
-    panel.setPosition(180, 110);
-    setSize(panel, 338, 770);
+    panel.setPosition(180, 50);
+    setSize(panel, 338, 900);
     panel.addComponent(UIOpacity).opacity = 238;
-    drawBand(panel, "DebugPanelBackground", 0, 0, 338, 770, COLORS.panelStrong, COLORS.goldMuted);
+    drawBand(panel, "DebugPanelBackground", 0, 0, 338, 900, COLORS.panelStrong, COLORS.goldMuted);
 
-    addLabel(panel, "开发调试", -78, 358, 190, 34, 19, COLORS.gold, true, 1, HorizontalTextAlignment.LEFT);
-    addLabel(panel, "DEV", 123, 358, 62, 28, 14, COLORS.jade, true, 1, HorizontalTextAlignment.RIGHT);
+    addLabel(panel, "开发调试", -78, 418, 190, 34, 19, COLORS.gold, true, 1, HorizontalTextAlignment.LEFT);
+    addLabel(panel, "DEV", 123, 418, 62, 28, 14, COLORS.jade, true, 1, HorizontalTextAlignment.RIGHT);
     createButton(
       panel,
       "关闭",
       124,
-      357,
+      417,
       68,
       32,
       { fill: COLORS.inkGreen, stroke: COLORS.goldMuted, fontSize: 14 },
@@ -330,7 +339,7 @@ export class AppView {
       ["页面", `${state.selectedTab}${state.activeFeature ? ` · ${state.activeFeature}` : ""}`, COLORS.textMuted],
     ];
     rows.forEach(([label, value, valueColor], index) => {
-      const y = 312 - index * 40;
+      const y = 372 - index * 40;
       addLabel(panel, label, -141, y, 72, 30, 14, COLORS.textMuted, false, 1, HorizontalTextAlignment.LEFT);
       addLabel(panel, value, 30, y, 218, 30, 14, valueColor, true, 1, HorizontalTextAlignment.RIGHT);
     });
@@ -339,7 +348,7 @@ export class AppView {
       state.activeFeature === null &&
       state.bootstrap?.offlineSettlement === null &&
       state.pendingLoadoutOperationCount === 0;
-    addLabel(panel, "资源注入", -141, -93, 72, 30, 14, COLORS.textMuted, false, 1, HorizontalTextAlignment.LEFT);
+    addLabel(panel, "资源注入", -141, -33, 72, 30, 14, COLORS.textMuted, false, 1, HorizontalTextAlignment.LEFT);
     for (const [target, x, text] of [
       ["fill_experience", -102, "修满本级"],
       ["spirit_stone", 0, "灵石 +1万"],
@@ -349,7 +358,7 @@ export class AppView {
         panel,
         text,
         x,
-        -141,
+        -81,
         94,
         36,
         {
@@ -367,7 +376,7 @@ export class AppView {
         },
       );
     }
-    addLabel(panel, "离线模拟", -141, -189, 72, 30, 14, COLORS.textMuted, false, 1, HorizontalTextAlignment.LEFT);
+    addLabel(panel, "离线模拟", -141, -129, 72, 30, 14, COLORS.textMuted, false, 1, HorizontalTextAlignment.LEFT);
     for (const [seconds, x, text] of [
       [3_600, -102, "离线 1h"],
       [28_800, 0, "离线 8h"],
@@ -377,7 +386,7 @@ export class AppView {
         panel,
         text,
         x,
-        -237,
+        -177,
         94,
         36,
         {
@@ -392,12 +401,56 @@ export class AppView {
         },
       );
     }
+    const networkFaultLabels: Readonly<Record<DebugNetworkFaultMode, string>> = {
+      normal: "正常",
+      delay: "延迟 1s",
+      timeout: "固定超时",
+      failure: "网络失败",
+    };
+    addLabel(
+      panel,
+      `网络故障 · ${networkFaultLabels[this.debugNetworkFaultMode]}`,
+      -141,
+      -225,
+      280,
+      30,
+      14,
+      COLORS.textMuted,
+      false,
+      1,
+      HorizontalTextAlignment.LEFT,
+    );
+    for (const [mode, x] of [
+      ["normal", -120],
+      ["delay", -40],
+      ["timeout", 40],
+      ["failure", 120],
+    ] as const) {
+      createButton(
+        panel,
+        networkFaultLabels[mode],
+        x,
+        -273,
+        76,
+        36,
+        {
+          fill: mode === this.debugNetworkFaultMode ? COLORS.inkGreen : COLORS.inkGreenLight,
+          stroke: COLORS.goldMuted,
+          fontSize: 13,
+          enabled: true,
+        },
+        () => {
+          this.actions.feedback();
+          this.actions.setNetworkFaultMode(mode);
+        },
+      );
+    }
     if (state.errorMessage || state.featureMessage) {
       addLabel(
         panel,
         state.errorMessage ?? state.featureMessage ?? "",
         0,
-        -342,
+        -382,
         300,
         32,
         13,

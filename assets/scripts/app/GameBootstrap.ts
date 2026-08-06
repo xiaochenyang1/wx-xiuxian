@@ -52,7 +52,11 @@ import {
   requiresAuthoritativeRecovery,
 } from "../services/ApiClient";
 import type { AuthoritativeMutationOptions } from "../services/ApiClient";
-import { createPlatformAdapter } from "../platform/PlatformAdapter";
+import {
+  createPlatformAdapter,
+  isDebugNetworkFaultMode,
+} from "../platform/PlatformAdapter";
+import type { DebugNetworkFaultMode } from "../platform/PlatformAdapter";
 import { AppStore } from "../state/AppStore";
 import { AppView } from "../ui/AppView";
 
@@ -183,8 +187,12 @@ export class GameBootstrap extends Component {
       dismissOfflineSettlement: () => this.dismissOfflineSettlement(),
       simulateOffline: (seconds) => this.debugSimulateOffline(seconds),
       grantDebug: (target) => this.debugGrant(target),
+      setNetworkFaultMode: (mode) => this.debugSetNetworkFaultMode(mode),
       feedback: () => this.platform.feedback(),
     });
+    this.appView.setDebugNetworkFaultMode(
+      this.platform.debugNetworkFault?.mode ?? "normal",
+    );
     this.unsubscribe = this.store.subscribe((state) => this.appView?.render(state));
     this.schedule(() => this.appView?.updateIdleAnimation(), 0.5);
     this.lifecycleSync.start();
@@ -371,6 +379,14 @@ export class GameBootstrap extends Component {
       return;
     }
     void this.runDebugGrant(target);
+  }
+
+  private debugSetNetworkFaultMode(mode: DebugNetworkFaultMode): void {
+    if (!DEBUG || !isDebugNetworkFaultMode(mode)) return;
+    const controller = this.platform.debugNetworkFault;
+    if (!controller) return;
+    controller.setMode(mode);
+    this.appView?.setDebugNetworkFaultMode(controller.mode);
   }
 
   private canStartDebugMutation(): boolean {
