@@ -154,6 +154,13 @@ export class ApiClient {
     );
   }
 
+  async debugSettleCultivation(elapsedSeconds: number): Promise<CultivationSettleResult> {
+    return this.authorizedMutation<CultivationSettleResult>(
+      "/api/v1/debug/cultivation/settle",
+      { elapsedSeconds },
+    );
+  }
+
   async syncHeartbeat(
     options?: AuthoritativeMutationOptions,
   ): Promise<SyncHeartbeatResult> {

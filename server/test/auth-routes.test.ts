@@ -171,7 +171,60 @@ describe("authentication routes", () => {
     expect(document.paths).toHaveProperty("/api/v1/bootstrap");
     expect(document.paths).toHaveProperty("/api/v1/sync/heartbeat");
     expect(document.paths).toHaveProperty("/api/v1/cultivation/settle");
+    expect(document.paths).toHaveProperty("/api/v1/debug/cultivation/settle");
     expect(document.paths).toHaveProperty("/api/v1/cultivation/breakthrough");
+    await app.close();
+  });
+
+  it("forwards development-only offline simulation requests", async () => {
+    const auth = authService();
+    const cultivation = cultivationService();
+    const app = await buildApp({
+      config: loadAppConfig({ NODE_ENV: "development" }),
+      readiness: readiness(),
+      services: { authService: auth, cultivationService: cultivation },
+    });
+    const idempotencyKey = randomUUID();
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/debug/cultivation/settle",
+      headers: {
+        authorization: "Bearer access-token",
+        "idempotency-key": idempotencyKey,
+        "if-player-version": "1",
+      },
+      payload: { elapsedSeconds: 3_600 },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(cultivation.settle).toHaveBeenCalledWith(
+      {
+        sessionId: "session-id",
+        accountId: bootstrapFixture().account.id,
+        playerId: bootstrapFixture().player.id,
+      },
+      idempotencyKey,
+      "1",
+      { debugElapsedSeconds: 3_600 },
+    );
+
+    for (const elapsedSeconds of [0, 86_401, 1.5]) {
+      const invalid = await app.inject({
+        method: "POST",
+        url: "/api/v1/debug/cultivation/settle",
+        headers: {
+          authorization: "Bearer access-token",
+          "idempotency-key": randomUUID(),
+        },
+        payload: { elapsedSeconds },
+      });
+      expect(invalid.statusCode).toBe(400);
+      expect(invalid.json()).toMatchObject({
+        error: { code: "INVALID_REQUEST", retryable: false },
+      });
+    }
+    expect(cultivation.settle).toHaveBeenCalledTimes(1);
     await app.close();
   });
 
@@ -277,6 +330,15 @@ describe("authentication routes", () => {
     });
 
     expect(response.statusCode).toBe(404);
+
+    const debugResponse = await app.inject({
+      method: "POST",
+      url: "/api/v1/debug/cultivation/settle",
+      headers: { "idempotency-key": randomUUID() },
+      payload: { elapsedSeconds: 3_600 },
+    });
+
+    expect(debugResponse.statusCode).toBe(404);
     await app.close();
   });
 });

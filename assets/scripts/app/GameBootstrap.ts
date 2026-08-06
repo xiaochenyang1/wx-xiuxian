@@ -1,4 +1,5 @@
 import { _decorator, Component, Node, ResolutionPolicy, view } from "cc";
+import { DEBUG } from "cc/env";
 import type {
   BootstrapSnapshot,
   ChosenAvatarVariant,
@@ -178,6 +179,7 @@ export class GameBootstrap extends Component {
       unequipEquipment: (equipmentInstanceId) =>
         void this.unequipEquipment(equipmentInstanceId),
       dismissOfflineSettlement: () => this.dismissOfflineSettlement(),
+      simulateOffline: (seconds) => this.debugSimulateOffline(seconds),
       feedback: () => this.platform.feedback(),
     });
     this.unsubscribe = this.store.subscribe((state) => this.appView?.render(state));
@@ -291,7 +293,7 @@ export class GameBootstrap extends Component {
     }
   }
 
-  private async settleGame(): Promise<void> {
+  private async settleGame(debugElapsedSeconds?: number): Promise<void> {
     if (
       this.mutationInFlight ||
       this.store.snapshot.phase !== "ready" ||
@@ -303,16 +305,22 @@ export class GameBootstrap extends Component {
     const renderToken = this.lifecycleSync.captureRenderToken();
     this.mutationInFlight = true;
     try {
-      const settlementOptions = this.prepareOfflineLoadoutSettlement();
-      const result = settlementOptions
-        ? await this.apiClient.syncHeartbeat(settlementOptions)
-        : await this.apiClient.settleCultivation();
+      const result =
+        debugElapsedSeconds === undefined
+          ? (() => {
+              const settlementOptions = this.prepareOfflineLoadoutSettlement();
+              return settlementOptions
+                ? this.apiClient.syncHeartbeat(settlementOptions)
+                : this.apiClient.settleCultivation();
+            })()
+          : this.apiClient.debugSettleCultivation(debugElapsedSeconds);
+      const settled = await result;
       const allowRender = this.lifecycleSync.canRender(renderToken);
       this.acceptSettledBootstrap(
-        result.bootstrap,
+        settled.bootstrap,
         allowRender,
-        result.settlement.events,
-        result.settlement.settlementId,
+        settled.settlement.events,
+        settled.settlement.settlementId,
       );
     } catch (error) {
       let recoveredResult: AuthoritativeSyncResult | null = null;
@@ -336,6 +344,23 @@ export class GameBootstrap extends Component {
     } finally {
       this.finishMutation();
     }
+  }
+
+  private debugSimulateOffline(seconds: number): void {
+    if (
+      !DEBUG ||
+      !Number.isSafeInteger(seconds) ||
+      seconds < 1 ||
+      seconds > 86_400 ||
+      this.mutationInFlight ||
+      !canRunAuthoritativeMutation(this.store.snapshot) ||
+      this.store.snapshot.activeFeature !== null ||
+      this.store.snapshot.bootstrap?.offlineSettlement !== null ||
+      this.store.snapshot.pendingLoadoutOperationCount > 0
+    ) {
+      return;
+    }
+    void this.settleGame(seconds);
   }
 
   private acceptHeartbeatBootstrap(

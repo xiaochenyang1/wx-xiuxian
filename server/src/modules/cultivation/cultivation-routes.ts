@@ -1,6 +1,7 @@
 import { Type } from "@sinclair/typebox";
 import type { FastifyInstance } from "fastify";
 import { errorEnvelopeSchema, successEnvelopeSchema } from "../../common/http-schema";
+import type { AppConfig } from "../../config/env";
 import type { AuthServicePort } from "../auth/auth-service";
 import {
   bootstrapSnapshotSchema,
@@ -77,10 +78,15 @@ interface MutationHeaders {
   "if-player-version"?: string;
 }
 
+interface DebugSettlementBody {
+  elapsedSeconds: number;
+}
+
 export async function registerCultivationRoutes(
   app: FastifyInstance,
   authService: AuthServicePort,
   cultivationService: CultivationServicePort,
+  config: Pick<AppConfig, "enableDevAuth">,
 ): Promise<void> {
   app.post<{ Body: Record<string, never>; Headers: MutationHeaders }>(
     "/api/v1/sync/heartbeat",
@@ -127,6 +133,37 @@ export async function registerCultivationRoutes(
       return success(request.id, result.playerVersion, result.data);
     },
   );
+
+  if (config.enableDevAuth) {
+    app.post<{ Body: DebugSettlementBody; Headers: MutationHeaders }>(
+      "/api/v1/debug/cultivation/settle",
+      {
+        schema: {
+          tags: ["debug"],
+          summary: "开发环境模拟离线修炼结算",
+          security: [{ bearerAuth: [] }],
+          headers: mutationHeadersSchema,
+          body: Type.Object(
+            {
+              elapsedSeconds: Type.Integer({ minimum: 1, maximum: 86_400 }),
+            },
+            { additionalProperties: false },
+          ),
+          response: { 200: settleResponseSchema, ...mutationErrorResponses },
+        },
+      },
+      async (request) => {
+        const identity = await authService.authenticate(request.headers.authorization);
+        const result = await cultivationService.settle(
+          identity,
+          request.headers["idempotency-key"],
+          request.headers["if-player-version"],
+          { debugElapsedSeconds: request.body.elapsedSeconds },
+        );
+        return success(request.id, result.playerVersion, result.data);
+      },
+    );
+  }
 
   app.post<{ Body: Record<string, never>; Headers: MutationHeaders }>(
     "/api/v1/cultivation/breakthrough",

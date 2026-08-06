@@ -1763,6 +1763,85 @@ describe("authentication and bootstrap PostgreSQL integration", () => {
     });
   });
 
+  it("simulates a bounded offline window only through the development route", async () => {
+    const loggedIn = await login(app, "debug-offline-player", randomUUID());
+    const loginData = loggedIn.json().data;
+    const playerId = loginData.bootstrap.player.id as string;
+    const accessToken = loginData.tokens.accessToken as string;
+    await infrastructure.pool.query(
+      `update player_progress
+       set last_settled_at = now() - interval '5 minutes', last_heartbeat_at = now()
+       where player_id = $1`,
+      [playerId],
+    );
+    const idempotencyKey = randomUUID();
+
+    const simulated = await debugCultivationMutation(
+      app,
+      accessToken,
+      idempotencyKey,
+      3_600,
+    );
+
+    expect(simulated.statusCode).toBe(200);
+    expect(simulated.json().data.settlement).toMatchObject({
+      mode: "offline",
+      efficiencyBp: 7_000,
+      elapsedMilliseconds: 3_600_000,
+      offlineSettlement: { effectiveSeconds: 3_600 },
+    });
+
+    const replayed = await debugCultivationMutation(
+      app,
+      accessToken,
+      idempotencyKey,
+      3_600,
+    );
+    expect(replayed.statusCode).toBe(200);
+    expect(replayed.json().data.settlement.settlementId).toBe(
+      simulated.json().data.settlement.settlementId,
+    );
+
+    const conflictingReplay = await debugCultivationMutation(
+      app,
+      accessToken,
+      idempotencyKey,
+      28_800,
+    );
+    expect(conflictingReplay.statusCode).toBe(409);
+    expect(conflictingReplay.json()).toMatchObject({
+      error: { code: "IDEMPOTENCY_KEY_REUSED", retryable: false },
+    });
+
+    const immediate = await cultivationMutation(
+      app,
+      "/api/v1/cultivation/settle",
+      accessToken,
+      randomUUID(),
+    );
+    expect(immediate.statusCode).toBe(200);
+    expect(immediate.json().data.settlement).toMatchObject({
+      mode: "online",
+      offlineSettlement: null,
+    });
+    expect(immediate.json().data.settlement.elapsedMilliseconds).toBeLessThan(5_000);
+
+    const persisted = await infrastructure.pool.query<{
+      cursorIsCurrent: boolean;
+      settlementCount: string;
+    }>(
+      `select
+        last_settled_at > now() - interval '5 seconds' as "cursorIsCurrent",
+        (select count(*) from offline_settlements where player_id = pp.player_id)::text as "settlementCount"
+       from player_progress pp where player_id = $1`,
+      [playerId],
+    );
+    expect(persisted.rows[0]).toEqual({
+      cursorIsCurrent: true,
+      settlementCount: "1",
+    });
+  });
+
   it("rejects a mutation with a stale player version without applying it", async () => {
     const loggedIn = await login(app, "stale-version-player", randomUUID());
     const loginData = loggedIn.json().data;
@@ -1986,6 +2065,23 @@ async function cultivationMutation(
         : { "if-player-version": expectedPlayerVersion }),
     },
     payload: {},
+  });
+}
+
+async function debugCultivationMutation(
+  app: FastifyInstance,
+  accessToken: string,
+  idempotencyKey: string,
+  elapsedSeconds: number,
+) {
+  return app.inject({
+    method: "POST",
+    url: "/api/v1/debug/cultivation/settle",
+    headers: {
+      authorization: `Bearer ${accessToken}`,
+      "idempotency-key": idempotencyKey,
+    },
+    payload: { elapsedSeconds },
   });
 }
 

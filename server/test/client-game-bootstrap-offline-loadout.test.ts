@@ -48,9 +48,53 @@ vi.mock("cc", () => {
   };
 });
 
-vi.mock("cc/env", () => ({ DEV: true, WECHAT: false }));
+vi.mock("cc/env", () => ({ DEBUG: true, DEV: true, WECHAT: false }));
 
 describe("Cocos offline loadout orchestration", () => {
+  it("starts bounded offline simulations only from an authoritative idle state", async () => {
+    const { GameBootstrap } = await import(
+      "../../assets/scripts/app/GameBootstrap"
+    );
+    const target = Object.create(GameBootstrap.prototype) as Record<
+      string,
+      unknown
+    >;
+    const settleGame = vi.fn();
+    const state = {
+      phase: "ready",
+      syncStatus: "online",
+      bootstrap: bootstrapFixture(),
+      activeFeature: null as null | "inventory",
+      pendingLoadoutOperationCount: 0,
+    };
+    Object.assign(target, {
+      mutationInFlight: false,
+      store: { snapshot: state },
+      settleGame,
+    });
+    const harness = target as unknown as {
+      debugSimulateOffline(seconds: number): void;
+      mutationInFlight: boolean;
+    };
+
+    harness.debugSimulateOffline(3_600);
+    harness.debugSimulateOffline(100_000);
+    harness.mutationInFlight = true;
+    harness.debugSimulateOffline(28_800);
+    harness.mutationInFlight = false;
+    state.activeFeature = "inventory";
+    harness.debugSimulateOffline(28_800);
+    state.activeFeature = null;
+    state.pendingLoadoutOperationCount = 1;
+    harness.debugSimulateOffline(28_800);
+    state.pendingLoadoutOperationCount = 0;
+    state.syncStatus = "offline";
+    harness.debugSimulateOffline(28_800);
+
+    expect(settleGame).toHaveBeenCalledTimes(1);
+    expect(settleGame).toHaveBeenCalledWith(3_600);
+  });
+
   it("waits for the backoff timer instead of draining again from finishMutation", async () => {
     const { GameBootstrap } = await import(
       "../../assets/scripts/app/GameBootstrap"

@@ -187,6 +187,7 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
       app,
       options.services.authService,
       options.services.cultivationService,
+      options.config,
     );
     if (options.services.inventoryService) {
       await registerInventoryRoutes(

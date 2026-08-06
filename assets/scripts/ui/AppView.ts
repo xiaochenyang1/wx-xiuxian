@@ -20,7 +20,10 @@ import type {
   FeaturePanel,
   MainTab,
 } from "../core/ClientTypes";
-import { canRunLoadoutMutation } from "../core/ClientTypes";
+import {
+  canRunAuthoritativeMutation,
+  canRunLoadoutMutation,
+} from "../core/ClientTypes";
 import {
   Button,
   BlockInputEvents,
@@ -100,6 +103,7 @@ interface AppViewActions {
   ): void;
   unequipEquipment(equipmentInstanceId: string): void;
   dismissOfflineSettlement(): void;
+  simulateOffline(seconds: number): void;
   feedback(): void;
 }
 
@@ -264,18 +268,18 @@ export class AppView {
     }
 
     const panel = createUiNode(this.debugRoot, "DebugPanel");
-    panel.setPosition(180, 230);
-    setSize(panel, 338, 530);
+    panel.setPosition(180, 170);
+    setSize(panel, 338, 650);
     panel.addComponent(UIOpacity).opacity = 238;
-    drawBand(panel, "DebugPanelBackground", 0, 0, 338, 530, COLORS.panelStrong, COLORS.goldMuted);
+    drawBand(panel, "DebugPanelBackground", 0, 0, 338, 650, COLORS.panelStrong, COLORS.goldMuted);
 
-    addLabel(panel, "开发调试", -78, 238, 190, 34, 19, COLORS.gold, true, 1, HorizontalTextAlignment.LEFT);
-    addLabel(panel, "DEV", 123, 238, 62, 28, 14, COLORS.jade, true, 1, HorizontalTextAlignment.RIGHT);
+    addLabel(panel, "开发调试", -78, 298, 190, 34, 19, COLORS.gold, true, 1, HorizontalTextAlignment.LEFT);
+    addLabel(panel, "DEV", 123, 298, 62, 28, 14, COLORS.jade, true, 1, HorizontalTextAlignment.RIGHT);
     createButton(
       panel,
       "关闭",
       124,
-      237,
+      297,
       68,
       32,
       { fill: COLORS.inkGreen, stroke: COLORS.goldMuted, fontSize: 14 },
@@ -324,16 +328,46 @@ export class AppView {
       ["页面", `${state.selectedTab}${state.activeFeature ? ` · ${state.activeFeature}` : ""}`, COLORS.textMuted],
     ];
     rows.forEach(([label, value, valueColor], index) => {
-      const y = 192 - index * 40;
+      const y = 252 - index * 40;
       addLabel(panel, label, -141, y, 72, 30, 14, COLORS.textMuted, false, 1, HorizontalTextAlignment.LEFT);
       addLabel(panel, value, 30, y, 218, 30, 14, valueColor, true, 1, HorizontalTextAlignment.RIGHT);
     });
+    const canSimulateOffline =
+      canRunAuthoritativeMutation(state) &&
+      state.activeFeature === null &&
+      state.bootstrap?.offlineSettlement === null &&
+      state.pendingLoadoutOperationCount === 0;
+    addLabel(panel, "离线模拟", -141, -157, 72, 30, 14, COLORS.textMuted, false, 1, HorizontalTextAlignment.LEFT);
+    for (const [seconds, x, text] of [
+      [3_600, -102, "离线 1h"],
+      [28_800, 0, "离线 8h"],
+      [86_400, 102, "离线 24h"],
+    ] as const) {
+      createButton(
+        panel,
+        text,
+        x,
+        -205,
+        94,
+        36,
+        {
+          fill: COLORS.inkGreenLight,
+          stroke: COLORS.goldMuted,
+          fontSize: 14,
+          enabled: canSimulateOffline,
+        },
+        () => {
+          this.actions.feedback();
+          this.actions.simulateOffline(seconds);
+        },
+      );
+    }
     if (state.errorMessage || state.featureMessage) {
       addLabel(
         panel,
         state.errorMessage ?? state.featureMessage ?? "",
         0,
-        -226,
+        -282,
         300,
         32,
         13,

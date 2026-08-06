@@ -31,6 +31,30 @@ import type {
 import { bootstrapFixture } from "./fixtures/bootstrap";
 
 describe("Cocos API client", () => {
+  it("sends development offline simulations through the dedicated route", async () => {
+    const platform = new ScriptedPlatform();
+    const client = new ApiClient(platform, "http://game.test");
+
+    await client.authenticate();
+    const settled = await client.debugSettleCultivation(28_800);
+
+    expect(settled.settlement).toMatchObject({
+      mode: "offline",
+      offlineSettlement: { effectiveSeconds: 28_800 },
+    });
+    const request = platform.requests.find((entry) =>
+      entry.url.endsWith("/api/v1/debug/cultivation/settle"),
+    );
+    expect(request).toMatchObject({
+      method: "POST",
+      body: { elapsedSeconds: 28_800 },
+      headers: {
+        Authorization: "Bearer access-1",
+        "If-Player-Version": "7",
+      },
+    });
+  });
+
   it("sends the latest player version and preserves mutation identity across token refresh", async () => {
     const platform = new ScriptedPlatform();
     const client = new ApiClient(platform, "http://game.test");
@@ -455,6 +479,30 @@ class ScriptedPlatform implements PlatformAdapter {
       return response<T>(200, success<SyncHeartbeatResult>("8", {
         settlement: settlementSummary(),
         bootstrap,
+      }));
+    }
+    if (request.url.endsWith("/api/v1/debug/cultivation/settle")) {
+      const settlement = settlementSummary();
+      settlement.mode = "offline";
+      settlement.efficiencyBp = 7_000;
+      settlement.elapsedMilliseconds = 28_800_000;
+      settlement.offlineSettlement = {
+        id: settlement.settlementId,
+        fromTime: "2026-08-05T00:00:00.000Z",
+        toTime: "2026-08-05T08:00:00.000Z",
+        effectiveSeconds: 28_800,
+        efficiencyBp: 7_000,
+        experienceGained: settlement.experienceGained,
+        experienceDiscarded: settlement.experienceDiscarded,
+        spiritStoneGained: settlement.spiritStoneGained,
+        dropAttempts: settlement.dropAttempts,
+        drops: settlement.drops,
+        events: settlement.events,
+        newcomerRewardGranted: settlement.newcomerRewardGranted,
+      };
+      return response<T>(200, success<CultivationSettleResult>("8", {
+        settlement,
+        bootstrap: { ...bootstrapFixture(), offlineSettlement: settlement.offlineSettlement },
       }));
     }
     if (request.url.endsWith("/api/v1/cultivation/settle")) {

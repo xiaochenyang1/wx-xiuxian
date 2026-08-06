@@ -58,6 +58,7 @@ export interface CultivationMutationCommand {
   idempotencyKey: string;
   requestHash: string;
   expectedPlayerVersion?: string;
+  debugElapsedMilliseconds?: number;
   now: Date;
   idempotencyExpiresAt: Date;
 }
@@ -227,6 +228,12 @@ export class CultivationRepository {
         state.lastSettledAt,
         state.lastHeartbeatAt,
         command.now,
+        command.debugElapsedMilliseconds,
+      );
+      const persistedSettledAt = persistedSettlementTime(
+        state.lastSettledAt,
+        command,
+        settlementWindow,
       );
       const { elapsedMilliseconds } = settlementWindow;
       const calculated = calculateCultivationSettlement({
@@ -260,8 +267,8 @@ export class CultivationRepository {
             fixedPower: loadoutBonuses.fixedPower,
           }),
           cultivationReserve: calculated.progress.cultivationReserve,
-          lastSettledAt: settlementWindow.settledAt,
-          lastHeartbeatAt: settlementWindow.settledAt,
+          lastSettledAt: persistedSettledAt,
+          lastHeartbeatAt: persistedSettledAt,
           dropClockRemainderMicros: calculated.dropClockRemainderMicros,
           version: sql`${playerProgress.version} + 1`,
           updatedAt: command.now,
@@ -432,6 +439,12 @@ export class CultivationRepository {
         state.lastSettledAt,
         state.lastHeartbeatAt,
         command.now,
+        command.debugElapsedMilliseconds,
+      );
+      const persistedSettledAt = persistedSettlementTime(
+        state.lastSettledAt,
+        command,
+        settlementWindow,
       );
       const pendingSettlement = calculateCultivationSettlement({
         progress: {
@@ -520,8 +533,8 @@ export class CultivationRepository {
             fixedPower: loadoutBonuses.fixedPower,
           }),
           cultivationReserve: completed.progress.cultivationReserve,
-          lastSettledAt: settlementWindow.settledAt,
-          lastHeartbeatAt: settlementWindow.settledAt,
+          lastSettledAt: persistedSettledAt,
+          lastHeartbeatAt: persistedSettledAt,
           dropClockRemainderMicros: pendingSettlement.dropClockRemainderMicros,
           version: sql`${playerProgress.version} + 1`,
           updatedAt: command.now,
@@ -713,8 +726,24 @@ function getSettlementWindow(
   lastSettledAt: Date,
   lastHeartbeatAt: Date | null,
   now: Date,
+  debugElapsedMilliseconds?: number,
 ): SettlementWindow {
   const lastSettledTime = lastSettledAt.getTime();
+  if (debugElapsedMilliseconds !== undefined) {
+    const elapsedMilliseconds = Math.min(
+      MAX_SETTLEMENT_MILLISECONDS,
+      debugElapsedMilliseconds,
+    );
+    const targetTime = lastSettledTime + elapsedMilliseconds;
+    return {
+      fromTime: new Date(lastSettledTime),
+      toTime: new Date(targetTime),
+      elapsedMilliseconds,
+      settledAt: new Date(targetTime),
+      mode: "offline",
+      efficiencyBp: BASE_OFFLINE_EFFICIENCY_BP,
+    };
+  }
   const targetTime = Math.max(lastSettledAt.getTime(), now.getTime());
   const elapsedMilliseconds = Math.min(
     MAX_SETTLEMENT_MILLISECONDS,
@@ -738,6 +767,15 @@ function getSettlementWindow(
     efficiencyBp:
       mode === "offline" ? BASE_OFFLINE_EFFICIENCY_BP : BASIS_POINTS,
   };
+}
+
+function persistedSettlementTime(
+  lastSettledAt: Date,
+  command: CultivationMutationCommand,
+  window: SettlementWindow,
+): Date {
+  if (command.debugElapsedMilliseconds === undefined) return window.settledAt;
+  return new Date(Math.max(lastSettledAt.getTime(), command.now.getTime()));
 }
 
 async function loadIdempotentResult<T>(
