@@ -7,9 +7,14 @@ import {
 } from "@cultivation-diary/shared";
 import {
   formatLargeNumber,
+  interpolateBigNumberStrings,
   ratioOfBigNumberStrings,
   sumBigNumberStrings,
 } from "../core/ClientNumber";
+import {
+  mergeCultivationPresentationPlans,
+  type CultivationPresentationPlan,
+} from "../core/CultivationPresentation";
 import type {
   AppState,
   FeaturePanel,
@@ -26,6 +31,7 @@ import {
   Label,
   Node,
   tween,
+  type Tween,
   UIOpacity,
   UITransform,
   VerticalTextAlignment,
@@ -116,6 +122,8 @@ interface PageWindow {
 }
 
 export class AppView {
+  private readonly contentRoot: Node;
+  private readonly presentationRoot: Node;
   private idleLabel: Label | null = null;
   private idleFrame = 0;
   private lastState: Readonly<AppState> | null = null;
@@ -123,6 +131,10 @@ export class AppView {
   private profileAvatarDraft: ChosenAvatarVariant | null = null;
   private profileNameDraft: string | null = null;
   private profileNameSource: string | null = null;
+  private pendingPresentation: CultivationPresentationPlan | null = null;
+  private activePresentation: CultivationPresentationPlan | null = null;
+  private activePresentationTween: Tween<Node> | null = null;
+  private loadingTween: Tween<Node> | null = null;
   private readonly pages: Record<PagedList, number> = {
     inventoryStacks: 0,
     harvestChest: 0,
@@ -131,20 +143,44 @@ export class AppView {
   };
 
   constructor(
-    private readonly root: Node,
+    private readonly containerRoot: Node,
     private readonly actions: AppViewActions,
   ) {
-    setSize(root, DESIGN_WIDTH, DESIGN_HEIGHT);
+    setSize(containerRoot, DESIGN_WIDTH, DESIGN_HEIGHT);
+    this.contentRoot = createUiNode(containerRoot, "ContentRoot");
+    this.presentationRoot = createUiNode(containerRoot, "PresentationRoot");
+    setSize(this.contentRoot, DESIGN_WIDTH, DESIGN_HEIGHT);
+    setSize(this.presentationRoot, DESIGN_WIDTH, DESIGN_HEIGHT);
+  }
+
+  private get root(): Node {
+    return this.contentRoot;
   }
 
   render(state: Readonly<AppState>): void {
     const playerId = state.bootstrap?.player.id ?? null;
     if (playerId !== this.profilePlayerId) {
+      this.interruptCultivationPresentation(true);
       this.clearPlayerUiState();
       this.profilePlayerId = playerId;
     }
+    const selectedTabChanged =
+      this.lastState !== null && this.lastState.selectedTab !== state.selectedTab;
     this.lastState = state;
-    for (const child of [...this.root.children]) child.destroy();
+    if (selectedTabChanged) this.interruptCultivationPresentation(true);
+    if (
+      this.activePresentation &&
+      !snapshotMatchesPresentationTarget(state, this.activePresentation)
+    ) {
+      this.interruptCultivationPresentation();
+    } else if (this.activePresentation && state.activeFeature !== null) {
+      this.deferActivePresentation();
+    } else if (this.activePresentation && state.bootstrap?.offlineSettlement) {
+      this.deferActivePresentation();
+    }
+    this.loadingTween?.stop();
+    this.loadingTween = null;
+    for (const child of [...this.contentRoot.children]) child.destroy();
     this.idleLabel = null;
     this.drawBackdrop();
 
@@ -180,6 +216,37 @@ export class AppView {
     if (state.bootstrap.offlineSettlement) {
       this.drawOfflineSettlement(state.bootstrap.offlineSettlement);
     }
+    this.tryStartCultivationPresentation();
+  }
+
+  enqueueCultivationPresentation(plan: CultivationPresentationPlan): void {
+    const queued = this.pendingPresentation;
+    if (queued) {
+      this.pendingPresentation =
+        mergeCultivationPresentationPlans(queued, plan) ?? plan;
+    } else if (this.activePresentation) {
+      // The active effect already represents the prior snapshot. Keep only the
+      // next authoritative hop; the next render will interrupt the old effect
+      // and start from that hop without replaying the first segment.
+      this.pendingPresentation = plan;
+    } else {
+      this.pendingPresentation = plan;
+    }
+  }
+
+  interruptCultivationPresentation(clearQueue = false): void {
+    this.activePresentationTween?.stop();
+    this.activePresentationTween = null;
+    this.activePresentation = null;
+    for (const child of [...this.presentationRoot.children]) removeAndDestroy(child);
+    if (clearQueue) this.pendingPresentation = null;
+  }
+
+  destroy(): void {
+    this.interruptCultivationPresentation(true);
+    this.loadingTween?.stop();
+    this.loadingTween = null;
+    this.containerRoot.destroy();
   }
 
   updateIdleAnimation(): void {
@@ -221,6 +288,321 @@ export class AppView {
     this.actions.feedback();
     this.pages[list] = Math.max(0, page);
     if (this.lastState) this.render(this.lastState);
+  }
+
+  private tryStartCultivationPresentation(): void {
+    const plan = this.pendingPresentation;
+    const state = this.lastState;
+    if (!plan || !state || this.activePresentation) return;
+    if (
+      state.activeFeature !== null ||
+      state.bootstrap?.offlineSettlement !== null ||
+      state.selectedTab !== "cultivation"
+    ) {
+      return;
+    }
+    if (!snapshotMatchesPresentationTarget(state, plan)) {
+      if (!snapshotMatchesPresentationSource(state, plan)) {
+        this.pendingPresentation = null;
+      }
+      return;
+    }
+    if (state.phase !== "ready") return;
+
+    this.pendingPresentation = null;
+    this.activePresentation = plan;
+    try {
+      if (plan.kind === "breakthrough") {
+        this.playBreakthroughPresentation(plan);
+      } else if (plan.kind === "level_up") {
+        this.playLevelUpPresentation(plan);
+      } else {
+        this.playPowerChangePresentation(plan);
+      }
+    } catch {
+      this.activePresentationTween?.stop();
+      this.activePresentationTween = null;
+      this.activePresentation = null;
+      for (const child of [...this.presentationRoot.children]) removeAndDestroy(child);
+    }
+  }
+
+  private deferActivePresentation(): void {
+    const active = this.activePresentation;
+    if (!active) return;
+    this.pendingPresentation = this.pendingPresentation
+      ? mergeCultivationPresentationPlans(active, this.pendingPresentation) ??
+        this.pendingPresentation
+      : active;
+    this.interruptCultivationPresentation();
+  }
+
+  private playPowerChangePresentation(plan: CultivationPresentationPlan): void {
+    const overlay = createUiNode(this.presentationRoot, "PowerChangePresentation");
+    setSize(overlay, 330, 112);
+    overlay.setPosition(190, 440);
+    const opacity = overlay.addComponent(UIOpacity);
+    opacity.opacity = 0;
+    drawBand(
+      overlay,
+      "PowerChangeBand",
+      0,
+      0,
+      318,
+      100,
+      COLORS.panelStrong,
+      plan.powerDirection === "decrease" ? COLORS.red : COLORS.gold,
+    );
+    addLabel(overlay, "总战力", -88, 22, 112, 28, 15, COLORS.textMuted);
+    const powerLabel = addLabel(
+      overlay,
+      formatLargeNumber(plan.fromPower),
+      48,
+      22,
+      176,
+      36,
+      23,
+      COLORS.text,
+      true,
+    );
+    const deltaPrefix = plan.powerDirection === "increase" ? "+" : "";
+    addLabel(
+      overlay,
+      `战力 ${deltaPrefix}${formatLargeNumber(plan.powerDelta)}`,
+      0,
+      -25,
+      280,
+      30,
+      17,
+      plan.powerDirection === "decrease" ? COLORS.red : COLORS.jade,
+      true,
+    );
+
+    this.activePresentationTween = tween(overlay)
+      .update(0.22, (_target, progress) => {
+        opacity.opacity = Math.round(255 * progress);
+        overlay.setPosition(190, 422 + 18 * progress);
+      })
+      .update(0.78, (_target, progress) => {
+        powerLabel.string = formatLargeNumber(
+          interpolateBigNumberStrings(plan.fromPower, plan.toPower, progress),
+        );
+      })
+      .delay(0.45)
+      .update(0.25, (_target, progress) => {
+        opacity.opacity = Math.round(255 * (1 - progress));
+      })
+      .call(() => this.completeCultivationPresentation(overlay))
+      .start();
+  }
+
+  private playLevelUpPresentation(plan: CultivationPresentationPlan): void {
+    const overlay = this.createBlockingPresentationOverlay(
+      "LevelUpPresentation",
+      150,
+    );
+    const opacity = overlay.getComponent(UIOpacity)!;
+    opacity.opacity = 0;
+    const formation = createUiNode(overlay, "GoldenFormation");
+    formation.setPosition(0, 70);
+    formation.setScale(0.72, 0.72, 1);
+    drawGoldenFormation(formation);
+    addLabel(overlay, "修为精进", 0, 272, 520, 62, 34, COLORS.gold, true);
+    const levelLabel = addLabel(
+      overlay,
+      `Lv.${plan.fromLevel}`,
+      0,
+      83,
+      520,
+      96,
+      58,
+      COLORS.text,
+      true,
+    );
+    addLabel(
+      overlay,
+      plan.levelGain > 1
+        ? `${plan.fromRealmName} · 连升 ${plan.levelGain} 级`
+        : plan.toRealmName,
+      0,
+      -6,
+      570,
+      42,
+      22,
+      COLORS.jade,
+      true,
+    );
+    const powerLabel = addLabel(
+      overlay,
+      `战力 ${formatLargeNumber(plan.fromPower)}`,
+      0,
+      -82,
+      590,
+      48,
+      25,
+      COLORS.text,
+      true,
+    );
+    addLabel(
+      overlay,
+      formatSignedPowerDelta(plan.powerDelta),
+      0,
+      -126,
+      420,
+      36,
+      19,
+      COLORS.gold,
+      true,
+    );
+
+    this.activePresentationTween = tween(overlay)
+      .update(0.3, (_target, progress) => {
+        opacity.opacity = Math.round(255 * progress);
+        formation.setScale(0.72 + 0.28 * progress, 0.72 + 0.28 * progress, 1);
+      })
+      .update(1.2, (_target, progress) => {
+        formation.angle = progress * 54;
+        const level = Math.min(
+          plan.toLevel,
+          plan.fromLevel + Math.max(1, Math.ceil(plan.levelGain * progress)),
+        );
+        levelLabel.string = `Lv.${level}`;
+        powerLabel.string = `战力 ${formatLargeNumber(
+          interpolateBigNumberStrings(plan.fromPower, plan.toPower, progress),
+        )}`;
+      })
+      .delay(0.65)
+      .update(0.35, (_target, progress) => {
+        opacity.opacity = Math.round(255 * (1 - progress));
+        formation.setScale(1 + 0.12 * progress, 1 + 0.12 * progress, 1);
+      })
+      .call(() => this.completeCultivationPresentation(overlay))
+      .start();
+  }
+
+  private playBreakthroughPresentation(plan: CultivationPresentationPlan): void {
+    const overlay = this.createBlockingPresentationOverlay(
+      "BreakthroughPresentation",
+      242,
+    );
+    const opacity = overlay.getComponent(UIOpacity)!;
+    opacity.opacity = 0;
+    const storm = createUiNode(overlay, "TribulationStorm");
+    drawTribulationLightning(storm);
+    const stormOpacity = storm.addComponent(UIOpacity);
+    stormOpacity.opacity = 0;
+    const oldRealm = addLabel(
+      overlay,
+      plan.fromRealmName,
+      0,
+      168,
+      560,
+      52,
+      25,
+      COLORS.textMuted,
+      true,
+    );
+    const divider = addLabel(overlay, "破", 0, 82, 120, 70, 42, COLORS.red, true);
+    const realmLabel = addLabel(
+      overlay,
+      plan.toRealmName,
+      0,
+      -5,
+      620,
+      90,
+      52,
+      COLORS.gold,
+      true,
+    );
+    realmLabel.node.setScale(0.62, 0.62, 1);
+    const levelLabel = addLabel(
+      overlay,
+      `Lv.${plan.toLevel}`,
+      0,
+      -84,
+      340,
+      52,
+      27,
+      COLORS.jade,
+      true,
+    );
+    const powerLabel = addLabel(
+      overlay,
+      `战力 ${formatLargeNumber(plan.fromPower)}`,
+      0,
+      -159,
+      590,
+      44,
+      22,
+      COLORS.text,
+      true,
+    );
+    oldRealm.node.active = false;
+    divider.node.active = false;
+    realmLabel.node.active = false;
+    levelLabel.node.active = false;
+    powerLabel.node.active = false;
+
+    this.activePresentationTween = tween(overlay)
+      .update(0.38, (_target, progress) => {
+        opacity.opacity = Math.round(255 * progress);
+      })
+      .update(0.7, (_target, progress) => {
+        stormOpacity.opacity = Math.round(
+          255 * (Math.sin(progress * Math.PI * 7) > 0.1 ? 1 : 0.18),
+        );
+        storm.setPosition(
+          Math.sin(progress * Math.PI * 18) * 8,
+          Math.cos(progress * Math.PI * 14) * 5,
+        );
+      })
+      .call(() => {
+        stormOpacity.opacity = 115;
+        oldRealm.node.active = true;
+        divider.node.active = true;
+        realmLabel.node.active = true;
+        levelLabel.node.active = true;
+        powerLabel.node.active = true;
+      })
+      .update(0.75, (_target, progress) => {
+        realmLabel.node.setScale(0.62 + 0.38 * progress, 0.62 + 0.38 * progress, 1);
+        powerLabel.string = `战力 ${formatLargeNumber(
+          interpolateBigNumberStrings(plan.fromPower, plan.toPower, progress),
+        )}`;
+      })
+      .delay(0.85)
+      .update(0.45, (_target, progress) => {
+        opacity.opacity = Math.round(255 * (1 - progress));
+      })
+      .call(() => this.completeCultivationPresentation(overlay))
+      .start();
+  }
+
+  private createBlockingPresentationOverlay(name: string, shadeAlpha: number): Node {
+    const overlay = createUiNode(this.presentationRoot, name);
+    setSize(overlay, DESIGN_WIDTH, DESIGN_HEIGHT);
+    overlay.addComponent(BlockInputEvents);
+    overlay.addComponent(UIOpacity);
+    const shade = overlay.addComponent(Graphics);
+    const shadeColor = color("#030609");
+    shadeColor.a = shadeAlpha;
+    shade.fillColor = shadeColor;
+    shade.rect(
+      -DESIGN_WIDTH / 2,
+      -DESIGN_HEIGHT / 2,
+      DESIGN_WIDTH,
+      DESIGN_HEIGHT,
+    );
+    shade.fill();
+    return overlay;
+  }
+
+  private completeCultivationPresentation(overlay: Node): void {
+    if (this.activePresentationTween?.getTarget() !== overlay) return;
+    this.activePresentationTween = null;
+    this.activePresentation = null;
+    removeAndDestroy(overlay);
+    this.tryStartCultivationPresentation();
   }
 
   private drawBackdrop(): void {
@@ -304,11 +686,15 @@ export class AppView {
     graphic.lineTo(0, 25);
     graphic.stroke();
     const opacity = seal.addComponent(UIOpacity);
-    tween(opacity)
+    this.loadingTween = tween(seal)
       .repeatForever(
-        tween<UIOpacity>()
-          .to(0.75, { opacity: 90 })
-          .to(0.75, { opacity: 255 }),
+        tween(seal)
+          .update(0.75, (_target, progress) => {
+            opacity.opacity = Math.round(255 - 165 * progress);
+          })
+          .update(0.75, (_target, progress) => {
+            opacity.opacity = Math.round(90 + 165 * progress);
+          }),
       )
       .start();
   }
@@ -1713,6 +2099,112 @@ export class AppView {
       },
     );
   }
+}
+
+function snapshotMatchesPresentationTarget(
+  state: Readonly<AppState>,
+  plan: CultivationPresentationPlan,
+): boolean {
+  const bootstrap = state.bootstrap;
+  return (
+    bootstrap !== null &&
+    bootstrap.account.id === plan.accountId &&
+    bootstrap.player.id === plan.playerId &&
+    bootstrap.progress.level === plan.toLevel &&
+    bootstrap.progress.realmName === plan.toRealmName &&
+    bootstrap.progress.totalPower === plan.toPower
+  );
+}
+
+function snapshotMatchesPresentationSource(
+  state: Readonly<AppState>,
+  plan: CultivationPresentationPlan,
+): boolean {
+  const bootstrap = state.bootstrap;
+  return (
+    bootstrap !== null &&
+    bootstrap.account.id === plan.accountId &&
+    bootstrap.player.id === plan.playerId &&
+    bootstrap.progress.level === plan.fromLevel &&
+    bootstrap.progress.realmName === plan.fromRealmName &&
+    bootstrap.progress.totalPower === plan.fromPower
+  );
+}
+
+function formatSignedPowerDelta(value: string): string {
+  return value.startsWith("-")
+    ? formatLargeNumber(value)
+    : `+${formatLargeNumber(value)}`;
+}
+
+function removeAndDestroy(node: Node): void {
+  node.removeFromParent();
+  node.destroy();
+}
+
+function drawGoldenFormation(parent: Node): void {
+  const graphic = graphicsNode(parent, "FormationLines", 0, 0);
+  graphic.strokeColor = COLORS.gold;
+  graphic.lineWidth = 3;
+  graphic.circle(0, 0, 118);
+  graphic.circle(0, 0, 84);
+  graphic.circle(0, 0, 42);
+  for (let index = 0; index < 12; index += 1) {
+    const angle = (Math.PI * 2 * index) / 12;
+    const inner = 45;
+    const outer = index % 2 === 0 ? 148 : 126;
+    graphic.moveTo(Math.cos(angle) * inner, Math.sin(angle) * inner);
+    graphic.lineTo(Math.cos(angle) * outer, Math.sin(angle) * outer);
+  }
+  graphic.stroke();
+  graphic.fillColor = COLORS.gold;
+  graphic.circle(0, 0, 8);
+  graphic.fill();
+}
+
+function drawTribulationLightning(parent: Node): void {
+  const graphic = graphicsNode(parent, "Lightning", 0, 94);
+  graphic.strokeColor = color("#b8d7e5");
+  graphic.lineWidth = 4;
+  const bolts: ReadonlyArray<ReadonlyArray<readonly [number, number]>> = [
+    [
+      [-220, 260],
+      [-164, 176],
+      [-192, 176],
+      [-98, 54],
+      [-126, 54],
+      [-38, -110],
+    ],
+    [
+      [220, 260],
+      [164, 176],
+      [192, 176],
+      [98, 54],
+      [126, 54],
+      [38, -110],
+    ],
+    [
+      [-38, 320],
+      [-14, 215],
+      [-38, 215],
+      [0, 92],
+      [38, 215],
+      [14, 215],
+      [38, 320],
+    ],
+  ];
+  for (const bolt of bolts) {
+    const first = bolt[0];
+    if (!first) continue;
+    graphic.moveTo(first[0], first[1]);
+    for (const point of bolt.slice(1)) graphic.lineTo(point[0], point[1]);
+  }
+  graphic.stroke();
+  graphic.strokeColor = COLORS.gold;
+  graphic.lineWidth = 1;
+  graphic.circle(0, 94, 138);
+  graphic.circle(0, 94, 182);
+  graphic.stroke();
 }
 
 function addLabel(

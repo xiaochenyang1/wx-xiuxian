@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  compareBigNumberStrings,
   formatLargeNumber,
+  interpolateBigNumberStrings,
   ratioOfBigNumberStrings,
+  subtractBigNumberStrings,
   sumBigNumberStrings,
 } from "../../assets/scripts/core/ClientNumber";
 
@@ -41,5 +44,38 @@ describe("Cocos client large-number helpers", () => {
     ).toBe(0.5);
     expect(ratioOfBigNumberStrings("101", "100")).toBe(1);
     expect(ratioOfBigNumberStrings("invalid", "100")).toBe(0);
+  });
+
+  it("compares and subtracts signed integers without losing precision", () => {
+    expect(
+      compareBigNumberStrings(
+        "900719925474099300000",
+        "900719925474099299999",
+      ),
+    ).toBe(1);
+    expect(compareBigNumberStrings("-10", "-2")).toBe(-1);
+    expect(
+      subtractBigNumberStrings(
+        "900719925474099500000",
+        "900719925474099300000",
+      ),
+    ).toBe("200000");
+    expect(subtractBigNumberStrings("40", "100")).toBe("-60");
+  });
+
+  it("interpolates authoritative integer strings in both directions", () => {
+    expect(
+      interpolateBigNumberStrings(
+        "900719925474099300000",
+        "900719925474099500000",
+        0.5,
+      ),
+    ).toBe("900719925474099400000");
+    expect(interpolateBigNumberStrings("1000", "100", 0.5)).toBe("550");
+    expect(interpolateBigNumberStrings("100", "200", -1)).toBe("100");
+    expect(interpolateBigNumberStrings("100", "200", 2)).toBe("200");
+    expect(interpolateBigNumberStrings("invalid", "server-value", 0.5)).toBe(
+      "server-value",
+    );
   });
 });

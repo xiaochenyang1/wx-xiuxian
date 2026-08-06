@@ -4,6 +4,7 @@ import type {
   ChosenAvatarVariant,
   EquippedEquipmentSlot,
   LoadoutMutationResult,
+  ProgressionEvent,
 } from "@cultivation-diary/shared";
 import { CLIENT_CONFIG } from "../core/ClientConfig";
 import {
@@ -35,6 +36,10 @@ import {
   type LifecycleRenderToken,
 } from "../core/LifecycleSyncCoordinator";
 import {
+  planCultivationPresentation,
+  type CultivationPresentationTrigger,
+} from "../core/CultivationPresentation";
+import {
   ApiClient,
   ClientApiError,
   classifyAuthoritativeFailure,
@@ -53,6 +58,14 @@ const { ccclass } = _decorator;
 interface AuthoritativeSyncResult {
   bootstrap: BootstrapSnapshot;
   completedSettlement: boolean;
+  settlementEvents?: readonly ProgressionEvent[];
+  settlementId?: string;
+}
+
+interface CultivationPresentationEvidence {
+  trigger: CultivationPresentationTrigger;
+  previous?: BootstrapSnapshot | null;
+  sourceId?: string;
 }
 
 type OfflineLoadoutIntent =
@@ -94,6 +107,7 @@ export class GameBootstrap extends Component {
   private pendingLoadoutRollbackMessage: string | null = null;
   private requiresFreshAuthoritativeBaseline = false;
   private queuedLoadoutNotice: string | null = null;
+  private readonly presentedCultivationSources = new Set<string>();
   private readonly lifecycleSync = new LifecycleSyncCoordinator<AuthoritativeSyncResult>({
     intervalSeconds: CLIENT_CONFIG.heartbeatIntervalSeconds,
     schedule: (callback, intervalSeconds) => this.schedule(callback, intervalSeconds),
@@ -119,7 +133,12 @@ export class GameBootstrap extends Component {
       const result = await this.apiClient.syncHeartbeat(
         this.prepareOfflineLoadoutSettlement(),
       );
-      return { bootstrap: result.bootstrap, completedSettlement: true };
+      return {
+        bootstrap: result.bootstrap,
+        completedSettlement: true,
+        settlementEvents: result.settlement.events,
+        settlementId: result.settlement.settlementId,
+      };
     },
     recover: (error) => this.recoverHeartbeat(error),
     reject: (error, allowRender) => this.handleHeartbeatFailure(error, allowRender),
@@ -177,6 +196,7 @@ export class GameBootstrap extends Component {
       },
       onHide: () => {
         this.canReplayFreshlySettledLoadout = false;
+        this.appView?.interruptCultivationPresentation(true);
         this.lifecycleSync.handleHide();
       },
     });
@@ -189,6 +209,7 @@ export class GameBootstrap extends Component {
 
   onDestroy(): void {
     this.destroyed = true;
+    this.appView?.interruptCultivationPresentation(true);
     this.unsubscribeLifecycle?.();
     this.unsubscribeLifecycle = null;
     this.unsubscribeNetworkStatus?.();
@@ -285,7 +306,12 @@ export class GameBootstrap extends Component {
         ? await this.apiClient.syncHeartbeat(settlementOptions)
         : await this.apiClient.settleCultivation();
       const allowRender = this.lifecycleSync.canRender(renderToken);
-      this.acceptSettledBootstrap(result.bootstrap, allowRender);
+      this.acceptSettledBootstrap(
+        result.bootstrap,
+        allowRender,
+        result.settlement.events,
+        result.settlement.settlementId,
+      );
     } catch (error) {
       let recoveredResult: AuthoritativeSyncResult | null = null;
       try {
@@ -315,23 +341,32 @@ export class GameBootstrap extends Component {
     allowRender: boolean,
   ): void {
     if (result.completedSettlement) {
-      this.acceptSettledBootstrap(result.bootstrap, allowRender);
+      this.acceptSettledBootstrap(
+        result.bootstrap,
+        allowRender,
+        result.settlementEvents,
+        result.settlementId,
+      );
     } else {
       this.acceptRecoveredBootstrap(result.bootstrap, allowRender);
     }
   }
 
-  private applySyncedBootstrap(bootstrap: BootstrapSnapshot): void {
+  private applySyncedBootstrap(
+    bootstrap: BootstrapSnapshot,
+    presentation?: CultivationPresentationEvidence,
+  ): void {
     if (
       this.isProfileOpen() &&
       hasSameBootstrapIdentity(this.store.snapshot.bootstrap, bootstrap)
     ) {
+      this.enqueueCultivationPresentation(bootstrap, presentation);
       this.pendingProfileBootstrap = bootstrap;
       if (this.store.snapshot.syncStatus !== "online") {
         this.markAuthoritativeOnline();
       }
     } else {
-      this.setAuthoritativeReady(bootstrap);
+      this.setAuthoritativeReady(bootstrap, presentation);
     }
   }
 
@@ -473,7 +508,15 @@ export class GameBootstrap extends Component {
   private acceptSettledBootstrap(
     bootstrap: BootstrapSnapshot,
     allowRender: boolean,
+    settlementEvents: readonly ProgressionEvent[] = [],
+    settlementId?: string,
   ): void {
+    const presentation = hasLevelUpEvent(settlementEvents)
+      ? ({
+          trigger: "level_up",
+          ...(settlementId ? { sourceId: settlementId } : {}),
+        } satisfies CultivationPresentationEvidence)
+      : undefined;
     const queue = this.pendingLoadoutQueue;
     const requiresFreshSettlement =
       this.confirmingPreviouslyAttemptedSettlement || !allowRender;
@@ -489,7 +532,7 @@ export class GameBootstrap extends Component {
         );
         this.persistBootstrap(bootstrap, allowRender);
         if (allowRender) {
-          this.applySyncedBootstrap(bootstrap);
+          this.applySyncedBootstrap(bootstrap, presentation);
           this.showQueuedLoadoutNotice();
         }
         return;
@@ -516,8 +559,17 @@ export class GameBootstrap extends Component {
       this.queueSettlementRetryRequested = requiresFreshSettlement;
       this.loadoutDrainRequested = !requiresFreshSettlement;
       this.canReplayFreshlySettledLoadout = !requiresFreshSettlement;
+      if (allowRender && presentation) {
+        const queuedPreview = applyOfflineLoadoutOperations(
+          bootstrap,
+          queue.operations,
+        );
+        if (queuedPreview) {
+          this.enqueueCultivationPresentation(queuedPreview, presentation);
+        }
+      }
       if (allowRender && !this.showQueuedLoadoutPreview(bootstrap)) {
-        this.applySyncedBootstrap(bootstrap);
+        this.applySyncedBootstrap(bootstrap, presentation);
         this.showQueuedLoadoutNotice();
       }
       return;
@@ -528,7 +580,7 @@ export class GameBootstrap extends Component {
       this.queueSettlementRetryRequested = false;
     }
     if (allowRender && !this.destroyed) {
-      this.applySyncedBootstrap(bootstrap);
+      this.applySyncedBootstrap(bootstrap, presentation);
       this.showQueuedLoadoutNotice();
     }
   }
@@ -693,6 +745,7 @@ export class GameBootstrap extends Component {
     bootstrap: BootstrapSnapshot,
     renderToken: LifecycleRenderToken,
     beforeApply?: () => void,
+    presentation?: CultivationPresentationEvidence,
   ): boolean {
     const allowRender = this.lifecycleSync.canRender(renderToken);
     this.persistBootstrap(bootstrap, allowRender);
@@ -700,7 +753,7 @@ export class GameBootstrap extends Component {
 
     this.pendingProfileBootstrap = null;
     beforeApply?.();
-    this.setAuthoritativeReady(bootstrap);
+    this.setAuthoritativeReady(bootstrap, presentation);
     return true;
   }
 
@@ -804,8 +857,8 @@ export class GameBootstrap extends Component {
   private closeFeature(): void {
     const pendingBootstrap = this.pendingProfileBootstrap;
     this.pendingProfileBootstrap = null;
-    this.store.closeFeature();
     if (pendingBootstrap) this.applyDeferredProfileBootstrap(pendingBootstrap);
+    this.store.closeFeature();
   }
 
   private isProfileOpen(): boolean {
@@ -822,7 +875,19 @@ export class GameBootstrap extends Component {
     this.store.setLoading("正在叩开境界之门");
     try {
       const result = await this.apiClient.breakthrough();
-      this.applyMutationBootstrap(result.bootstrap, renderToken);
+      const previousBootstrap = this.store.snapshot.bootstrap;
+      const breakthroughConfirmed =
+        result.toLevel > result.fromLevel &&
+        previousBootstrap?.progress.level === result.fromLevel &&
+        result.bootstrap.progress.level === result.toLevel;
+      this.applyMutationBootstrap(
+        result.bootstrap,
+        renderToken,
+        undefined,
+        breakthroughConfirmed
+          ? { trigger: "breakthrough", sourceId: result.breakthroughId }
+          : undefined,
+      );
     } catch (error) {
       if (await this.recoverPlayerVersionConflict(error, renderToken)) return;
       if (!this.lifecycleSync.canRender(renderToken)) return;
@@ -958,7 +1023,15 @@ export class GameBootstrap extends Component {
     this.store.setFeatureMessage("正在炼化经验丹……");
     try {
       const result = await this.apiClient.useInventoryItem(itemConfigId);
-      if (!this.applyMutationBootstrap(result.bootstrap, renderToken)) return;
+      const presentation = hasLevelUpEvent(result.events)
+        ? ({
+            trigger: "level_up",
+            sourceId: result.operationId,
+          } satisfies CultivationPresentationEvidence)
+        : undefined;
+      if (!this.applyMutationBootstrap(result.bootstrap, renderToken, undefined, presentation)) {
+        return;
+      }
       this.store.setFeatureMessage(
         result.reachedBreakthrough
           ? `炼化完成：修为 +${result.experienceGained}，已到达突破瓶颈`
@@ -1073,7 +1146,31 @@ export class GameBootstrap extends Component {
     this.store.setFeatureMessage(pendingMessage);
     try {
       const result = await mutation();
-      if (!this.applyMutationBootstrap(result.bootstrap, renderToken)) return;
+      const previousBootstrap = this.store.snapshot.bootstrap;
+      const presentation =
+        result.previousTotalPower !== result.totalPower && previousBootstrap
+          ? {
+            trigger: "power_change" as const,
+            sourceId: result.operationId,
+            previous: {
+              ...previousBootstrap,
+              progress: {
+                ...previousBootstrap.progress,
+                totalPower: result.previousTotalPower,
+              },
+            },
+          }
+        : undefined;
+      if (
+        !this.applyMutationBootstrap(
+          result.bootstrap,
+          renderToken,
+          undefined,
+          presentation,
+        )
+      ) {
+        return;
+      }
       this.store.setFeatureMessage(
         `${completedMessage}，${describePowerDelta(result.powerDelta)}`,
       );
@@ -1605,7 +1702,10 @@ export class GameBootstrap extends Component {
     }
   }
 
-  private setAuthoritativeReady(bootstrap: BootstrapSnapshot): void {
+  private setAuthoritativeReady(
+    bootstrap: BootstrapSnapshot,
+    presentation?: CultivationPresentationEvidence,
+  ): void {
     if (this.pendingLoadoutRollbackMessage) {
       this.store.replaceSnapshot(bootstrap, 0);
       this.store.markReconnecting();
@@ -1616,9 +1716,35 @@ export class GameBootstrap extends Component {
     if (current && !hasSameBootstrapIdentity(current, bootstrap)) {
       this.pendingProfileBootstrap = null;
     }
+    this.enqueueCultivationPresentation(bootstrap, presentation);
     const syncAt = this.apiClient.getAuthoritativeSnapshotMetadata()?.lastSuccessfulSyncAt;
     if (syncAt) this.store.setReady(bootstrap, syncAt);
     else this.store.setReady(bootstrap);
+  }
+
+  private enqueueCultivationPresentation(
+    bootstrap: BootstrapSnapshot,
+    presentation?: CultivationPresentationEvidence,
+  ): void {
+    if (!presentation || !this.appView) return;
+    const sourceKey = presentation.sourceId
+      ? `${bootstrap.account.id}:${bootstrap.player.id}:${presentation.trigger}:${presentation.sourceId}`
+      : null;
+    if (sourceKey && this.presentedCultivationSources.has(sourceKey)) return;
+    const plan = planCultivationPresentation(
+      presentation.previous ?? this.store.snapshot.bootstrap,
+      bootstrap,
+      presentation.trigger,
+    );
+    if (!plan) return;
+    if (sourceKey) {
+      if (this.presentedCultivationSources.size >= 64) {
+        const oldest = this.presentedCultivationSources.values().next().value;
+        if (oldest) this.presentedCultivationSources.delete(oldest);
+      }
+      this.presentedCultivationSources.add(sourceKey);
+    }
+    this.appView.enqueueCultivationPresentation(plan);
   }
 
   private markAuthoritativeOnline(): void {
@@ -1711,6 +1837,7 @@ export class GameBootstrap extends Component {
     this.pendingLoadoutRollbackMessage = null;
     this.requiresFreshAuthoritativeBaseline = false;
     this.queuedLoadoutNotice = null;
+    this.presentedCultivationSources.clear();
     this.platform.remove(CLIENT_CONFIG.sessionStorageKey);
     this.platform.remove(CLIENT_CONFIG.bootstrapCacheStorageKey);
     this.store.setAuthenticationError(message);
@@ -1769,4 +1896,8 @@ function describePowerDelta(powerDelta: string): string {
   if (normalized.startsWith("-")) return `战力 ${normalized}`;
   if (/^[0-9]+$/.test(normalized)) return `战力 +${normalized}`;
   return "战力不变";
+}
+
+function hasLevelUpEvent(events: readonly ProgressionEvent[]): boolean {
+  return events.some((event) => event.type === "level_up");
 }

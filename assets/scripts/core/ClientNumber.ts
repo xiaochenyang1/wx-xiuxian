@@ -1,5 +1,6 @@
 const INTEGER_PATTERN = /^[+-]?\d+$/;
 const RATIO_DECIMAL_PLACES = 6;
+const INTERPOLATION_STEPS = 1_000;
 
 const DISPLAY_UNITS = [
   { exponent: 16, suffix: "京" },
@@ -44,7 +45,47 @@ export function formatLargeNumber(value: string): string {
 export function sumBigNumberStrings(values: readonly string[]): string {
   let total: ParsedInteger = { negative: false, digits: "0" };
   for (const value of values) total = addIntegers(total, parseInteger(value));
-  return `${total.negative ? "-" : ""}${total.digits}`;
+  return stringifyInteger(total);
+}
+
+export function subtractBigNumberStrings(left: string, right: string): string {
+  return stringifyInteger(
+    addIntegers(parseInteger(left), negateInteger(parseInteger(right))),
+  );
+}
+
+export function compareBigNumberStrings(left: string, right: string): number {
+  return compareIntegers(parseInteger(left), parseInteger(right));
+}
+
+export function interpolateBigNumberStrings(
+  from: string,
+  to: string,
+  ratio: number,
+): string {
+  try {
+    const start = parseInteger(from);
+    const end = parseInteger(to);
+    if (!Number.isFinite(ratio) || ratio >= 1) return stringifyInteger(end);
+    if (ratio <= 0) return stringifyInteger(start);
+
+    const step = Math.max(
+      0,
+      Math.min(INTERPOLATION_STEPS, Math.round(ratio * INTERPOLATION_STEPS)),
+    );
+    const delta = addIntegers(end, negateInteger(start));
+    const interpolatedDelta: ParsedInteger = {
+      negative: delta.negative,
+      digits: divideUnsignedInteger(
+        multiplyMagnitudeBySmallInteger(delta.digits, step),
+        String(INTERPOLATION_STEPS),
+      ),
+    };
+    return stringifyInteger(addIntegers(start, interpolatedDelta));
+  } catch {
+    // Invalid authoritative values should settle on the latest server payload.
+    return to;
+  }
 }
 
 export function ratioOfBigNumberStrings(value: string, total: string): number {
@@ -103,6 +144,19 @@ function addIntegers(left: ParsedInteger, right: ParsedInteger): ParsedInteger {
   };
 }
 
+function compareIntegers(left: ParsedInteger, right: ParsedInteger): number {
+  if (left.negative !== right.negative) return left.negative ? -1 : 1;
+  const magnitude = compareMagnitude(left.digits, right.digits);
+  return left.negative ? -magnitude : magnitude;
+}
+
+function negateInteger(value: ParsedInteger): ParsedInteger {
+  return {
+    negative: value.digits === "0" ? false : !value.negative,
+    digits: value.digits,
+  };
+}
+
 function addMagnitudes(left: string, right: string): string {
   let carry = 0;
   let result = "";
@@ -133,6 +187,22 @@ function subtractMagnitudes(larger: string, smaller: string): string {
     }
     result = String(difference - subtrahend) + result;
     smallerIndex -= 1;
+  }
+  return normalizeDigits(result);
+}
+
+function multiplyMagnitudeBySmallInteger(value: string, multiplier: number): string {
+  if (multiplier === 0 || value === "0") return "0";
+  let carry = 0;
+  let result = "";
+  for (let index = value.length - 1; index >= 0; index -= 1) {
+    const product = digitAt(value, index) * multiplier + carry;
+    result = String(product % 10) + result;
+    carry = Math.floor(product / 10);
+  }
+  while (carry > 0) {
+    result = String(carry % 10) + result;
+    carry = Math.floor(carry / 10);
   }
   return normalizeDigits(result);
 }
@@ -171,6 +241,10 @@ function formatScientific(digits: string): string {
 
 function normalizeDigits(value: string): string {
   return value.replace(/^0+(?=\d)/, "");
+}
+
+function stringifyInteger(value: ParsedInteger): string {
+  return `${value.negative ? "-" : ""}${value.digits}`;
 }
 
 function digitAt(value: string, index: number): number {
