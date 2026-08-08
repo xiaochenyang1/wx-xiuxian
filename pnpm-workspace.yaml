@@ -1,7 +1,5 @@
 packages:
   - shared
-  - server
 
 allowBuilds:
   esbuild: true
-  msgpackr-extract: true

@@ -1,6 +1,8 @@
 import {
+  getNewcomerTaskConfig,
   type AssetQuality,
   type AvatarVariant,
+  type BootstrapSnapshot,
   type ChosenAvatarVariant,
   type DebugGrantTarget,
   type EquippedEquipmentSlot,
@@ -12,20 +14,38 @@ import {
   ratioOfBigNumberStrings,
   sumBigNumberStrings,
 } from "../core/ClientNumber";
+import type {
+  MainBackgroundArt,
+  MainBackgroundKey,
+} from "../core/AppArt";
 import {
   mergeCultivationPresentationPlans,
   type CultivationPresentationPlan,
 } from "../core/CultivationPresentation";
+import {
+  advanceLiveCultivationElapsed,
+  initialLiveCultivationElapsed,
+  liveCultivationSettlementKey,
+  projectLiveCultivation,
+} from "../core/CultivationProjection";
+import {
+  clampModalButtonCenterY,
+  DEFAULT_DESIGN_SAFE_AREA_LAYOUT,
+  DESIGN_VIEWPORT_HEIGHT,
+  DESIGN_VIEWPORT_WIDTH,
+  resolveAppChromeGeometry,
+  type AppChromeGeometry,
+  type DesignSafeAreaLayout,
+} from "../core/SafeArea";
 import type {
   AppState,
   FeaturePanel,
   MainTab,
 } from "../core/ClientTypes";
 import {
-  canRunAuthoritativeMutation,
-  canRunLoadoutMutation,
+  canRunLocalMutation,
+  shouldShowPartnerUnlockNotice,
 } from "../core/ClientTypes";
-import type { DebugNetworkFaultMode } from "../platform/PlatformAdapter";
 import {
   Button,
   BlockInputEvents,
@@ -35,6 +55,7 @@ import {
   HorizontalTextAlignment,
   Label,
   Node,
+  Sprite,
   tween,
   type Tween,
   UIOpacity,
@@ -44,8 +65,7 @@ import {
 } from "cc";
 import { DEBUG } from "cc/env";
 
-const DESIGN_WIDTH = 750;
-const DESIGN_HEIGHT = 1334;
+const MAX_DEBUG_DROP_SEED = 0xffff_ffff;
 
 type DebugLifecycleStatus = "foreground" | "background";
 
@@ -77,8 +97,11 @@ const COLORS = {
   panel: color("#14212d"),
   panelStrong: color("#1b2f3b"),
   gold: color("#d6b66a"),
+  goldBright: color("#f2d58a"),
   goldMuted: color("#8f7a4d"),
   jade: color("#74a99c"),
+  cyan: color("#62c9cf"),
+  green: color("#58cf72"),
   text: color("#e8e3d5"),
   textMuted: color("#9fa9aa"),
   red: color("#a9554d"),
@@ -87,12 +110,14 @@ const COLORS = {
 
 interface AppViewActions {
   retry(): void;
+  resetProgress(): void;
   selectTab(tab: MainTab): void;
   openFeature(feature: FeaturePanel): void;
   closeFeature(): void;
   breakthrough(): void;
   chooseAvatar(avatarVariant: ChosenAvatarVariant): void;
   renamePlayer(displayName: string): void;
+  markPartnerUnlockNoticeSeen(): void;
   expandInventory(): void;
   useInventoryItem(itemConfigId: string): void;
   transferHarvest(entryId: string): void;
@@ -105,9 +130,9 @@ interface AppViewActions {
   ): void;
   unequipEquipment(equipmentInstanceId: string): void;
   dismissOfflineSettlement(): void;
-  simulateOffline(seconds: number): void;
+  simulateOffline(seconds: number, dropSeed?: number): void;
   grantDebug(target: DebugGrantTarget): void;
-  setNetworkFaultMode(mode: DebugNetworkFaultMode): void;
+  resetDebugSave(playerId: string, confirmation: string): void;
   feedback(): void;
 }
 
@@ -132,16 +157,194 @@ interface PageWindow {
   end: number;
 }
 
+type LabelSizing = "shrink" | "fixed";
+
+export interface TechniqueSlotLabelLayout {
+  readonly text: string;
+  readonly maxLines: 2;
+  readonly sizing: "fixed";
+}
+
+export function getTechniqueSlotLabelLayout(
+  slotLabel: string,
+  equippedName: string | null,
+): TechniqueSlotLabelLayout {
+  return {
+    text: `${slotLabel}\n${equippedName ?? "未装备"}`,
+    maxLines: 2,
+    sizing: "fixed",
+  };
+}
+
+export interface CultivationProgressDisplay {
+  readonly isVersionCap: boolean;
+  readonly idleMessage: string;
+  readonly experienceLine: string;
+  readonly reserveLine: string | null;
+  readonly rateLabel: string;
+  readonly progressRatio: number | null;
+  readonly footer: string | null;
+}
+
+export function getCultivationProgressDisplay(
+  progress: BootstrapSnapshot["progress"],
+  maxLevel: number,
+): CultivationProgressDisplay {
+  if (progress.status === "version_cap") {
+    return {
+      isVersionCap: true,
+      idleMessage: "积蓄修为中",
+      experienceLine: "当前版本修为圆满",
+      reserveLine: `修为储备 ${formatLargeNumber(progress.cultivationReserve)}`,
+      rateLabel: "每秒储备",
+      progressRatio: null,
+      footer: `当前版本上限 Lv.${maxLevel}`,
+    };
+  }
+
+  const progressRatio = ratio(
+    progress.experience,
+    progress.requiredExperience,
+  );
+  return {
+    isVersionCap: false,
+    idleMessage: "挂机中",
+    experienceLine: `修为 ${formatLargeNumber(progress.experience)} / ${formatLargeNumber(progress.requiredExperience)}`,
+    reserveLine: null,
+    rateLabel: "每秒经验",
+    progressRatio,
+    footer:
+      progress.status === "breakthrough_ready"
+        ? null
+        : `当前境界修炼进度 ${Math.floor(progressRatio * 100)}%`,
+  };
+}
+
+export interface NewcomerTaskDisplay {
+  readonly title: string;
+  readonly description: string;
+  readonly current: string;
+  readonly target: string;
+  readonly progressText: string;
+  readonly statusText: string;
+  readonly rewardText: string;
+  readonly completed: boolean;
+  readonly claimed: boolean;
+}
+
+export function getNewcomerTaskDisplay(
+  task: BootstrapSnapshot["newcomerTasks"][number],
+): NewcomerTaskDisplay {
+  let config: ReturnType<typeof getNewcomerTaskConfig>;
+  try {
+    config = getNewcomerTaskConfig(task.taskConfigId);
+  } catch {
+    // A stale or unknown config must remain renderable until the next sync.
+  }
+
+  const current = formatLargeNumber(task.progress);
+  const target = config ? String(config.targetLevel) : "?";
+  const claimed = task.claimedAt !== null;
+  const completed = claimed || task.completedAt !== null;
+  const rewardLabel = config
+    ? config.rewardLabel ?? "无额外奖励"
+    : "奖励信息不可用";
+
+  return {
+    title: config?.title ?? "未知修行任务",
+    description: config?.description ?? "任务配置暂不可用",
+    current,
+    target,
+    progressText: `进度 ${current} / ${target}`,
+    statusText: completed ? "已完成" : "进行中",
+    rewardText: claimed
+      ? `已自动发放：${rewardLabel}`
+      : `奖励：${rewardLabel}`,
+    completed,
+    claimed,
+  };
+}
+
+export interface ProfileResetControlDisplay {
+  readonly description: string;
+  readonly primaryLabel: string;
+  readonly cancelLabel: string | null;
+  readonly enabled: boolean;
+}
+
+export function getProfileResetControlDisplay(
+  armed: boolean,
+  enabled = true,
+  pending = false,
+): ProfileResetControlDisplay {
+  if (pending) {
+    return {
+      description: "正在重置本地进度，请稍候",
+      primaryLabel: "正在重置",
+      cancelLabel: null,
+      enabled: false,
+    };
+  }
+  if (!enabled) {
+    return {
+      description: "当前状态暂时无法重置本地进度",
+      primaryLabel: armed ? "确认重置" : "重置进度",
+      cancelLabel: armed ? "取消" : null,
+      enabled: false,
+    };
+  }
+  return armed
+    ? {
+        description: "此操作会永久清除本机存档并从 Lv.1 重新开始",
+        primaryLabel: "确认重置",
+        cancelLabel: "取消",
+        enabled: true,
+      }
+    : {
+        description: "当前进度仅保存在本机，可在此重新开始",
+        primaryLabel: "重置本地进度",
+        cancelLabel: null,
+        enabled: true,
+      };
+}
+
 export class AppView {
   private readonly contentRoot: Node;
   private readonly presentationRoot: Node;
   private readonly debugRoot: Node | null;
+  private readonly safeAreaLayout: DesignSafeAreaLayout;
+  private readonly chromeGeometry: AppChromeGeometry;
+  private mainBackgroundArt: MainBackgroundArt = {};
+  private destroyed = false;
+  private mainPageRoot: Node | null = null;
   private idleLabel: Label | null = null;
+  private cultivationExperienceLabel: Label | null = null;
+  private cultivationReserveLabel: Label | null = null;
+  private cultivationGrowthLabel: Label | null = null;
+  private cultivationFooterLabel: Label | null = null;
+  private cultivationProgressGraphic: Graphics | null = null;
+  private cultivationProjectionAnchor: {
+    readonly accountId: string;
+    readonly playerId: string;
+    readonly key: string;
+    readonly settlementKey: string;
+    readonly progress: BootstrapSnapshot["progress"];
+    elapsedMilliseconds: number;
+  } | null = null;
+  private cultivationGrowthTween: Tween<Node> | null = null;
+  private lastCultivationProjectionSecond = -1;
+  private lastCultivationProjectionGain = "0";
+  private idleMessage = "挂机中";
   private idleFrame = 0;
   private lastState: Readonly<AppState> | null = null;
-  private debugPanelVisible = true;
+  private debugPanelVisible = false;
   private debugLifecycleStatus: DebugLifecycleStatus = "foreground";
-  private debugNetworkFaultMode: DebugNetworkFaultMode = "normal";
+  private debugDropSeed: number | null = null;
+  private debugDropSeedDraft = "";
+  private debugDropSeedError: string | null = null;
+  private debugSaveResetArmed = false;
+  private profileResetArmed = false;
+  private profileResetPending = false;
   private profilePlayerId: string | null = null;
   private profileAvatarDraft: ChosenAvatarVariant | null = null;
   private profileNameDraft: string | null = null;
@@ -160,22 +363,69 @@ export class AppView {
   constructor(
     private readonly containerRoot: Node,
     private readonly actions: AppViewActions,
+    safeAreaLayout: DesignSafeAreaLayout = DEFAULT_DESIGN_SAFE_AREA_LAYOUT,
   ) {
-    setSize(containerRoot, DESIGN_WIDTH, DESIGN_HEIGHT);
+    this.safeAreaLayout = safeAreaLayout;
+    this.chromeGeometry = resolveAppChromeGeometry(safeAreaLayout);
+    setSize(
+      containerRoot,
+      safeAreaLayout.viewportWidth,
+      safeAreaLayout.viewportHeight,
+    );
     this.contentRoot = createUiNode(containerRoot, "ContentRoot");
     this.presentationRoot = createUiNode(containerRoot, "PresentationRoot");
     // Cocos replaces DEBUG at build time; release builds never create this root.
     this.debugRoot = DEBUG ? createUiNode(containerRoot, "DebugRoot") : null;
-    setSize(this.contentRoot, DESIGN_WIDTH, DESIGN_HEIGHT);
-    setSize(this.presentationRoot, DESIGN_WIDTH, DESIGN_HEIGHT);
-    if (this.debugRoot) setSize(this.debugRoot, DESIGN_WIDTH, DESIGN_HEIGHT);
+    setSize(
+      this.contentRoot,
+      safeAreaLayout.viewportWidth,
+      safeAreaLayout.viewportHeight,
+    );
+    setSize(
+      this.presentationRoot,
+      safeAreaLayout.viewportWidth,
+      safeAreaLayout.viewportHeight,
+    );
+    if (this.debugRoot) {
+      setSize(
+        this.debugRoot,
+        safeAreaLayout.viewportWidth,
+        safeAreaLayout.viewportHeight,
+      );
+    }
   }
 
   private get root(): Node {
-    return this.contentRoot;
+    return this.mainPageRoot ?? this.contentRoot;
+  }
+
+  private setFullscreenSize(node: Node): void {
+    setSize(
+      node,
+      this.safeAreaLayout.viewportWidth,
+      this.safeAreaLayout.viewportHeight,
+    );
+  }
+
+  private drawFullscreenRect(graphics: Graphics): void {
+    graphics.rect(
+      -this.safeAreaLayout.viewportWidth / 2,
+      -this.safeAreaLayout.viewportHeight / 2,
+      this.safeAreaLayout.viewportWidth,
+      this.safeAreaLayout.viewportHeight,
+    );
+  }
+
+  private safeModalButtonY(preferredY: number, height: number): number {
+    return clampModalButtonCenterY(
+      preferredY,
+      height,
+      this.safeAreaLayout,
+    );
   }
 
   render(state: Readonly<AppState>): void {
+    this.updateCultivationProjectionAnchor(state);
     const playerId = state.bootstrap?.player.id ?? null;
     if (playerId !== this.profilePlayerId) {
       this.interruptCultivationPresentation(true);
@@ -191,6 +441,11 @@ export class AppView {
       !snapshotMatchesPresentationTarget(state, this.activePresentation)
     ) {
       this.interruptCultivationPresentation();
+    } else if (
+      this.activePresentation &&
+      shouldShowPartnerUnlockNotice(state)
+    ) {
+      this.deferActivePresentation();
     } else if (this.activePresentation && state.activeFeature !== null) {
       this.deferActivePresentation();
     } else if (this.activePresentation && state.bootstrap?.offlineSettlement) {
@@ -198,8 +453,17 @@ export class AppView {
     }
     this.loadingTween?.stop();
     this.loadingTween = null;
+    this.cultivationGrowthTween?.stop();
+    this.cultivationGrowthTween = null;
     for (const child of [...this.contentRoot.children]) child.destroy();
     this.idleLabel = null;
+    this.cultivationExperienceLabel = null;
+    this.cultivationReserveLabel = null;
+    this.cultivationGrowthLabel = null;
+    this.cultivationFooterLabel = null;
+    this.cultivationProgressGraphic = null;
+    this.lastCultivationProjectionSecond = -1;
+    this.lastCultivationProjectionGain = "0";
     this.drawBackdrop();
 
     if (state.phase === "loading") {
@@ -213,22 +477,19 @@ export class AppView {
       return;
     }
 
-    this.drawHeader(state);
-    switch (state.selectedTab) {
-      case "cultivation":
-        this.drawCultivation(state);
-        break;
-      case "partner":
-        this.drawPartner(state);
-        break;
-      case "ranking":
-        this.drawRanking();
-        break;
-      case "cave":
-        this.drawCave(state);
-        break;
+    const usesCultivationReferenceSkin =
+      state.selectedTab === "cultivation" &&
+      this.hasMainBackground("cultivation");
+    this.drawMainPage(state);
+    if (!usesCultivationReferenceSkin) {
+      this.drawHeader(state);
+      this.drawNavigation(state.selectedTab);
+      this.drawBottomFeatureRail(
+        this.contentRoot,
+        this.chromeGeometry.centerX,
+        this.chromeGeometry.navigationCenterY,
+      );
     }
-    this.drawNavigation(state.selectedTab);
     this.drawSyncStatus(state);
     if (state.activeFeature) {
       this.drawFeaturePanel(state, state.activeFeature);
@@ -236,20 +497,112 @@ export class AppView {
     if (state.bootstrap.offlineSettlement) {
       this.drawOfflineSettlement(state.bootstrap.offlineSettlement);
     }
+    if (shouldShowPartnerUnlockNotice(state)) {
+      this.drawPartnerUnlockNotice(state);
+    }
     this.tryStartCultivationPresentation();
     this.drawDebugPanel(state);
   }
 
-  setDebugLifecycleStatus(status: DebugLifecycleStatus): void {
-    if (!DEBUG || this.debugLifecycleStatus === status) return;
-    this.debugLifecycleStatus = status;
-    this.refreshDebugPanel();
+  private drawMainPage(state: Readonly<AppState>): void {
+    const pageRoot = createUiNode(this.contentRoot, "MainPageRoot");
+    const usesCultivationReferenceSkin =
+      state.selectedTab === "cultivation" &&
+      this.hasMainBackground("cultivation");
+    pageRoot.setPosition(
+      this.chromeGeometry.centerX,
+      usesCultivationReferenceSkin ? 0 : this.chromeGeometry.bodyOffsetY,
+    );
+    if (usesCultivationReferenceSkin) {
+      pageRoot.setScale(
+        1,
+        this.safeAreaLayout.viewportHeight / DESIGN_VIEWPORT_HEIGHT,
+        1,
+      );
+    }
+    setSize(pageRoot, DESIGN_VIEWPORT_WIDTH, DESIGN_VIEWPORT_HEIGHT);
+    this.mainPageRoot = pageRoot;
+    try {
+      this.drawMainBackground(state.selectedTab);
+      switch (state.selectedTab) {
+        case "cultivation":
+          this.drawCultivation(state);
+          break;
+        case "partner":
+          this.drawPartner(state);
+          break;
+        case "ranking":
+          this.drawRanking();
+          break;
+        case "cave":
+          this.drawCave(state);
+          break;
+      }
+    } finally {
+      this.mainPageRoot = null;
+    }
   }
 
-  setDebugNetworkFaultMode(mode: DebugNetworkFaultMode): void {
-    if (!DEBUG || this.debugNetworkFaultMode === mode) return;
-    this.debugNetworkFaultMode = mode;
-    this.refreshDebugPanel();
+  private drawMainBackground(tab: MainBackgroundKey): void {
+    const spriteFrame = this.mainBackgroundArt[tab];
+    if (!spriteFrame) return;
+
+    const background = createUiNode(this.root, `MainBackground-${tab}`);
+    setSize(background, DESIGN_VIEWPORT_WIDTH, DESIGN_VIEWPORT_HEIGHT);
+    const originalSize = spriteFrame.originalSize;
+    const sourceWidth = Math.max(1, originalSize.width);
+    const sourceHeight = Math.max(1, originalSize.height);
+    const coverScale = Math.max(
+      DESIGN_VIEWPORT_WIDTH / sourceWidth,
+      DESIGN_VIEWPORT_HEIGHT / sourceHeight,
+    );
+    const image = createUiNode(background, "MainBackgroundImage");
+    setSize(
+      image,
+      Math.ceil(sourceWidth * coverScale),
+      Math.ceil(sourceHeight * coverScale),
+    );
+    const sprite = image.addComponent(Sprite);
+    sprite.sizeMode = Sprite.SizeMode.CUSTOM;
+    sprite.type = Sprite.Type.SIMPLE;
+    sprite.trim = false;
+    sprite.spriteFrame = spriteFrame;
+    image.addComponent(UIOpacity).opacity = tab === "cultivation" ? 255 : 224;
+
+    if (tab !== "cultivation") {
+      const wash = graphicsNode(background, "MainBackgroundWash", 0, 0);
+      wash.fillColor = withAlpha(COLORS.black, 54);
+      wash.rect(
+        -DESIGN_VIEWPORT_WIDTH / 2,
+        -DESIGN_VIEWPORT_HEIGHT / 2,
+        DESIGN_VIEWPORT_WIDTH,
+        DESIGN_VIEWPORT_HEIGHT,
+      );
+      wash.fill();
+    }
+  }
+
+  private hasMainBackground(key: MainBackgroundKey): boolean {
+    return this.mainBackgroundArt[key] !== undefined;
+  }
+
+  setDebugLifecycleStatus(status: DebugLifecycleStatus): void {
+    if (this.debugLifecycleStatus === status) return;
+    this.debugLifecycleStatus = status;
+    if (DEBUG) this.refreshDebugPanel();
+  }
+
+  setMainBackgroundArt(art: MainBackgroundArt): void {
+    if (this.destroyed || this.mainBackgroundArt === art) return;
+    this.mainBackgroundArt = art;
+    if (this.lastState) this.render(this.lastState);
+  }
+
+  setResetInFlight(inFlight: boolean): void {
+    if (this.profileResetPending === inFlight) return;
+    this.profileResetPending = inFlight;
+    if (inFlight) this.profileResetArmed = false;
+    if (this.lastState) this.render(this.lastState);
   }
 
   private refreshDebugPanel(): void {
@@ -260,6 +613,7 @@ export class AppView {
   private drawDebugPanel(state: Readonly<AppState>): void {
     if (!DEBUG || !this.debugRoot) return;
     for (const child of [...this.debugRoot.children]) child.destroy();
+    if (shouldShowPartnerUnlockNotice(state)) return;
 
     if (!this.debugPanelVisible) {
       createButton(
@@ -280,9 +634,9 @@ export class AppView {
 
     const panel = createUiNode(this.debugRoot, "DebugPanel");
     panel.setPosition(180, 50);
-    setSize(panel, 338, 900);
+    setSize(panel, 338, 1_100);
     panel.addComponent(UIOpacity).opacity = 238;
-    drawBand(panel, "DebugPanelBackground", 0, 0, 338, 900, COLORS.panelStrong, COLORS.goldMuted);
+    drawBand(panel, "DebugPanelBackground", 0, 0, 338, 1_100, COLORS.panelStrong, COLORS.goldMuted);
 
     addLabel(panel, "开发调试", -78, 418, 190, 34, 19, COLORS.gold, true, 1, HorizontalTextAlignment.LEFT);
     addLabel(panel, "DEV", 123, 418, 62, 28, 14, COLORS.jade, true, 1, HorizontalTextAlignment.RIGHT);
@@ -305,14 +659,8 @@ export class AppView {
       ? `${bootstrap.player.displayName} · ${shortId(bootstrap.player.id)}`
       : "尚未建立角色";
     const version = bootstrap?.config.version ?? "未知";
-    const sync = `${state.syncStatus} · ${formatDebugTimestamp(state.lastSuccessfulSyncAt)}`;
+    const storage = `${state.storageStatus === "saved" ? "已保存" : "仅本次会话"} · ${formatDebugTimestamp(state.lastSavedAt)}`;
     const lifecycle = this.debugLifecycleStatus === "foreground" ? "前台" : "后台";
-    const queueCount = state.pendingLoadoutOperationCount;
-    const queue = queueCount > 0
-      ? `${queueCount} 项待同步`
-      : bootstrap?.offlineSettlement
-        ? "离线结算待确认"
-        : "空";
     const presentation = this.activePresentation
       ? `播放 ${presentationKindName(this.activePresentation.kind)}`
       : this.pendingPresentation
@@ -327,10 +675,10 @@ export class AppView {
     const power = bootstrap ? formatLargeNumber(bootstrap.progress.totalPower) : "-";
 
     const rows: ReadonlyArray<readonly [string, string, Color]> = [
-      ["同步", sync, state.syncStatus === "online" ? COLORS.jade : COLORS.gold],
+      ["存档", storage, state.storageStatus === "saved" ? COLORS.jade : COLORS.red],
       ["生命周期", lifecycle, this.debugLifecycleStatus === "foreground" ? COLORS.jade : COLORS.red],
       ["版本", version, COLORS.text],
-      ["队列", queue, queueCount > 0 ? COLORS.gold : COLORS.textMuted],
+      ["离线收益", bootstrap?.offlineSettlement ? "待确认" : "已处理", COLORS.textMuted],
       ["表现", presentation, this.activePresentation ? COLORS.gold : COLORS.textMuted],
       ["角色", identity, COLORS.text],
       ["修为", progress, COLORS.jade],
@@ -344,10 +692,9 @@ export class AppView {
       addLabel(panel, value, 30, y, 218, 30, 14, valueColor, true, 1, HorizontalTextAlignment.RIGHT);
     });
     const canUseDebugMutation =
-      canRunAuthoritativeMutation(state) &&
+      canRunLocalMutation(state) &&
       state.activeFeature === null &&
-      state.bootstrap?.offlineSettlement === null &&
-      state.pendingLoadoutOperationCount === 0;
+      state.bootstrap?.offlineSettlement === null;
     addLabel(panel, "资源注入", -141, -33, 72, 30, 14, COLORS.textMuted, false, 1, HorizontalTextAlignment.LEFT);
     for (const [target, x, text] of [
       ["fill_experience", -102, "修满本级"],
@@ -376,7 +723,76 @@ export class AppView {
         },
       );
     }
-    addLabel(panel, "离线模拟", -141, -129, 72, 30, 14, COLORS.textMuted, false, 1, HorizontalTextAlignment.LEFT);
+    addLabel(
+      panel,
+      `离线模拟 · 种子：${this.debugDropSeed === null ? "随机" : `固定 ${this.debugDropSeed}`}`,
+      -141,
+      -129,
+      280,
+      30,
+      14,
+      COLORS.textMuted,
+      false,
+      1,
+      HorizontalTextAlignment.LEFT,
+    );
+    const seedInput = createTextInput(
+      panel,
+      this.debugDropSeedDraft,
+      "0-4294967295",
+      -75,
+      -177,
+      120,
+      36,
+      (value) => {
+        this.debugDropSeedDraft = value;
+        this.debugDropSeedError = null;
+      },
+      (value) => this.useFixedDebugDropSeed(value),
+      true,
+      {
+        name: "DebugDropSeedInput",
+        fontSize: 14,
+        inputMode: EditBox.InputMode.NUMERIC,
+        maxLength: 10,
+      },
+    );
+    createButton(
+      panel,
+      "固定",
+      30,
+      -177,
+      66,
+      36,
+      {
+        fill: this.debugDropSeed === null ? COLORS.inkGreenLight : COLORS.inkGreen,
+        stroke: COLORS.goldMuted,
+        fontSize: 14,
+      },
+      () => {
+        this.actions.feedback();
+        this.useFixedDebugDropSeed(seedInput.string);
+      },
+    );
+    createButton(
+      panel,
+      "随机",
+      108,
+      -177,
+      66,
+      36,
+      {
+        fill: this.debugDropSeed === null ? COLORS.inkGreen : COLORS.inkGreenLight,
+        stroke: COLORS.goldMuted,
+        fontSize: 14,
+      },
+      () => {
+        this.actions.feedback();
+        this.debugDropSeed = null;
+        this.debugDropSeedError = null;
+        this.refreshDebugPanel();
+      },
+    );
     for (const [seconds, x, text] of [
       [3_600, -102, "离线 1h"],
       [28_800, 0, "离线 8h"],
@@ -386,7 +802,7 @@ export class AppView {
         panel,
         text,
         x,
-        -177,
+        -225,
         94,
         36,
         {
@@ -397,68 +813,85 @@ export class AppView {
         },
         () => {
           this.actions.feedback();
-          this.actions.simulateOffline(seconds);
+          this.actions.simulateOffline(
+            seconds,
+            this.debugDropSeed ?? undefined,
+          );
         },
       );
     }
-    const networkFaultLabels: Readonly<Record<DebugNetworkFaultMode, string>> = {
-      normal: "正常",
-      delay: "延迟 1s",
-      timeout: "固定超时",
-      failure: "网络失败",
-    };
     addLabel(
       panel,
-      `网络故障 · ${networkFaultLabels[this.debugNetworkFaultMode]}`,
+      this.debugSaveResetArmed
+        ? "再次确认后将永久清除本地存档"
+        : "本地存档重置",
       -141,
-      -225,
+      -273,
       280,
       30,
-      14,
+      13,
       COLORS.textMuted,
       false,
       1,
       HorizontalTextAlignment.LEFT,
     );
-    for (const [mode, x] of [
-      ["normal", -120],
-      ["delay", -40],
-      ["timeout", 40],
-      ["failure", 120],
-    ] as const) {
-      createButton(
-        panel,
-        networkFaultLabels[mode],
-        x,
-        -273,
-        76,
-        36,
-        {
-          fill: mode === this.debugNetworkFaultMode ? COLORS.inkGreen : COLORS.inkGreenLight,
-          stroke: COLORS.goldMuted,
-          fontSize: 13,
-          enabled: true,
-        },
-        () => {
-          this.actions.feedback();
-          this.actions.setNetworkFaultMode(mode);
-        },
-      );
-    }
-    if (state.errorMessage || state.featureMessage) {
+    createButton(
+      panel,
+      this.debugSaveResetArmed ? "再次确认" : "重置本地存档",
+      0,
+      -321,
+      150,
+      36,
+      {
+        fill: this.debugSaveResetArmed ? COLORS.red : COLORS.inkGreenLight,
+        stroke: COLORS.goldMuted,
+        fontSize: 14,
+        enabled: canUseDebugMutation && state.bootstrap !== null,
+      },
+      () => {
+        this.actions.feedback();
+        const playerId = this.lastState?.bootstrap?.player.id;
+        if (!playerId) return;
+        if (!this.debugSaveResetArmed) {
+          this.debugSaveResetArmed = true;
+          this.refreshDebugPanel();
+          return;
+        }
+        this.debugSaveResetArmed = false;
+        this.actions.resetDebugSave(playerId, playerId);
+      },
+    );
+    const debugMessage =
+      state.errorMessage ?? this.debugDropSeedError ?? state.featureMessage;
+    if (debugMessage) {
       addLabel(
         panel,
-        state.errorMessage ?? state.featureMessage ?? "",
+        debugMessage,
         0,
-        -382,
+        -377,
         300,
         32,
         13,
-        state.errorMessage ? COLORS.red : COLORS.jade,
+        state.errorMessage || this.debugDropSeedError ? COLORS.red : COLORS.jade,
         false,
         1,
       );
     }
+  }
+
+  private useFixedDebugDropSeed(value: string): void {
+    if (!DEBUG) return;
+    this.debugDropSeedDraft = value;
+    const seed = parseDebugDropSeed(value);
+    if (seed === null) {
+      this.debugDropSeedError = "掉落种子需为 0 至 4294967295 的整数";
+      this.refreshDebugPanel();
+      return;
+    }
+    this.debugDropSeed = seed;
+    this.debugDropSeedDraft = String(seed);
+    this.debugDropSeedError = null;
+    this.refreshDebugPanel();
   }
 
   enqueueCultivationPresentation(plan: CultivationPresentationPlan): void {
@@ -487,16 +920,22 @@ export class AppView {
   }
 
   destroy(): void {
+    if (this.destroyed) return;
+    this.destroyed = true;
     this.interruptCultivationPresentation(true);
     this.loadingTween?.stop();
     this.loadingTween = null;
+    this.cultivationGrowthTween?.stop();
+    this.cultivationGrowthTween = null;
     this.containerRoot.destroy();
   }
 
-  updateIdleAnimation(): void {
-    if (!this.idleLabel?.isValid) return;
-    this.idleFrame = (this.idleFrame + 1) % 4;
-    this.idleLabel.string = `挂机中${".".repeat(this.idleFrame)}`;
+  updateIdleAnimation(deltaSeconds = 0.5): void {
+    if (this.idleLabel?.isValid) {
+      this.idleFrame = (this.idleFrame + 1) % 4;
+      this.idleLabel.string = `${this.idleMessage}${".".repeat(this.idleFrame)}`;
+    }
+    this.updateCultivationProjection(deltaSeconds);
   }
 
   acceptProfileName(displayName: string): void {
@@ -539,6 +978,7 @@ export class AppView {
     const state = this.lastState;
     if (!plan || !state || this.activePresentation) return;
     if (
+      shouldShowPartnerUnlockNotice(state) ||
       state.activeFeature !== null ||
       state.bootstrap?.offlineSettlement !== null ||
       state.selectedTab !== "cultivation"
@@ -825,19 +1265,14 @@ export class AppView {
 
   private createBlockingPresentationOverlay(name: string, shadeAlpha: number): Node {
     const overlay = createUiNode(this.presentationRoot, name);
-    setSize(overlay, DESIGN_WIDTH, DESIGN_HEIGHT);
+    this.setFullscreenSize(overlay);
     overlay.addComponent(BlockInputEvents);
     overlay.addComponent(UIOpacity);
     const shade = overlay.addComponent(Graphics);
     const shadeColor = color("#030609");
     shadeColor.a = shadeAlpha;
     shade.fillColor = shadeColor;
-    shade.rect(
-      -DESIGN_WIDTH / 2,
-      -DESIGN_HEIGHT / 2,
-      DESIGN_WIDTH,
-      DESIGN_HEIGHT,
-    );
+    this.drawFullscreenRect(shade);
     shade.fill();
     return overlay;
   }
@@ -854,7 +1289,7 @@ export class AppView {
   private drawBackdrop(): void {
     const graphics = graphicsNode(this.root, "Backdrop", 0, 0);
     graphics.fillColor = COLORS.background;
-    graphics.rect(-DESIGN_WIDTH / 2, -DESIGN_HEIGHT / 2, DESIGN_WIDTH, DESIGN_HEIGHT);
+    this.drawFullscreenRect(graphics);
     graphics.fill();
 
     graphics.fillColor = COLORS.backgroundBlue;
@@ -952,7 +1387,7 @@ export class AppView {
       this.root,
       "重新连接",
       0,
-      -105,
+      this.safeModalButtonY(-105, 72),
       248,
       72,
       { fill: COLORS.inkGreenLight, stroke: COLORS.gold, text: COLORS.text },
@@ -965,23 +1400,70 @@ export class AppView {
 
   private drawHeader(state: Readonly<AppState>): void {
     const bootstrap = state.bootstrap!;
-    drawBand(this.root, "Header", 0, 594, 750, 122, COLORS.panelStrong, COLORS.goldMuted);
-
-    drawAvatarPortrait(
+    const { centerX, width, headerCenterY } = this.chromeGeometry;
+    const left = centerX - width / 2;
+    const right = centerX + width / 2;
+    drawBand(
       this.root,
-      bootstrap.player.avatarVariant,
-      -337,
-      594,
+      "Header",
+      centerX,
+      headerCenterY,
+      width,
+      154,
+      COLORS.panelStrong,
+      COLORS.goldMuted,
     );
+
+    const avatarButton = createUiNode(this.root, "HeaderAvatarButton");
+    avatarButton.setPosition(left + 58, headerCenterY + 3);
+    setSize(avatarButton, 108, 142);
+    const avatarFrame = avatarButton.addComponent(Graphics);
+    avatarFrame.fillColor = COLORS.black;
+    avatarFrame.circle(0, 7, 50);
+    avatarFrame.fill();
+    avatarFrame.strokeColor = COLORS.gold;
+    avatarFrame.lineWidth = 3;
+    avatarFrame.circle(0, 7, 52);
+    avatarFrame.stroke();
+    drawAvatarPortrait(
+      avatarButton,
+      bootstrap.player.avatarVariant,
+      0,
+      7,
+      1.48,
+    );
+    const avatarClick = avatarButton.addComponent(Button);
+    avatarClick.transition = Button.Transition.SCALE;
+    avatarClick.zoomScale = 0.95;
+    avatarButton.on(Button.EventType.CLICK, () => {
+      this.actions.feedback();
+      this.actions.openFeature("profile");
+    });
+    addLabel(
+      avatarButton,
+      "档案",
+      0,
+      -55,
+      92,
+      24,
+      14,
+      COLORS.goldBright,
+      true,
+      1,
+      HorizontalTextAlignment.CENTER,
+      "fixed",
+    );
+
+    const profileX = left + 184;
 
     addLabel(
       this.root,
       bootstrap.player.displayName,
-      -213,
-      606,
-      188,
-      42,
-      24,
+      profileX,
+      headerCenterY + 42,
+      150,
+      34,
+      22,
       COLORS.text,
       true,
       1,
@@ -990,207 +1472,628 @@ export class AppView {
     addLabel(
       this.root,
       bootstrap.progress.title,
-      -213,
-      568,
-      188,
-      34,
-      18,
-      COLORS.jade,
+      profileX,
+      headerCenterY + 8,
+      150,
+      28,
+      17,
+      COLORS.goldBright,
       false,
       1,
       HorizontalTextAlignment.LEFT,
     );
 
-    createButton(
-      this.root,
-      "档案",
-      -65,
-      594,
-      82,
-      46,
-      { fill: COLORS.inkGreenLight, stroke: COLORS.goldMuted, fontSize: 16 },
-      () => {
-        this.actions.feedback();
-        this.actions.openFeature("profile");
-      },
-    );
-
-    addLabel(this.root, "总战力", 214, 616, 250, 30, 17, COLORS.textMuted);
     addLabel(
       this.root,
-      formatLargeNumber(bootstrap.progress.totalPower),
-      214,
-      578,
-      250,
-      48,
-      32,
-      COLORS.gold,
+      `Lv.${bootstrap.progress.level}`,
+      profileX,
+      headerCenterY - 24,
+      150,
+      26,
+      16,
+      COLORS.text,
       true,
+      1,
+      HorizontalTextAlignment.LEFT,
+      "fixed",
+    );
+    drawProgress(
+      this.root,
+      profileX,
+      headerCenterY - 52,
+      148,
+      8,
+      ratio(bootstrap.progress.experience, bootstrap.progress.requiredExperience),
     );
 
-    const divider = graphicsNode(this.root, "HeaderDivider", 18, 594);
+    drawPowerBanner(
+      this.root,
+      centerX + 54,
+      headerCenterY - 17,
+      formatLargeNumber(bootstrap.progress.totalPower),
+    );
+    drawCurrencyChip(
+      this.root,
+      right - 72,
+      headerCenterY + 38,
+      "灵石",
+      formatLargeNumber(bootstrap.wallet.spiritStone),
+      COLORS.goldBright,
+    );
+    drawCurrencyChip(
+      this.root,
+      right - 72,
+      headerCenterY - 25,
+      "仙玉",
+      formatLargeNumber(bootstrap.wallet.immortalJade),
+      COLORS.cyan,
+    );
+
+    const divider = graphicsNode(
+      this.root,
+      "HeaderDivider",
+      centerX,
+      headerCenterY - 76,
+    );
     divider.strokeColor = COLORS.goldMuted;
     divider.lineWidth = 1;
-    divider.moveTo(0, -36);
-    divider.lineTo(0, 36);
+    divider.moveTo(-width / 2, 0);
+    divider.lineTo(width / 2, 0);
     divider.stroke();
   }
 
   private drawSyncStatus(state: Readonly<AppState>): void {
-    if (state.syncStatus === "online") return;
-
-    const reconnecting = state.syncStatus === "reconnecting";
-    const queueStatus = state.pendingLoadoutOperationCount > 0
-      ? ` · 待同步 ${state.pendingLoadoutOperationCount} 项`
-      : "";
+    if (state.storageStatus === "saved") return;
     drawBand(
       this.root,
       "SyncStatus",
-      0,
-      520,
-      750,
+      this.chromeGeometry.centerX,
+      this.chromeGeometry.statusBannerCenterY,
+      this.chromeGeometry.width,
       30,
-      reconnecting ? COLORS.inkGreenLight : COLORS.red,
+      COLORS.red,
     );
     addLabel(
       this.root,
-      reconnecting
-        ? `正在重连 · ${formatLastSync(state.lastSuccessfulSyncAt)}${queueStatus}`
-        : `离线数据 · ${formatLastSync(state.lastSuccessfulSyncAt)}${queueStatus}`,
-      0,
-      520,
-      710,
+      "本地存档不可用，本次进度仅保留到退出游戏",
+      this.chromeGeometry.centerX,
+      this.chromeGeometry.statusBannerCenterY,
+      Math.max(120, this.chromeGeometry.width - 40),
       24,
       15,
       COLORS.text,
       true,
+      1,
+      HorizontalTextAlignment.CENTER,
+      "fixed",
     );
   }
 
   private drawCultivation(state: Readonly<AppState>): void {
     const data = state.bootstrap!;
-    const mutationsEnabled = state.syncStatus === "online";
-    this.drawCultivationScene();
-    this.idleLabel = addLabel(
-      this.root,
-      "挂机中",
-      0,
-      57,
-      320,
-      42,
-      21,
-      COLORS.jade,
+    if (this.hasMainBackground("cultivation")) {
+      this.drawCultivationReferenceHotspots(state);
+      return;
+    }
+    const mutationsEnabled = canRunLocalMutation(state);
+    const projection = this.resolveCultivationProjection(state);
+    const progressDisplay = getCultivationProgressDisplay(
+      projection.progress,
+      data.config.maxLevel,
     );
-
-    const expRatio = ratio(data.progress.experience, data.progress.requiredExperience);
-    drawBand(this.root, "ExperienceBand", 0, -25, 686, 82, COLORS.panel, COLORS.goldMuted);
+    const pendingTasks = data.newcomerTasks.filter(
+      (task) => task.completedAt === null,
+    ).length;
+    const pendingHarvest = data.harvestChest.pendingCount;
+    this.drawCultivationScene();
+    drawOrnatePanel(this.root, "RealmBanner", 0, 452, 408, 78);
     addLabel(
       this.root,
-      `修为 ${formatLargeNumber(data.progress.experience)} / ${formatLargeNumber(data.progress.requiredExperience)}`,
+      `当前境界 · ${data.progress.title}`,
       0,
-      -2,
-      630,
+      468,
+      372,
+      32,
+      21,
+      COLORS.text,
+      true,
+      1,
+      HorizontalTextAlignment.CENTER,
+      "fixed",
+    );
+    addLabel(
+      this.root,
+      `修炼效率 ${formatLargeNumber(data.progress.experiencePerSecond)}/秒`,
+      0,
+      438,
+      372,
+      26,
+      16,
+      COLORS.green,
+      true,
+      1,
+      HorizontalTextAlignment.CENTER,
+      "fixed",
+    );
+
+    const sideActions: ReadonlyArray<{
+      readonly label: string;
+      readonly x: number;
+      readonly y: number;
+      readonly icon: number;
+      readonly badge: number;
+      readonly feature: FeaturePanel;
+    }> = [
+      { label: "仙途", x: -322, y: 360, icon: 4, badge: 0, feature: "profile" },
+      { label: "任务", x: -322, y: 255, icon: 3, badge: pendingTasks, feature: "tasks" },
+      { label: "行囊", x: -322, y: 150, icon: 2, badge: 0, feature: "inventory" },
+      { label: "功法", x: 322, y: 360, icon: 0, badge: 0, feature: "techniques" },
+      { label: "法宝", x: 322, y: 255, icon: 1, badge: 0, feature: "equipment" },
+      { label: "收获", x: 322, y: 150, icon: 5, badge: pendingHarvest, feature: "inventory" },
+    ];
+    for (const action of sideActions) {
+      createSideFeatureButton(
+        this.root,
+        action.label,
+        action.x,
+        action.y,
+        action.icon,
+        action.badge,
+        () => {
+          this.actions.feedback();
+          this.actions.openFeature(action.feature);
+        },
+      );
+    }
+
+    this.idleMessage = progressDisplay.idleMessage;
+    this.idleLabel = addLabel(
+      this.root,
+      this.idleMessage,
+      0,
+      310,
+      330,
+      48,
+      27,
+      COLORS.goldBright,
+      true,
+      1,
+      HorizontalTextAlignment.CENTER,
+      "fixed",
+    );
+
+    drawOrnatePanel(this.root, "CultivationStatus", 0, -172, 422, 286);
+    addLabel(
+      this.root,
+      `${progressDisplay.rateLabel} · ${formatLargeNumber(data.progress.experiencePerSecond)}/秒`,
+      0,
+      -58,
+      376,
+      34,
+      20,
+      COLORS.goldBright,
+      true,
+      1,
+      HorizontalTextAlignment.CENTER,
+      "fixed",
+    );
+    this.cultivationExperienceLabel = addLabel(
+      this.root,
+      progressDisplay.experienceLine,
+      0,
+      -108,
+      374,
       30,
       18,
-      COLORS.text,
+      progressDisplay.isVersionCap ? COLORS.gold : COLORS.text,
+      progressDisplay.isVersionCap,
+      1,
+      HorizontalTextAlignment.CENTER,
+      "fixed",
     );
-    drawProgress(this.root, 0, -46, 620, 14, expRatio);
+    if (progressDisplay.reserveLine) {
+      this.cultivationReserveLabel = addLabel(
+        this.root,
+        progressDisplay.reserveLine,
+        0,
+        -146,
+        370,
+        28,
+        16,
+        COLORS.jade,
+        true,
+        1,
+        HorizontalTextAlignment.CENTER,
+        "fixed",
+      );
+    } else {
+      this.cultivationProgressGraphic = drawProgress(
+        this.root,
+        0,
+        -145,
+        354,
+        11,
+        progressDisplay.progressRatio ?? 0,
+      );
+    }
+    if (mutationsEnabled && data.progress.status !== "breakthrough_ready") {
+      this.cultivationGrowthLabel = addLabel(
+        this.root,
+        liveCultivationGainText(
+          data.progress.status,
+          projection.gainedSinceAnchor,
+        ),
+        0,
+        -174,
+        370,
+        26,
+        14,
+        COLORS.green,
+        true,
+        1,
+        HorizontalTextAlignment.CENTER,
+        "fixed",
+      );
+    }
+    this.lastCultivationProjectionSecond = projection.elapsedWholeSeconds;
+    this.lastCultivationProjectionGain = projection.gainedSinceAnchor;
 
-    const stats = [
-      { label: "等级", value: `Lv.${data.progress.level}`, color: COLORS.text },
-      {
-        label: "每秒经验",
-        value: `${formatLargeNumber(data.progress.experiencePerSecond)}/秒`,
-        color: COLORS.jade,
-      },
-      {
-        label: "每分钟灵石",
-        value: `${formatLargeNumber(data.progress.spiritStonePerMinute)}/分`,
-        color: COLORS.gold,
-      },
-    ];
-    stats.forEach((stat, index) => {
-      const x = -232 + index * 232;
-      drawBand(this.root, `Stat${index}`, x, -137, 208, 102, COLORS.panelStrong);
-      addLabel(this.root, stat.label, x, -116, 178, 28, 16, COLORS.textMuted);
-      addLabel(this.root, stat.value, x, -157, 184, 42, 23, stat.color, true);
-    });
+    addLabel(
+      this.root,
+      `灵石收益  ${formatLargeNumber(data.progress.spiritStonePerMinute)}/分`,
+      0,
+      -205,
+      372,
+      30,
+      18,
+      COLORS.cyan,
+      true,
+      1,
+      HorizontalTextAlignment.CENTER,
+      "fixed",
+    );
 
     if (data.progress.status === "breakthrough_ready") {
       createButton(
         this.root,
-        "突破至下一境界",
+        "突破境界",
         0,
-        -238,
-        420,
-        66,
+        -267,
+        286,
+        62,
         {
-          fill: COLORS.red,
+          fill: COLORS.goldMuted,
           stroke: COLORS.gold,
-          text: COLORS.text,
-          fontSize: 23,
+          text: COLORS.black,
+          fontSize: 25,
           enabled: mutationsEnabled,
         },
         () => this.actions.breakthrough(),
       );
     } else {
-      addLabel(
+      createButton(
         this.root,
-        `当前境界修炼进度 ${Math.floor(expRatio * 100)}%`,
+        "修炼进行中",
         0,
-        -238,
-        520,
-        36,
-        18,
+        -267,
+        286,
+        62,
+        {
+          fill: COLORS.panel,
+          stroke: COLORS.goldMuted,
+          text: COLORS.textMuted,
+          fontSize: 23,
+          enabled: false,
+        },
+        () => undefined,
+      );
+    }
+    if (progressDisplay.footer) {
+      this.cultivationFooterLabel = addLabel(
+        this.root,
+        progressDisplay.footer,
+        0,
+        -224,
+        374,
+        28,
+        15,
         COLORS.textMuted,
+        false,
+        1,
+        HorizontalTextAlignment.CENTER,
+        "fixed",
       );
     }
 
+    const featureY =
+      this.chromeGeometry.navigationCenterY -
+      this.chromeGeometry.bodyOffsetY +
+      140;
+    drawBand(
+      this.root,
+      "FeatureRail",
+      0,
+      featureY,
+      750,
+      106,
+      withAlpha(COLORS.panelStrong, 246),
+      COLORS.goldMuted,
+    );
     const features: Array<{ label: string; feature: FeaturePanel }> = [
       { label: "功法", feature: "techniques" },
       { label: "法宝", feature: "equipment" },
-      { label: "背包", feature: "inventory" },
+      { label: "行囊", feature: "inventory" },
       { label: "任务", feature: "tasks" },
+      { label: "档案", feature: "profile" },
     ];
     features.forEach((item, index) => {
-      const x = -270 + index * 180;
-      createFeatureButton(this.root, item.label, x, -365, index, () => {
+      const x = -292 + index * 146;
+      createFeatureButton(this.root, item.label, x, featureY, index, () => {
         this.actions.feedback();
         this.actions.openFeature(item.feature);
       });
     });
   }
 
+  private drawCultivationReferenceHotspots(
+    state: Readonly<AppState>,
+  ): void {
+    const openFeature = (feature: FeaturePanel): void => {
+      this.actions.feedback();
+      this.actions.openFeature(feature);
+    };
+
+    createHotspot(this.root, "ReferenceAvatar", -300, 591, 120, 150, () =>
+      openFeature("profile"),
+    );
+    createHotspot(this.root, "ReferencePower", 40, 572, 330, 76, () =>
+      openFeature("profile"),
+    );
+    createHotspot(this.root, "ReferenceBoost", 319, 573, 82, 92, () =>
+      openFeature("techniques"),
+    );
+
+    drawBand(
+      this.root,
+      "ReferenceRightRailMask",
+      319,
+      268,
+      112,
+      440,
+      COLORS.panelStrong,
+      COLORS.goldMuted,
+    );
+    drawBand(
+      this.root,
+      "ReferenceBottomNavigationMask",
+      0,
+      -520,
+      DESIGN_VIEWPORT_WIDTH,
+      294,
+      COLORS.panelStrong,
+      COLORS.goldMuted,
+    );
+
+    const sideHotspots: ReadonlyArray<{
+      readonly name: string;
+      readonly x: number;
+      readonly y: number;
+      readonly feature: FeaturePanel;
+    }> = [
+      { name: "Journey", x: -315, y: 431, feature: "profile" },
+      { name: "Tasks", x: -315, y: 329, feature: "tasks" },
+      { name: "Achievements", x: -315, y: 226, feature: "profile" },
+      { name: "Mail", x: -315, y: 123, feature: "tasks" },
+    ];
+    for (const hotspot of sideHotspots) {
+      createHotspot(
+        this.root,
+        `Reference${hotspot.name}`,
+        hotspot.x,
+        hotspot.y,
+        98,
+        98,
+        () => openFeature(hotspot.feature),
+      );
+    }
+
+    createHotspot(this.root, "ReferenceAutoCultivation", -306, -302, 126, 130, () =>
+      openFeature("profile"),
+    );
+    createHotspot(this.root, "ReferenceOnlineReward", 306, -302, 126, 130, () =>
+      openFeature("inventory"),
+    );
+    createHotspot(this.root, "ReferenceBreakthrough", 0, -307, 282, 88, () => {
+      if (!canRunLocalMutation(state)) return;
+      this.actions.feedback();
+      this.actions.breakthrough();
+    });
+
+    this.drawRightNavigation(this.root, state.selectedTab, 319, 430);
+    this.drawBottomFeatureRail(this.root, 0, -580);
+  }
+
+  private updateCultivationProjectionAnchor(
+    state: Readonly<AppState>,
+  ): void {
+    const data = state.bootstrap;
+    if (state.phase !== "ready" || !data) {
+      this.cultivationProjectionAnchor = null;
+      return;
+    }
+
+    const progress = data.progress;
+    const settlementKey = liveCultivationSettlementKey(progress);
+    const key = [
+      data.account.id,
+      data.player.id,
+      state.lastSavedAt ?? "",
+      settlementKey,
+      progress.experiencePerSecond,
+      progress.experienceBonusBp,
+    ].join(":");
+    if (this.cultivationProjectionAnchor?.key === key) return;
+    const elapsedMilliseconds = initialLiveCultivationElapsed(
+      state.lastSavedAt,
+      progress.settledAt,
+      true,
+    );
+    if (elapsedMilliseconds === null) {
+      this.cultivationProjectionAnchor = null;
+      return;
+    }
+    this.cultivationProjectionAnchor = {
+      accountId: data.account.id,
+      playerId: data.player.id,
+      key,
+      settlementKey,
+      progress: { ...progress },
+      elapsedMilliseconds,
+    };
+  }
+
+  private resolveCultivationProjection(
+    state: Readonly<AppState>,
+  ) {
+    const data = state.bootstrap!;
+    const anchor = this.cultivationProjectionAnchor;
+    return projectLiveCultivation({
+      progress: anchor?.progress ?? data.progress,
+      elapsedMilliseconds: anchor?.elapsedMilliseconds ?? 0,
+      online: anchor !== null,
+    });
+  }
+
+  private updateCultivationProjection(deltaSeconds: number): void {
+    const state = this.lastState;
+    if (
+      !state?.bootstrap ||
+      state.phase !== "ready" ||
+      !this.cultivationProjectionAnchor
+    ) {
+      return;
+    }
+
+    this.cultivationProjectionAnchor.elapsedMilliseconds =
+      advanceLiveCultivationElapsed(
+        this.cultivationProjectionAnchor.elapsedMilliseconds,
+        deltaSeconds,
+        this.debugLifecycleStatus === "foreground",
+      );
+    if (state.selectedTab !== "cultivation") return;
+
+    const projection = this.resolveCultivationProjection(state);
+    if (projection.elapsedWholeSeconds === this.lastCultivationProjectionSecond) {
+      return;
+    }
+    this.lastCultivationProjectionSecond = projection.elapsedWholeSeconds;
+    const gainChanged =
+      projection.gainedSinceAnchor !== this.lastCultivationProjectionGain;
+    this.lastCultivationProjectionGain = projection.gainedSinceAnchor;
+    const display = getCultivationProgressDisplay(
+      projection.progress,
+      state.bootstrap.config.maxLevel,
+    );
+    if (this.cultivationExperienceLabel?.isValid) {
+      this.cultivationExperienceLabel.string = display.experienceLine;
+    }
+    if (this.cultivationReserveLabel?.isValid && display.reserveLine) {
+      this.cultivationReserveLabel.string = display.reserveLine;
+    }
+    if (this.cultivationGrowthLabel?.isValid) {
+      this.cultivationGrowthLabel.string = liveCultivationGainText(
+        state.bootstrap.progress.status,
+        projection.gainedSinceAnchor,
+      );
+      if (gainChanged && projection.gainedSinceAnchor !== "0") {
+        this.pulseCultivationGrowth();
+      }
+    }
+    if (this.cultivationProgressGraphic?.isValid && display.progressRatio !== null) {
+      redrawProgress(this.cultivationProgressGraphic, 620, 10, display.progressRatio);
+    }
+    if (this.cultivationFooterLabel?.isValid && display.footer) {
+      this.cultivationFooterLabel.string = display.footer;
+    }
+  }
+
+  private pulseCultivationGrowth(): void {
+    const node = this.cultivationGrowthLabel?.node;
+    if (!node?.isValid) return;
+
+    this.cultivationGrowthTween?.stop();
+    node.setScale(1.08, 1.08, 1);
+    const activeTween = tween(node)
+      .update(0.24, (_target, progress) => {
+        const scale = 1.08 - 0.08 * progress;
+        node.setScale(scale, scale, 1);
+      })
+      .call(() => {
+        node.setScale(1, 1, 1);
+        this.cultivationGrowthTween = null;
+      });
+    this.cultivationGrowthTween = activeTween;
+    activeTween.start();
+  }
+
   private drawCultivationScene(): void {
-    drawBand(this.root, "CultivationScene", 0, 292, 686, 472, COLORS.inkGreen);
+    const hasBackground = this.hasMainBackground("cultivation");
+    if (hasBackground) return;
+    drawBand(
+      this.root,
+      "CultivationScene",
+      0,
+      292,
+      686,
+      472,
+      hasBackground ? withAlpha(COLORS.inkGreen, 138) : COLORS.inkGreen,
+    );
     const art = graphicsNode(this.root, "CultivationArt", 0, 292);
 
-    art.fillColor = color("#d5d0b7");
+    art.fillColor = hasBackground
+      ? withAlpha(color("#d5d0b7"), 170)
+      : color("#d5d0b7");
     art.circle(222, 126, 58);
     art.fill();
-    art.fillColor = COLORS.inkGreenLight;
+    art.fillColor = hasBackground
+      ? withAlpha(COLORS.inkGreenLight, 160)
+      : COLORS.inkGreenLight;
     art.circle(244, 140, 58);
     art.fill();
 
-    drawMountainLayer(art, -180, color("#285447"), [
-      [-343, 0],
-      [-240, 112],
-      [-155, 38],
-      [-58, 150],
-      [52, 45],
-      [158, 123],
-      [245, 30],
-      [343, 82],
-    ]);
-    drawMountainLayer(art, -218, color("#102a27"), [
-      [-343, 10],
-      [-223, 75],
-      [-112, 22],
-      [15, 94],
-      [128, 16],
-      [248, 72],
-      [343, 26],
-    ]);
+    drawMountainLayer(
+      art,
+      -180,
+      hasBackground
+        ? withAlpha(color("#285447"), 136)
+        : color("#285447"),
+      [
+        [-343, 0],
+        [-240, 112],
+        [-155, 38],
+        [-58, 150],
+        [52, 45],
+        [158, 123],
+        [245, 30],
+        [343, 82],
+      ],
+    );
+    drawMountainLayer(
+      art,
+      -218,
+      hasBackground
+        ? withAlpha(color("#102a27"), 168)
+        : color("#102a27"),
+      [
+        [-343, 10],
+        [-223, 75],
+        [-112, 22],
+        [15, 94],
+        [128, 16],
+        [248, 72],
+        [343, 26],
+      ],
+    );
 
     art.fillColor = COLORS.black;
     art.circle(0, 88, 38);
@@ -1234,67 +2137,132 @@ export class AppView {
 
   private drawPartner(state: Readonly<AppState>): void {
     if (!state.bootstrap!.unlocks.partner) {
-      this.drawLockedPage("伴侣", "筑基后开启", "修为达到 Lv.11 即可踏入此境");
+      this.drawLockedPage(
+        "伴侣",
+        "筑基后开启",
+        "修为达到 Lv.11 即可踏入此境",
+        "partner",
+      );
       return;
     }
 
-    drawBand(this.root, "PartnerEmpty", 0, 130, 686, 690, COLORS.inkGreen);
-    addLabel(this.root, "小师妹", 0, 245, 520, 58, 35, COLORS.gold, true);
-    addLabel(this.root, "亲密度 0 / 1000", 0, 145, 480, 40, 20, COLORS.text);
-    drawProgress(this.root, 0, 105, 460, 14, 0);
-    addLabel(this.root, "初识", 0, 45, 280, 40, 22, COLORS.jade);
+    drawBand(
+      this.root,
+      "PartnerEmpty",
+      -56,
+      130,
+      566,
+      690,
+      this.hasMainBackground("partner")
+        ? withAlpha(COLORS.inkGreen, 150)
+        : COLORS.inkGreen,
+    );
+    addLabel(this.root, "小师妹", -56, 245, 500, 58, 35, COLORS.gold, true);
+    addLabel(this.root, "亲密度 0 / 1000", -56, 145, 450, 40, 20, COLORS.text);
+    drawProgress(this.root, -56, 105, 430, 14, 0);
+    addLabel(this.root, "初识", -56, 45, 280, 40, 22, COLORS.jade);
   }
 
   private drawRanking(): void {
+    const hasBackground = this.hasMainBackground("ranking");
     const tabs = ["战力", "等级", "财富", "洞府", "伴侣"];
     tabs.forEach((tab, index) => {
-      const x = -280 + index * 140;
+      const x = -280 + index * 112;
       drawBand(
         this.root,
         `RankTab${index}`,
         x,
         474,
-        124,
+        102,
         54,
-        index === 0 ? COLORS.inkGreenLight : COLORS.panel,
+        hasBackground
+          ? withAlpha(index === 0 ? COLORS.inkGreenLight : COLORS.panel, 224)
+          : index === 0 ? COLORS.inkGreenLight : COLORS.panel,
         index === 0 ? COLORS.gold : undefined,
       );
-      addLabel(this.root, tab, x, 474, 112, 34, 18, index === 0 ? COLORS.gold : COLORS.textMuted);
+      addLabel(this.root, tab, x, 474, 94, 34, 17, index === 0 ? COLORS.gold : COLORS.textMuted);
     });
 
-    drawBand(this.root, "RankingList", 0, 100, 686, 650, COLORS.panel);
+    drawBand(
+      this.root,
+      "RankingList",
+      -56,
+      100,
+      566,
+      650,
+      hasBackground ? withAlpha(COLORS.panel, 208) : COLORS.panel,
+    );
     [1, 2, 3, 4, 5].forEach((rank, index) => {
       const y = 355 - index * 105;
       addLabel(this.root, String(rank), -285, y, 62, 38, 21, rank <= 3 ? COLORS.gold : COLORS.text);
-      addLabel(this.root, "暂无道友", -90, y, 260, 38, 20, COLORS.textMuted);
-      addLabel(this.root, "--", 245, y, 120, 38, 20, COLORS.textMuted);
-      const line = graphicsNode(this.root, `RankLine${rank}`, 0, y - 48);
+      addLabel(this.root, "暂无道友", -110, y, 240, 38, 20, COLORS.textMuted);
+      addLabel(this.root, "--", 180, y, 100, 38, 20, COLORS.textMuted);
+      const line = graphicsNode(this.root, `RankLine${rank}`, -56, y - 48);
       line.strokeColor = color("#2b3c46");
       line.lineWidth = 1;
-      line.moveTo(-310, 0);
-      line.lineTo(310, 0);
+      line.moveTo(-255, 0);
+      line.lineTo(255, 0);
       line.stroke();
     });
-    drawBand(this.root, "MyRank", 0, -275, 686, 86, COLORS.inkGreenLight, COLORS.goldMuted);
-    addLabel(this.root, "我的排名", -210, -275, 180, 40, 20, COLORS.text);
-    addLabel(this.root, "--", 245, -275, 100, 40, 22, COLORS.gold, true);
+    drawBand(
+      this.root,
+      "MyRank",
+      -56,
+      -275,
+      566,
+      86,
+      hasBackground ? withAlpha(COLORS.inkGreenLight, 228) : COLORS.inkGreenLight,
+      COLORS.goldMuted,
+    );
+    addLabel(this.root, "我的排名", -220, -275, 180, 40, 20, COLORS.text);
+    addLabel(this.root, "--", 180, -275, 100, 40, 22, COLORS.gold, true);
   }
 
   private drawCave(state: Readonly<AppState>): void {
     if (!state.bootstrap!.unlocks.cave) {
-      this.drawLockedPage("洞府", "筑基后开启", "修为达到 Lv.11 即可开辟洞府");
+      this.drawLockedPage(
+        "洞府",
+        "筑基后开启",
+        "修为达到 Lv.11 即可开辟洞府",
+        "cave",
+      );
       return;
     }
 
-    drawBand(this.root, "CaveEmpty", 0, 120, 686, 720, COLORS.inkGreen);
-    addLabel(this.root, `${state.bootstrap!.player.displayName}的洞府`, 0, 420, 560, 54, 31, COLORS.gold, true);
-    addLabel(this.root, "繁荣度 0", 0, 355, 340, 36, 19, COLORS.jade);
+    drawBand(
+      this.root,
+      "CaveEmpty",
+      -56,
+      120,
+      566,
+      720,
+      this.hasMainBackground("cave")
+        ? withAlpha(COLORS.inkGreen, 142)
+        : COLORS.inkGreen,
+    );
+    addLabel(this.root, `${state.bootstrap!.player.displayName}的洞府`, -56, 420, 500, 54, 31, COLORS.gold, true);
+    addLabel(this.root, "繁荣度 0", -56, 355, 340, 36, 19, COLORS.jade);
     this.drawCaveBuildings();
   }
 
-  private drawLockedPage(title: string, condition: string, detail: string): void {
-    drawBand(this.root, `${title}Locked`, 0, 115, 686, 735, COLORS.panel);
-    const lock = graphicsNode(this.root, "Lock", 0, 190);
+  private drawLockedPage(
+    title: string,
+    condition: string,
+    detail: string,
+    backgroundKey: MainBackgroundKey,
+  ): void {
+    drawBand(
+      this.root,
+      `${title}Locked`,
+      -56,
+      115,
+      566,
+      735,
+      this.hasMainBackground(backgroundKey)
+        ? withAlpha(COLORS.panel, 218)
+        : COLORS.panel,
+    );
+    const lock = graphicsNode(this.root, "Lock", -56, 190);
     lock.strokeColor = COLORS.goldMuted;
     lock.lineWidth = 8;
     lock.arc(0, 30, 58, Math.PI, 0, false);
@@ -1308,19 +2276,22 @@ export class AppView {
     lock.rect(-5, -55, 10, 35);
     lock.fill();
 
-    addLabel(this.root, title, 0, 57, 420, 58, 34, COLORS.text, true);
-    addLabel(this.root, condition, 0, -18, 520, 44, 24, COLORS.gold);
-    addLabel(this.root, detail, 0, -75, 560, 40, 18, COLORS.textMuted);
+    addLabel(this.root, title, -56, 57, 420, 58, 34, COLORS.text, true);
+    addLabel(this.root, condition, -56, -18, 500, 44, 24, COLORS.gold);
+    addLabel(this.root, detail, -56, -75, 520, 40, 18, COLORS.textMuted);
   }
 
   private drawCaveBuildings(): void {
+    const panelColor = this.hasMainBackground("cave")
+      ? withAlpha(COLORS.panelStrong, 220)
+      : COLORS.panelStrong;
     const buildings = ["灵田", "炼丹房", "炼器室", "闭关室", "聚灵阵"];
     buildings.forEach((name, index) => {
       const column = index % 2;
       const row = Math.floor(index / 2);
-      const x = column === 0 ? -170 : 170;
+      const x = column === 0 ? -205 : 95;
       const y = 225 - row * 145;
-      drawBand(this.root, `Building${name}`, x, y, 292, 112, COLORS.panelStrong, COLORS.goldMuted);
+      drawBand(this.root, `Building${name}`, x, y, 292, 112, panelColor, COLORS.goldMuted);
       addLabel(this.root, name, x - 54, y + 13, 160, 34, 20, COLORS.text, true);
       addLabel(this.root, "Lv.1", x - 54, y - 23, 160, 28, 16, COLORS.jade);
       addLabel(this.root, "+", x + 95, y, 42, 42, 27, COLORS.gold, true);
@@ -1328,45 +2299,92 @@ export class AppView {
   }
 
   private drawNavigation(selected: MainTab): void {
-    drawBand(this.root, "Navigation", 0, -608, 750, 118, COLORS.panelStrong, COLORS.goldMuted);
-    const items: Array<{ id: MainTab; label: string }> = [
+    const { centerX, width, headerCenterY } = this.chromeGeometry;
+    this.drawRightNavigation(
+      this.contentRoot,
+      selected,
+      centerX + width / 2 - 56,
+      headerCenterY - 160,
+    );
+  }
+
+  private drawRightNavigation(
+    parent: Node,
+    selected: MainTab,
+    x: number,
+    topY: number,
+  ): void {
+    const items: ReadonlyArray<{ readonly id: MainTab; readonly label: string }> = [
       { id: "cultivation", label: "修炼" },
       { id: "partner", label: "伴侣" },
       { id: "ranking", label: "排行" },
       { id: "cave", label: "洞府" },
     ];
-
+    drawBand(
+      parent,
+      "RightNavigation",
+      x,
+      topY - 162,
+      112,
+      438,
+      COLORS.panelStrong,
+      COLORS.goldMuted,
+    );
     items.forEach((item, index) => {
-      const x = -281 + index * 187.5;
-      const node = createUiNode(this.root, `Tab-${item.id}`);
-      node.setPosition(x, -608);
-      setSize(node, 178, 108);
-      const button = node.addComponent(Button);
-      button.transition = Button.Transition.SCALE;
-      button.zoomScale = 0.94;
-      node.on(Button.EventType.CLICK, () => {
-        this.actions.feedback();
-        this.actions.selectTab(item.id);
-      });
-
-      drawTabIcon(node, item.id, selected === item.id);
-      addLabel(
-        node,
+      createMainTabButton(
+        parent,
+        item.id,
         item.label,
-        0,
-        -34,
-        120,
-        30,
-        17,
-        selected === item.id ? COLORS.gold : COLORS.textMuted,
+        x,
+        topY - index * 108,
         selected === item.id,
+        () => {
+          this.actions.feedback();
+          this.actions.selectTab(item.id);
+        },
       );
-      if (selected === item.id) {
-        const marker = graphicsNode(node, "Selected", 0, -52);
-        marker.fillColor = COLORS.gold;
-        marker.roundRect(-25, -2, 50, 4, 2);
-        marker.fill();
-      }
+    });
+  }
+
+  private drawBottomFeatureRail(
+    parent: Node,
+    centerX: number,
+    y: number,
+  ): void {
+    drawBand(
+      parent,
+      "BottomFeatureRail",
+      centerX,
+      y,
+      DESIGN_VIEWPORT_WIDTH,
+      174,
+      COLORS.panelStrong,
+      COLORS.goldMuted,
+    );
+    const features: ReadonlyArray<{
+      readonly label: string;
+      readonly feature: FeaturePanel;
+    }> = [
+      { label: "功法", feature: "techniques" },
+      { label: "法宝", feature: "equipment" },
+      { label: "炼丹", feature: "inventory" },
+      { label: "炼器", feature: "inventory" },
+      { label: "灵宠", feature: "profile" },
+      { label: "宗门", feature: "tasks" },
+      { label: "历练", feature: "tasks" },
+    ];
+    features.forEach((item, index) => {
+      createBottomFeatureButton(
+        parent,
+        item.label,
+        centerX - 321 + index * 107,
+        y,
+        index,
+        () => {
+          this.actions.feedback();
+          this.actions.openFeature(item.feature);
+        },
+      );
     });
   }
 
@@ -1375,18 +2393,13 @@ export class AppView {
     feature: FeaturePanel,
   ): void {
     const overlay = createUiNode(this.root, `FeaturePanel-${feature}`);
-    setSize(overlay, DESIGN_WIDTH, DESIGN_HEIGHT);
+    this.setFullscreenSize(overlay);
     overlay.addComponent(BlockInputEvents);
     const shade = overlay.addComponent(Graphics);
     const shadeColor = color("#05080c");
     shadeColor.a = 210;
     shade.fillColor = shadeColor;
-    shade.rect(
-      -DESIGN_WIDTH / 2,
-      -DESIGN_HEIGHT / 2,
-      DESIGN_WIDTH,
-      DESIGN_HEIGHT,
-    );
+    this.drawFullscreenRect(shade);
     shade.fill();
 
     drawBand(overlay, "FeaturePanelBody", 0, 0, 700, 1060, COLORS.panelStrong, COLORS.goldMuted);
@@ -1402,7 +2415,7 @@ export class AppView {
       overlay,
       "返回",
       276,
-      468,
+      this.safeModalButtonY(468, 54),
       112,
       54,
       { fill: COLORS.panel, stroke: COLORS.goldMuted, fontSize: 18 },
@@ -1430,42 +2443,13 @@ export class AppView {
         17,
         COLORS.gold,
       );
-    } else if (state.syncStatus !== "online") {
-      const loadoutPanel = feature === "techniques" || feature === "equipment";
-      const queueStatus = state.pendingLoadoutOperationCount > 0
-        ? ` · 待同步 ${state.pendingLoadoutOperationCount} 项`
-        : "";
-      drawBand(
-        overlay,
-        "FeatureSyncStatus",
-        0,
-        -473,
-        620,
-        54,
-        state.syncStatus === "reconnecting" ? COLORS.inkGreenLight : COLORS.red,
-      );
-      addLabel(
-        overlay,
-        state.syncStatus === "reconnecting"
-          ? `正在重连 · ${formatLastSync(state.lastSuccessfulSyncAt)}${queueStatus}`
-          : loadoutPanel
-            ? `离线装备队列${queueStatus || " · 0 项"}`
-            : `离线数据 · ${formatLastSync(state.lastSuccessfulSyncAt)} · 操作暂不可用`,
-        0,
-        -473,
-        590,
-        38,
-        16,
-        COLORS.text,
-        true,
-      );
     }
   }
 
   private drawProfilePanel(overlay: Node, state: Readonly<AppState>): void {
     const data = state.bootstrap!;
     const player = data.player;
-    const mutationsEnabled = state.syncStatus === "online";
+    const mutationsEnabled = canRunLocalMutation(state);
 
     drawBand(overlay, "AvatarProfile", 0, 302, 620, 220, COLORS.inkGreen);
     addLabel(
@@ -1659,6 +2643,114 @@ export class AppView {
       15,
       COLORS.textMuted,
     );
+
+    const resetDisplay = getProfileResetControlDisplay(
+      this.profileResetArmed,
+      mutationsEnabled,
+      this.profileResetPending,
+    );
+    drawBand(overlay, "AccountProfile", 0, -290, 620, 238, COLORS.panel);
+    addLabel(
+      overlay,
+      "本地存档",
+      -245,
+      -205,
+      120,
+      38,
+      22,
+      COLORS.gold,
+      true,
+      1,
+      HorizontalTextAlignment.LEFT,
+    );
+    addLabel(
+      overlay,
+      `当前角色：${player.displayName} · 仅保存在本机`,
+      48,
+      -205,
+      450,
+      36,
+      18,
+      COLORS.text,
+      false,
+      1,
+      HorizontalTextAlignment.LEFT,
+    );
+    addLabel(
+      overlay,
+      resetDisplay.description,
+      0,
+      -274,
+      540,
+      56,
+      16,
+      this.profileResetArmed ? COLORS.gold : COLORS.textMuted,
+      false,
+      2,
+      HorizontalTextAlignment.CENTER,
+      "fixed",
+    );
+    if (resetDisplay.cancelLabel) {
+      createButton(
+        overlay,
+        resetDisplay.cancelLabel,
+        -150,
+        -359,
+        260,
+        56,
+        { fill: COLORS.panelStrong, stroke: COLORS.goldMuted, fontSize: 18 },
+        () => this.cancelProfileReset(),
+      );
+      createButton(
+        overlay,
+        resetDisplay.primaryLabel,
+        150,
+        -359,
+        260,
+        56,
+        {
+          fill: COLORS.red,
+          stroke: COLORS.goldMuted,
+          fontSize: 18,
+          enabled: resetDisplay.enabled,
+        },
+        () => this.confirmProfileReset(),
+      );
+    } else {
+      createButton(
+        overlay,
+        resetDisplay.primaryLabel,
+        0,
+        -359,
+        300,
+        56,
+        {
+          fill: COLORS.red,
+          stroke: COLORS.goldMuted,
+          fontSize: 18,
+          enabled: resetDisplay.enabled,
+        },
+        () => this.armProfileReset(),
+      );
+    }
+  }
+
+  private armProfileReset(): void {
+    this.actions.feedback();
+    this.profileResetArmed = true;
+    if (this.lastState) this.render(this.lastState);
+  }
+
+  private cancelProfileReset(): void {
+    this.actions.feedback();
+    this.profileResetArmed = false;
+    if (this.lastState) this.render(this.lastState);
+  }
+
+  private confirmProfileReset(): void {
+    this.profileResetArmed = false;
+    this.actions.feedback();
+    this.actions.resetProgress();
   }
 
   private selectAvatarDraft(avatarVariant: ChosenAvatarVariant): void {
@@ -1671,10 +2763,13 @@ export class AppView {
     this.profileAvatarDraft = null;
     this.profileNameDraft = null;
     this.profileNameSource = null;
+    this.profileResetArmed = false;
   }
 
   private clearPlayerUiState(): void {
     this.clearProfileDraft();
+    this.profileResetPending = false;
+    this.debugSaveResetArmed = false;
     this.pages.inventoryStacks = 0;
     this.pages.harvestChest = 0;
     this.pages.techniques = 0;
@@ -1683,7 +2778,7 @@ export class AppView {
 
   private drawInventoryPanel(overlay: Node, state: Readonly<AppState>): void {
     const data = state.bootstrap!;
-    const mutationsEnabled = state.syncStatus === "online";
+    const mutationsEnabled = canRunLocalMutation(state);
     const usedSlots = data.inventory.stacks.length + data.equipment.length;
     const stackWindow = this.pageWindow(
       "inventoryStacks",
@@ -1932,20 +3027,21 @@ export class AppView {
 
   private drawTechniquePanel(overlay: Node, state: Readonly<AppState>): void {
     const techniques = state.bootstrap!.techniques;
-    const mutationsEnabled = canRunLoadoutMutation(state);
-    const queueStatus = state.pendingLoadoutOperationCount > 0
-      ? ` · 待同步 ${state.pendingLoadoutOperationCount}`
-      : "";
+    const mutationsEnabled = canRunLocalMutation(state);
     const techniqueWindow = this.pageWindow("techniques", techniques.length, 8);
     addLabel(
       overlay,
-      `功法 ${techniques.length} 本 · 装备战力 +${formatLargeNumber(state.bootstrap!.progress.loadoutFixedPower)} · 修炼 +${formatBasisPoints(state.bootstrap!.progress.experienceBonusBp)}${queueStatus}`,
+      `功法 ${techniques.length} 本 · 装备战力 +${formatLargeNumber(state.bootstrap!.progress.loadoutFixedPower)} · 修炼 +${formatBasisPoints(state.bootstrap!.progress.experienceBonusBp)}`,
       0,
       393,
       590,
-      40,
-      19,
+      50,
+      17,
       COLORS.jade,
+      false,
+      2,
+      HorizontalTextAlignment.CENTER,
+      "fixed",
     );
     const slots = [
       { id: "mind", label: "心法" },
@@ -1956,16 +3052,24 @@ export class AppView {
     slots.forEach((slot, index) => {
       const x = -225 + index * 150;
       const equipped = techniques.find((technique) => technique.equippedSlot === slot.id);
+      const labelLayout = getTechniqueSlotLabelLayout(
+        slot.label,
+        equipped?.displayName ?? null,
+      );
       drawBand(overlay, `TechniqueSlot-${slot.id}`, x, 320, 132, 64, COLORS.panel, COLORS.goldMuted);
       addLabel(
         overlay,
-        `${slot.label}\n${equipped?.displayName ?? "未装备"}`,
+        labelLayout.text,
         x,
         320,
         116,
         54,
         15,
         equipped ? qualityColor(equipped.quality) : COLORS.textMuted,
+        false,
+        labelLayout.maxLines,
+        HorizontalTextAlignment.CENTER,
+        labelLayout.sizing,
       );
     });
     if (techniques.length === 0) {
@@ -2039,14 +3143,11 @@ export class AppView {
 
   private drawEquipmentPanel(overlay: Node, state: Readonly<AppState>): void {
     const equipment = state.bootstrap!.equipment;
-    const mutationsEnabled = canRunLoadoutMutation(state);
-    const queueStatus = state.pendingLoadoutOperationCount > 0
-      ? ` · 待同步 ${state.pendingLoadoutOperationCount}`
-      : "";
+    const mutationsEnabled = canRunLocalMutation(state);
     const equipmentWindow = this.pageWindow("equipment", equipment.length, 7);
     addLabel(
       overlay,
-      `法宝 ${equipment.length} 件 · 装备影响战力与挂机效率${queueStatus}`,
+      `法宝 ${equipment.length} 件 · 装备影响战力与挂机效率`,
       0,
       393,
       590,
@@ -2194,24 +3295,25 @@ export class AppView {
   }
 
   private drawTaskPanel(overlay: Node, state: Readonly<AppState>): void {
-    const tasks = state.bootstrap!.newcomerTasks;
+    const tasks = state.bootstrap!.newcomerTasks.slice(0, 3);
     drawBand(overlay, "TaskIntro", 0, 340, 600, 110, COLORS.inkGreen);
     addLabel(overlay, "新手修行录", -170, 358, 240, 38, 22, COLORS.gold, true);
-    addLabel(overlay, "完成目标后奖励由服务端自动发放", 25, 319, 500, 32, 16, COLORS.textMuted);
+    addLabel(overlay, "里程碑与奖励会自动写入本地存档", 25, 319, 500, 32, 16, COLORS.textMuted);
     if (tasks.length === 0) {
-      addLabel(overlay, "当前目标：修炼至 Lv.8", 0, 190, 520, 44, 21, COLORS.text);
+      addLabel(overlay, "暂无修行任务", 0, 190, 520, 44, 21, COLORS.text);
       return;
     }
     tasks.forEach((task, index) => {
-      const y = 225 - index * 82;
-      drawBand(overlay, `Task-${task.taskConfigId}`, 0, y, 600, 68, COLORS.panel);
+      const display = getNewcomerTaskDisplay(task);
+      const y = 205 - index * 166;
+      drawBand(overlay, `Task-${index}`, 0, y, 600, 148, COLORS.panel);
       addLabel(
         overlay,
-        task.taskConfigId === "newcomer.reach_level_8" ? "修炼至 Lv.8" : task.taskConfigId,
-        -160,
-        y,
-        300,
-        34,
+        display.title,
+        -145,
+        y + 46,
+        280,
+        32,
         18,
         COLORS.text,
         true,
@@ -2220,34 +3322,72 @@ export class AppView {
       );
       addLabel(
         overlay,
-        task.claimedAt ? "已完成 · 突破丹已入囊" : `进度 ${task.progress}`,
-        155,
-        y,
-        270,
+        display.statusText,
+        205,
+        y + 46,
+        130,
         32,
         16,
-        task.claimedAt ? COLORS.gold : COLORS.jade,
+        display.completed ? COLORS.gold : COLORS.jade,
+        true,
+        1,
+        HorizontalTextAlignment.RIGHT,
+        "fixed",
+      );
+      addLabel(
+        overlay,
+        display.description,
+        0,
+        y + 9,
+        540,
+        30,
+        15,
+        COLORS.textMuted,
+        false,
+        1,
+        HorizontalTextAlignment.LEFT,
+        "fixed",
+      );
+      addLabel(
+        overlay,
+        display.progressText,
+        -165,
+        y - 38,
+        210,
+        30,
+        15,
+        display.completed ? COLORS.textMuted : COLORS.jade,
+        true,
+        1,
+        HorizontalTextAlignment.LEFT,
+        "fixed",
+      );
+      addLabel(
+        overlay,
+        display.rewardText,
+        112,
+        y - 38,
+        316,
+        30,
+        15,
+        display.claimed ? COLORS.gold : COLORS.textMuted,
         false,
         1,
         HorizontalTextAlignment.RIGHT,
+        "fixed",
       );
     });
   }
 
   private drawOfflineSettlement(settlement: OfflineSettlementSummary): void {
     const overlay = createUiNode(this.root, "OfflineSettlementModal");
-    setSize(overlay, DESIGN_WIDTH, DESIGN_HEIGHT);
+    this.setFullscreenSize(overlay);
     overlay.addComponent(BlockInputEvents);
     const shade = overlay.addComponent(Graphics);
     const shadeColor = color("#05080c");
     shadeColor.a = 220;
     shade.fillColor = shadeColor;
-    shade.rect(
-      -DESIGN_WIDTH / 2,
-      -DESIGN_HEIGHT / 2,
-      DESIGN_WIDTH,
-      DESIGN_HEIGHT,
-    );
+    this.drawFullscreenRect(shade);
     shade.fill();
 
     drawBand(overlay, "OfflinePanel", 0, 15, 626, 630, COLORS.panelStrong, COLORS.gold);
@@ -2335,7 +3475,7 @@ export class AppView {
       overlay,
       "收下奖励",
       0,
-      -242,
+      this.safeModalButtonY(-242, 68),
       330,
       68,
       { fill: COLORS.inkGreenLight, stroke: COLORS.gold, text: COLORS.text },
@@ -2343,6 +3483,75 @@ export class AppView {
         this.actions.feedback();
         this.actions.dismissOfflineSettlement();
       },
+    );
+  }
+
+  private drawPartnerUnlockNotice(state: Readonly<AppState>): void {
+    const overlay = createUiNode(this.root, "PartnerUnlockNoticeModal");
+    this.setFullscreenSize(overlay);
+    overlay.addComponent(BlockInputEvents);
+    const shade = overlay.addComponent(Graphics);
+    const shadeColor = color("#05080c");
+    shadeColor.a = 220;
+    shade.fillColor = shadeColor;
+    this.drawFullscreenRect(shade);
+    shade.fill();
+
+    drawBand(
+      overlay,
+      "PartnerUnlockPanel",
+      0,
+      40,
+      626,
+      520,
+      COLORS.panelStrong,
+      COLORS.gold,
+    );
+    addLabel(overlay, "红尘缘启", 0, 205, 500, 62, 36, COLORS.gold, true);
+    addLabel(
+      overlay,
+      "道友修为已达筑基，可寻觅道侣共修仙途！",
+      0,
+      112,
+      520,
+      78,
+      21,
+      COLORS.text,
+      true,
+      2,
+    );
+    drawBand(
+      overlay,
+      "PartnerUnlocked",
+      0,
+      18,
+      470,
+      72,
+      COLORS.inkGreen,
+      COLORS.goldMuted,
+    );
+    addLabel(overlay, "伴侣入口已开启", 0, 18, 420, 38, 20, COLORS.jade, true);
+    if (state.featureMessage) {
+      addLabel(
+        overlay,
+        state.featureMessage,
+        0,
+        -62,
+        500,
+        34,
+        16,
+        COLORS.textMuted,
+      );
+    }
+    createButton(
+      overlay,
+      "知晓",
+      0,
+      this.safeModalButtonY(-145, 68),
+      330,
+      68,
+      { fill: COLORS.inkGreenLight, stroke: COLORS.gold, text: COLORS.text },
+      () => this.actions.markPartnerUnlockNoticeSeen(),
     );
   }
 }
@@ -2465,6 +3674,7 @@ function addLabel(
   bold = false,
   maxLines = 1,
   horizontalAlign = HorizontalTextAlignment.CENTER,
+  sizing: LabelSizing = "shrink",
 ): Label {
   const node = createUiNode(parent, `Label-${text.slice(0, 12)}`);
   node.setPosition(x, y);
@@ -2476,7 +3686,9 @@ function addLabel(
   label.color = textColor;
   label.horizontalAlign = horizontalAlign;
   label.verticalAlign = VerticalTextAlignment.CENTER;
-  label.overflow = Label.Overflow.SHRINK;
+  label.enableWrapText = maxLines > 1;
+  label.overflow =
+    sizing === "fixed" ? Label.Overflow.CLAMP : Label.Overflow.SHRINK;
   label.isBold = bold;
   return label;
 }
@@ -2520,6 +3732,9 @@ function createButton(
     style.fontSize ?? 21,
     enabled ? (style.text ?? COLORS.text) : COLORS.textMuted,
     true,
+    1,
+    HorizontalTextAlignment.CENTER,
+    "fixed",
   );
   return node;
 }
@@ -2535,8 +3750,14 @@ function createTextInput(
   onChange: (value: string) => void,
   onSubmit: (value: string) => void,
   enabled = true,
+  options: {
+    name?: string;
+    fontSize?: number;
+    inputMode?: EditBox["inputMode"];
+    maxLength?: number;
+  } = {},
 ): EditBox {
-  const node = createUiNode(parent, "ProfileNameInput");
+  const node = createUiNode(parent, options.name ?? "ProfileNameInput");
   node.setPosition(x, y);
   setSize(node, width, height);
 
@@ -2556,7 +3777,7 @@ function createTextInput(
     0,
     width - 32,
     height - 12,
-    19,
+    options.fontSize ?? 19,
     COLORS.text,
     false,
     1,
@@ -2569,7 +3790,7 @@ function createTextInput(
     0,
     width - 32,
     height - 12,
-    19,
+    options.fontSize ?? 19,
     COLORS.textMuted,
     false,
     1,
@@ -2579,10 +3800,10 @@ function createTextInput(
   editBox.enabled = enabled;
   editBox.textLabel = textLabel;
   editBox.placeholderLabel = placeholderLabel;
-  editBox.inputMode = EditBox.InputMode.SINGLE_LINE;
+  editBox.inputMode = options.inputMode ?? EditBox.InputMode.SINGLE_LINE;
   editBox.inputFlag = EditBox.InputFlag.DEFAULT;
   editBox.returnType = EditBox.KeyboardReturnType.DONE;
-  editBox.maxLength = 12;
+  editBox.maxLength = options.maxLength ?? 12;
   editBox.placeholder = placeholder;
   editBox.string = value;
   node.on(EditBox.EventType.TEXT_CHANGED, (box: EditBox) => {
@@ -2600,16 +3821,14 @@ function createTextInput(
   return editBox;
 }
 
-function formatLastSync(value: string | null): string {
-  if (!value) return "尚未记录同步时间";
-  const date = new Date(value);
-  if (!Number.isFinite(date.getTime())) return "同步时间未知";
-  const pad = (part: number): string => (part < 10 ? `0${part}` : String(part));
-  return `上次同步 ${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+function parseDebugDropSeed(value: string): number | null {
+  if (!/^\d{1,10}$/.test(value)) return null;
+  const seed = Number(value);
+  return Number.isSafeInteger(seed) && seed <= MAX_DEBUG_DROP_SEED ? seed : null;
 }
 
 function formatDebugTimestamp(value: string | null): string {
-  if (!value) return "未同步";
+  if (!value) return "尚未保存";
   const timestamp = Date.parse(value);
   if (!Number.isFinite(timestamp)) return "时间未知";
   return value.replace("T", " ").replace(/\.\d{3}Z$/, "Z");
@@ -2685,51 +3904,276 @@ function createFeatureButton(
   iconIndex: number,
   onClick: () => void,
 ): void {
-  const node = createButton(
-    parent,
-    text,
-    x,
-    y,
-    150,
-    94,
-    { fill: COLORS.panelStrong, stroke: COLORS.goldMuted, text: COLORS.text, fontSize: 18 },
-    onClick,
-  );
-  const icon = graphicsNode(node, "FeatureIcon", 0, 22);
-  icon.strokeColor = iconIndex % 2 === 0 ? COLORS.gold : COLORS.jade;
-  icon.lineWidth = 3;
-  if (iconIndex === 0) {
-    icon.moveTo(-17, 8);
-    icon.lineTo(17, 8);
-    icon.moveTo(-17, -3);
-    icon.lineTo(17, -3);
-    icon.moveTo(-17, -14);
-    icon.lineTo(17, -14);
-  } else if (iconIndex === 1) {
-    icon.circle(0, -4, 18);
-    icon.moveTo(-8, 13);
-    icon.lineTo(0, 22);
-    icon.lineTo(8, 13);
-  } else if (iconIndex === 2) {
-    icon.roundRect(-20, -16, 40, 34, 4);
-    icon.moveTo(-10, 18);
-    icon.lineTo(-6, 25);
-    icon.lineTo(6, 25);
-    icon.lineTo(10, 18);
-  } else {
-    icon.circle(0, 2, 18);
-    icon.moveTo(0, 2);
-    icon.lineTo(0, 14);
-    icon.moveTo(0, 2);
-    icon.lineTo(10, -5);
-  }
-  icon.stroke();
+  const node = createUiNode(parent, `Feature-${text}`);
+  node.setPosition(x, y);
+  setSize(node, 138, 100);
+  const background = node.addComponent(Graphics);
+  background.fillColor = withAlpha(COLORS.panel, 238);
+  background.roundRect(-67, -48, 134, 96, 5);
+  background.fill();
+  background.strokeColor = COLORS.goldMuted;
+  background.lineWidth = 1;
+  background.roundRect(-67, -48, 134, 96, 5);
+  background.stroke();
+  const button = node.addComponent(Button);
+  button.transition = Button.Transition.SCALE;
+  button.zoomScale = 0.95;
+  node.on(Button.EventType.CLICK, onClick);
 
-  const textNode = node.getChildByName(`Label-${text}`);
-  textNode?.setPosition(0, -25);
+  const medallion = graphicsNode(node, "FeatureMedallion", 0, 17);
+  medallion.fillColor = COLORS.black;
+  medallion.circle(0, 0, 27);
+  medallion.fill();
+  medallion.strokeColor = iconIndex % 2 === 0 ? COLORS.gold : COLORS.cyan;
+  medallion.lineWidth = 2;
+  medallion.circle(0, 0, 27);
+  medallion.stroke();
+  drawFeatureGlyph(medallion, iconIndex, 0.76);
+  addLabel(
+    node,
+    text,
+    0,
+    -31,
+    116,
+    30,
+    18,
+    COLORS.text,
+    true,
+    1,
+    HorizontalTextAlignment.CENTER,
+    "fixed",
+  );
 }
 
-function drawTabIcon(parent: Node, tab: MainTab, selected: boolean): void {
+function createHotspot(
+  parent: Node,
+  name: string,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  onClick: () => void,
+): Node {
+  const node = createUiNode(parent, name);
+  node.setPosition(x, y);
+  setSize(node, width, height);
+  const button = node.addComponent(Button);
+  button.transition = Button.Transition.NONE;
+  node.on(Button.EventType.CLICK, onClick);
+  return node;
+}
+
+function createMainTabButton(
+  parent: Node,
+  tab: MainTab,
+  text: string,
+  x: number,
+  y: number,
+  selected: boolean,
+  onClick: () => void,
+): void {
+  const node = createUiNode(parent, `RightTab-${tab}`);
+  node.setPosition(x, y);
+  setSize(node, 104, 102);
+  const plate = node.addComponent(Graphics);
+  plate.fillColor = selected ? COLORS.goldMuted : COLORS.panel;
+  plate.roundRect(-50, -49, 100, 98, 6);
+  plate.fill();
+  plate.strokeColor = selected ? COLORS.goldBright : COLORS.goldMuted;
+  plate.lineWidth = selected ? 2 : 1;
+  plate.roundRect(-50, -49, 100, 98, 6);
+  plate.stroke();
+  const button = node.addComponent(Button);
+  button.transition = Button.Transition.SCALE;
+  button.zoomScale = 0.93;
+  node.on(Button.EventType.CLICK, onClick);
+
+  const icon = drawTabIcon(node, tab, selected);
+  icon.node.setPosition(0, 17);
+  icon.node.setScale(0.78, 0.78, 1);
+  addLabel(
+    node,
+    text,
+    0,
+    -31,
+    90,
+    26,
+    18,
+    selected ? COLORS.goldBright : COLORS.text,
+    true,
+    1,
+    HorizontalTextAlignment.CENTER,
+    "fixed",
+  );
+}
+
+function createBottomFeatureButton(
+  parent: Node,
+  text: string,
+  x: number,
+  y: number,
+  iconIndex: number,
+  onClick: () => void,
+): void {
+  const node = createUiNode(parent, `BottomFeature-${text}`);
+  node.setPosition(x, y);
+  setSize(node, 104, 166);
+  const plate = node.addComponent(Graphics);
+  plate.fillColor = COLORS.panel;
+  plate.roundRect(-50, -79, 100, 158, 5);
+  plate.fill();
+  plate.strokeColor = COLORS.goldMuted;
+  plate.lineWidth = 1;
+  plate.roundRect(-50, -79, 100, 158, 5);
+  plate.stroke();
+  const button = node.addComponent(Button);
+  button.transition = Button.Transition.SCALE;
+  button.zoomScale = 0.94;
+  node.on(Button.EventType.CLICK, onClick);
+
+  const medallion = graphicsNode(node, "BottomFeatureMedallion", 0, 27);
+  medallion.fillColor = COLORS.black;
+  medallion.circle(0, 0, 34);
+  medallion.fill();
+  medallion.strokeColor = iconIndex % 2 === 0 ? COLORS.gold : COLORS.cyan;
+  medallion.lineWidth = 2;
+  medallion.circle(0, 0, 34);
+  medallion.stroke();
+  drawFeatureGlyph(medallion, iconIndex, 0.82);
+  addLabel(
+    node,
+    text,
+    0,
+    -43,
+    92,
+    32,
+    19,
+    COLORS.text,
+    true,
+    1,
+    HorizontalTextAlignment.CENTER,
+    "fixed",
+  );
+}
+
+function createSideFeatureButton(
+  parent: Node,
+  text: string,
+  x: number,
+  y: number,
+  iconIndex: number,
+  badge: number,
+  onClick: () => void,
+): void {
+  const node = createUiNode(parent, `SideFeature-${text}`);
+  node.setPosition(x, y);
+  setSize(node, 86, 96);
+  const plate = node.addComponent(Graphics);
+  plate.fillColor = withAlpha(COLORS.panelStrong, 246);
+  plate.circle(0, 12, 35);
+  plate.fill();
+  plate.strokeColor = COLORS.goldMuted;
+  plate.lineWidth = 2;
+  plate.circle(0, 12, 37);
+  plate.stroke();
+  const button = node.addComponent(Button);
+  button.transition = Button.Transition.SCALE;
+  button.zoomScale = 0.92;
+  node.on(Button.EventType.CLICK, onClick);
+  const glyph = graphicsNode(node, "SideFeatureGlyph", 0, 14);
+  drawFeatureGlyph(glyph, iconIndex, 0.95);
+  addLabel(
+    node,
+    text,
+    0,
+    -34,
+    84,
+    28,
+    17,
+    COLORS.goldBright,
+    true,
+    1,
+    HorizontalTextAlignment.CENTER,
+    "fixed",
+  );
+  if (badge > 0) {
+    const marker = graphicsNode(node, "Badge", 29, 39);
+    marker.fillColor = COLORS.red;
+    marker.circle(0, 0, 11);
+    marker.fill();
+    marker.strokeColor = COLORS.goldBright;
+    marker.lineWidth = 1;
+    marker.circle(0, 0, 11);
+    marker.stroke();
+    addLabel(
+      node,
+      badge > 9 ? "9+" : String(badge),
+      29,
+      39,
+      22,
+      20,
+      11,
+      COLORS.text,
+      true,
+      1,
+      HorizontalTextAlignment.CENTER,
+      "fixed",
+    );
+  }
+}
+
+function drawFeatureGlyph(
+  graphic: Graphics,
+  iconIndex: number,
+  scale: number,
+): void {
+  graphic.strokeColor = iconIndex % 2 === 0 ? COLORS.goldBright : COLORS.cyan;
+  graphic.fillColor = iconIndex % 2 === 0 ? COLORS.goldBright : COLORS.cyan;
+  graphic.lineWidth = 3;
+  const point = (value: number): number => value * scale;
+  if (iconIndex === 0) {
+    graphic.moveTo(point(-18), point(10));
+    graphic.lineTo(point(18), point(10));
+    graphic.moveTo(point(-18), point(-2));
+    graphic.lineTo(point(18), point(-2));
+    graphic.moveTo(point(-18), point(-14));
+    graphic.lineTo(point(18), point(-14));
+  } else if (iconIndex === 1) {
+    graphic.circle(0, point(-3), point(18));
+    graphic.moveTo(point(-9), point(14));
+    graphic.lineTo(0, point(24));
+    graphic.lineTo(point(9), point(14));
+  } else if (iconIndex === 2) {
+    graphic.roundRect(point(-20), point(-16), point(40), point(34), point(4));
+    graphic.moveTo(point(-10), point(18));
+    graphic.lineTo(point(-6), point(25));
+    graphic.lineTo(point(6), point(25));
+    graphic.lineTo(point(10), point(18));
+  } else if (iconIndex === 3) {
+    graphic.circle(0, point(2), point(18));
+    graphic.moveTo(0, point(2));
+    graphic.lineTo(0, point(14));
+    graphic.moveTo(0, point(2));
+    graphic.lineTo(point(10), point(-5));
+  } else if (iconIndex === 4) {
+    graphic.moveTo(point(-20), point(-16));
+    graphic.lineTo(0, point(22));
+    graphic.lineTo(point(20), point(-16));
+    graphic.moveTo(point(-13), point(-4));
+    graphic.lineTo(point(13), point(-4));
+  } else {
+    graphic.moveTo(point(-18), point(12));
+    graphic.lineTo(point(-8), point(-15));
+    graphic.lineTo(point(8), point(-15));
+    graphic.lineTo(point(18), point(12));
+    graphic.close();
+    graphic.moveTo(point(-12), point(3));
+    graphic.lineTo(point(12), point(3));
+  }
+  graphic.stroke();
+}
+
+function drawTabIcon(parent: Node, tab: MainTab, selected: boolean): Graphics {
   const graphic = graphicsNode(parent, "TabIcon", 0, 20);
   graphic.strokeColor = selected ? COLORS.gold : COLORS.textMuted;
   graphic.fillColor = selected ? COLORS.gold : COLORS.textMuted;
@@ -2744,7 +4188,7 @@ function drawTabIcon(parent: Node, tab: MainTab, selected: boolean): void {
     graphic.moveTo(-20, -20);
     graphic.lineTo(-9, -16);
     graphic.stroke();
-    return;
+    return graphic;
   }
   if (tab === "partner") {
     graphic.circle(-10, 10, 8);
@@ -2753,7 +4197,7 @@ function drawTabIcon(parent: Node, tab: MainTab, selected: boolean): void {
     graphic.arc(-10, -13, 15, 0, Math.PI, false);
     graphic.arc(11, -13, 15, 0, Math.PI, false);
     graphic.stroke();
-    return;
+    return graphic;
   }
   if (tab === "ranking") {
     graphic.moveTo(-18, 18);
@@ -2766,7 +4210,7 @@ function drawTabIcon(parent: Node, tab: MainTab, selected: boolean): void {
     graphic.moveTo(-12, -25);
     graphic.lineTo(12, -25);
     graphic.stroke();
-    return;
+    return graphic;
   }
 
   graphic.moveTo(-25, -20);
@@ -2776,6 +4220,125 @@ function drawTabIcon(parent: Node, tab: MainTab, selected: boolean): void {
   graphic.lineTo(28, -20);
   graphic.close();
   graphic.stroke();
+  return graphic;
+}
+
+function drawPowerBanner(
+  parent: Node,
+  x: number,
+  y: number,
+  value: string,
+): void {
+  const banner = graphicsNode(parent, "PowerBanner", x, y);
+  banner.fillColor = withAlpha(COLORS.red, 238);
+  banner.moveTo(-150, 0);
+  banner.lineTo(-128, 31);
+  banner.lineTo(118, 31);
+  banner.lineTo(150, 0);
+  banner.lineTo(118, -31);
+  banner.lineTo(-128, -31);
+  banner.close();
+  banner.fill();
+  banner.strokeColor = COLORS.goldBright;
+  banner.lineWidth = 2;
+  banner.moveTo(-142, 0);
+  banner.lineTo(-121, 25);
+  banner.lineTo(112, 25);
+  banner.lineTo(140, 0);
+  banner.lineTo(112, -25);
+  banner.lineTo(-121, -25);
+  banner.close();
+  banner.stroke();
+  addLabel(
+    parent,
+    `战力 ${value}`,
+    x,
+    y,
+    258,
+    48,
+    29,
+    COLORS.goldBright,
+    true,
+    1,
+    HorizontalTextAlignment.CENTER,
+    "fixed",
+  );
+}
+
+function drawCurrencyChip(
+  parent: Node,
+  x: number,
+  y: number,
+  label: string,
+  value: string,
+  accent: Color,
+): void {
+  drawBand(
+    parent,
+    `Currency-${label}`,
+    x,
+    y,
+    138,
+    44,
+    COLORS.black,
+    COLORS.goldMuted,
+  );
+  const icon = graphicsNode(parent, `CurrencyIcon-${label}`, x - 47, y);
+  icon.fillColor = accent;
+  icon.circle(0, 0, 11);
+  icon.fill();
+  icon.strokeColor = COLORS.text;
+  icon.lineWidth = 1;
+  icon.circle(0, 0, 11);
+  icon.stroke();
+  addLabel(
+    parent,
+    value,
+    x + 17,
+    y,
+    82,
+    30,
+    17,
+    COLORS.text,
+    true,
+    1,
+    HorizontalTextAlignment.RIGHT,
+    "fixed",
+  );
+}
+
+function drawOrnatePanel(
+  parent: Node,
+  name: string,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+): void {
+  drawBand(
+    parent,
+    name,
+    x,
+    y,
+    width,
+    height,
+    withAlpha(COLORS.panelStrong, 239),
+    COLORS.goldMuted,
+  );
+  const ornaments = graphicsNode(parent, `${name}-Ornaments`, x, y);
+  ornaments.strokeColor = COLORS.goldMuted;
+  ornaments.lineWidth = 2;
+  const halfWidth = width / 2;
+  const halfHeight = height / 2;
+  for (const direction of [-1, 1]) {
+    ornaments.moveTo(direction * (halfWidth - 10), halfHeight - 12);
+    ornaments.lineTo(direction * (halfWidth - 28), halfHeight - 12);
+    ornaments.lineTo(direction * (halfWidth - 38), halfHeight - 2);
+    ornaments.moveTo(direction * (halfWidth - 10), -halfHeight + 12);
+    ornaments.lineTo(direction * (halfWidth - 28), -halfHeight + 12);
+    ornaments.lineTo(direction * (halfWidth - 38), -halfHeight + 2);
+  }
+  ornaments.stroke();
 }
 
 function drawBand(
@@ -2859,8 +4422,19 @@ function drawProgress(
   width: number,
   height: number,
   progress: number,
-): void {
+): Graphics {
   const graphic = graphicsNode(parent, "Progress", x, y);
+  redrawProgress(graphic, width, height, progress);
+  return graphic;
+}
+
+function redrawProgress(
+  graphic: Graphics,
+  width: number,
+  height: number,
+  progress: number,
+): void {
+  graphic.clear();
   graphic.fillColor = COLORS.black;
   graphic.roundRect(-width / 2, -height / 2, width, height, height / 2);
   graphic.fill();
@@ -2868,6 +4442,13 @@ function drawProgress(
   graphic.fillColor = COLORS.gold;
   graphic.roundRect(-width / 2, -height / 2, fillWidth, height, height / 2);
   graphic.fill();
+}
+
+function liveCultivationGainText(
+  status: BootstrapSnapshot["progress"]["status"],
+  gainedSinceAnchor: string,
+): string {
+  return `${status === "version_cap" ? "本轮积蓄" : "本轮修炼"} +${formatLargeNumber(gainedSinceAnchor)}`;
 }
 
 function drawMountainLayer(
@@ -2951,6 +4532,10 @@ function formatBasisPoints(value: number): string {
 
 function color(hex: string): Color {
   return new Color().fromHEX(hex);
+}
+
+function withAlpha(source: Color, alpha: number): Color {
+  return new Color(source.r, source.g, source.b, alpha);
 }
 
 function ratio(value: string, total: string): number {

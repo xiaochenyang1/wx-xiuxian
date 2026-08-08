@@ -13,33 +13,9 @@ concurrency:
 
 jobs:
   verify:
-    name: Typecheck, test, and build
+    name: Typecheck, audit, and verify config
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-
-    services:
-      postgres:
-        image: postgres:17-alpine
-        env:
-          POSTGRES_DB: cultivation_diary
-          POSTGRES_USER: cultivation
-          POSTGRES_PASSWORD: cultivation_dev
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U cultivation -d cultivation_diary"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 10
-      redis:
-        image: redis:7.4-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 10
+    timeout-minutes: 15
 
     steps:
       - name: Check out repository
@@ -66,6 +42,7 @@ jobs:
           mkdir -p temp/declarations
           cat > temp/declarations/cc.env.d.ts <<'TYPES'
           declare module "cc/env" {
+            export const DEBUG: boolean;
             export const DEV: boolean;
             export const WECHAT: boolean;
           }
@@ -89,16 +66,11 @@ jobs:
           }
           JSON
 
+      - name: Verify release configuration
+        run: pnpm verify:release-config
+
       - name: Typecheck
         run: pnpm typecheck
 
-      - name: Run unit tests
-        run: pnpm test
-
-      - name: Run PostgreSQL integration tests
-        run: pnpm test:integration
-        env:
-          REDIS_URL: redis://127.0.0.1:6379
-
-      - name: Build server
-        run: pnpm build:server
+      - name: Audit production dependencies
+        run: pnpm audit --registry=https://registry.npmjs.org --prod --audit-level=high

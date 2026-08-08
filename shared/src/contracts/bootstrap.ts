@@ -23,6 +23,8 @@ export interface BootstrapSnapshot {
     title: string;
     experience: BigNumberString;
     requiredExperience: BigNumberString;
+    settledAt: string;
+    experienceRemainderMicros: number;
     status: ProgressionStatus;
     totalPower: BigNumberString;
     cultivationReserve: BigNumberString;
@@ -107,6 +109,7 @@ export interface BootstrapSnapshot {
   activeEffects: unknown[];
   config: {
     version: string;
+    maxLevel: number;
   };
   offlineSettlement: OfflineSettlementSummary | null;
 }

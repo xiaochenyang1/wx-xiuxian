@@ -112,11 +112,11 @@ export function advanceDropClock(params: {
 
 export function calculateEffectiveOfflineSeconds(
   lastSettledAt: Date | string | number,
-  serverNow: Date | string | number,
+  currentTime: Date | string | number,
   capSeconds = MAX_OFFLINE_SECONDS,
 ): number {
   const from = toTimestamp(lastSettledAt);
-  const to = toTimestamp(serverNow);
+  const to = toTimestamp(currentTime);
 
   if (!Number.isInteger(capSeconds) || capSeconds < 0) {
     throw new RangeError("Offline cap must be a non-negative integer");

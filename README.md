@@ -1,35 +1,33 @@
 # 我的修仙日记
 
-《我的修仙日记》是一款使用 Cocos Creator 3.8.8 开发的竖屏修仙放置小游戏。当前 `0.12.0` 开发基线处于第一阶段核心循环收尾期，已经接通本地客户端、Fastify 服务端、PostgreSQL 持久化和 Redis 健康检查，发布目标为微信小游戏。
+《我的修仙日记》是一款使用 Cocos Creator 3.8.8 开发的竖屏修仙放置小游戏，发布目标为浏览器预览和微信小游戏。
 
-完整玩法、数值、接口和验收基线见 [游戏设计与技术规范](docs/game-design-and-technical-spec.md)。
+当前版本是纯前端单机版：仓库不包含服务端、数据库、Redis、Docker 或网络 API。角色、修为、背包、装备和设置都保存在当前浏览器或微信小游戏的本地存储中。
 
 ## 当前能力
 
-- 开发账号登录、微信登录适配边界、JWT 和刷新令牌轮换
-- 个人档案、首次主角形象二选一、一次免费改名及改名卡消费
-- 在线/离线修炼结算、自动升级、境界瓶颈和手动突破
-- 挂机掉落、背包扩容、收获箱收取/分解和小经验丹使用
-- 四类功法槽和六类法宝槽的装备、替换、卸下及权威战力重算
-- Cocos 修炼主页、个人档案、固定四 Tab、离线收益弹窗和第一阶段占位页面
-- 服务端事件驱动的升级、突破和战力变化表现；动画可合并、排队、结束并在切后台/切页时中断
-- 正式 30 秒 heartbeat、身份与版本绑定的 v3 权威快照缓存、断网冷启动只读预览及 Cocos 前后台自动同步
-- 当前会话断网/重连状态提示、最近同步时间、经济操作只读保护及联网自动恢复
-- 离线功法/法宝装备操作的本地乐观队列、发送前落盘、重连顺序回放及冲突明确回滚；`reconnecting` 期间保持操作冻结
-- PostgreSQL 事务、幂等键、玩家版本冲突保护和资产流水
-- 仅开发构建可见的诊断面板：显示同步、生命周期、队列和修炼快照，可通过真实服务端结算模拟离线 1/8/24 小时，可固定修满当前经验条、增加 10000 灵石或增加 1 枚突破丹，并可注入正常、1 秒延迟、固定超时和网络失败四种请求故障
+- 自动修炼、逐秒修为投影、自动升级、境界瓶颈和突破丹突破
+- 最多 24 小时离线收益，按 70% 效率结算经验、灵石和挂机掉落
+- 材料、消耗品、100 格收获箱、收取、分解和行囊扩容
+- 四类功法槽与六类法宝槽的装备、替换、卸下和战力重算
+- Lv.3、Lv.5、Lv.8 新手任务，Lv.8 自动发放首枚突破丹
+- 主角形象二选一、一次免费改名及后续改名卡消费
+- Lv.11 解锁伴侣和洞府入口，并显示一次性解锁提示
+- 升级、突破、战力变化表现，以及微信安全区和竖屏适配
+- 浏览器 `localStorage` 与微信 `wx.*StorageSync` 双端本地存档
+- 30 秒自动存档、切后台立即存档、回到前台立即离线结算
+- 本地存档损坏时拒绝载入并创建新档，不把不可信数据送入 UI
+- 开发构建中的离线时长模拟、固定掉落种子和资源注入面板
 
-伴侣、洞府、真实排行榜、深度装备养成、副本、商业化和正式部署尚未进入完整实现。
-
-当前第一阶段收尾顺序为：完成微信开发者工具和真机验收；固定随机种子和测试账号清理等其余开发调试控制随后开发。
+当前没有账号、云存档、跨设备同步、真实排行榜、服务端防作弊、支付或运营后台。清理浏览器数据、删除微信小游戏或更换设备会丢失本地进度。
 
 ## 工程结构
 
 ```text
-assets/       Cocos Creator 场景和客户端 TypeScript
-server/       Node.js、Fastify、PostgreSQL 服务端
-shared/       客户端与服务端共享的协议、配置和领域纯函数
-docs/         游戏设计、技术规范和验收状态
+assets/       Cocos 场景、UI、平台适配和本地游戏服务
+shared/       会打包进客户端的数值配置与领域纯函数
+docs/         游戏设计和纯前端技术说明
+scripts/      微信小游戏构建与静态校验脚本
 settings/     Cocos Creator 项目设置
 ```
 
@@ -37,10 +35,9 @@ settings/     Cocos Creator 项目设置
 
 - Node.js `22.x`
 - pnpm `11.15.0`
-- Docker Desktop 或兼容的 Docker Compose 环境
 - Cocos Creator `3.8.8`
 
-## 本地启动
+## 本地运行
 
 安装依赖：
 
@@ -48,90 +45,67 @@ settings/     Cocos Creator 项目设置
 pnpm install
 ```
 
-启动 PostgreSQL 17 和 Redis 7.4：
+在 Cocos Creator 3.8.8 中打开仓库根目录，选择 `assets/scene.scene`，点击浏览器预览即可运行。无需启动任何 API、数据库或容器。
 
-```bash
-docker compose up -d
-docker compose ps
-```
-
-创建服务端本地配置并执行迁移：
-
-```bash
-cp server/.env.example server/.env
-pnpm db:migrate
-```
-
-启动 API 服务：
-
-```bash
-pnpm dev:server
-```
-
-默认监听 `http://127.0.0.1:3000`。可用以下地址检查状态：
+浏览器存档键为：
 
 ```text
-GET http://127.0.0.1:3000/health/live
-GET http://127.0.0.1:3000/health/ready
-GET http://127.0.0.1:3000/openapi.json
+cultivation-diary.local-save.v1
 ```
 
-在 Cocos Creator 3.8.8 中打开仓库根目录，选择 `assets/scene.scene`，使用浏览器预览即可通过开发账号自动登录。客户端当前默认连接本机 `3000` 端口。
+调试时可以在浏览器开发者工具的 Application/Local Storage 中查看该存档。游戏内“档案”页和开发调试面板都提供二次确认后的本地进度重置入口。
 
 ## 验证命令
 
 ```bash
-# 共享包、客户端和服务端类型检查
+# 检查共享数值核心和 Cocos 客户端 TypeScript
 pnpm typecheck
 
-# 共享包与服务端单元测试
-pnpm test
+# 只构建浏览器侧共享数值核心
+pnpm build:shared
 
-# PostgreSQL 集成测试，需要本地 PostgreSQL 和 Redis 已启动
-pnpm test:integration
+# 校验产品版本、微信候选标识和 Cocos Creator 版本
+pnpm verify:release-config
 
-# 构建共享包和服务端
-pnpm build:server
+# 构建微信 debug/release 候选包
+pnpm build:wechat
 
-# 生产依赖安全审计
-pnpm audit --prod --registry=https://registry.npmjs.org
+# 校验现有微信候选包的来源、配置、语法和调试裁剪
+pnpm verify:wechat
 ```
 
-集成测试使用独立测试数据库，不应将 `TEST_DATABASE_URL` 指向开发或生产数据。
+本仓库当前不包含测试文件；CI 执行依赖安装、发布配置校验、严格类型检查和生产依赖审计。
 
-当前自动化基线为共享领域 29 项、服务端及客户端单元 119 项、PostgreSQL 集成 26 项，共 174 项。
+## 微信小游戏
 
-## 常用脚本
+普通候选包使用 Cocos 测试 AppID：
 
-| 命令 | 用途 |
-|---|---|
-| `pnpm dev:server` | 监听模式启动本地 API |
-| `pnpm start:server` | 构建并运行服务端产物 |
-| `pnpm typecheck:client` | 单独检查 Cocos 客户端类型 |
-| `pnpm db:generate` | 根据 Drizzle schema 生成迁移 |
-| `pnpm db:migrate` | 执行数据库迁移 |
+```bash
+pnpm build:wechat
+```
 
-## 环境变量
+生产构建只需要真实小游戏 AppID 和已经真机验证的固定基础库版本，不再需要 API 域名：
 
-服务端变量模板位于 [`server/.env.example`](server/.env.example)。主要变量包括：
+```bash
+WECHAT_GAME_APP_ID=wx_REPLACE_WITH_REAL_APP_ID \
+WECHAT_BASE_LIBRARY_VERSION=REPLACE_WITH_TESTED_VERSION \
+pnpm build:wechat:production
 
-- `DATABASE_URL`、`REDIS_URL`
-- `ACCESS_TOKEN_SECRET`、`REFRESH_TOKEN_SECRET`
-- `ENABLE_DEV_AUTH`
-- `WECHAT_APP_ID`、`WECHAT_APP_SECRET`
-- `CORS_ALLOWED_ORIGINS`
+WECHAT_GAME_APP_ID=wx_REPLACE_WITH_REAL_APP_ID \
+WECHAT_BASE_LIBRARY_VERSION=REPLACE_WITH_TESTED_VERSION \
+pnpm verify:wechat:production
+```
 
-生产环境必须关闭开发登录、使用独立强密钥，并配置微信凭据和严格的 CORS 白名单。密钥只允许保存在服务端环境中。
+生产参数校验通过仍不能替代微信开发者工具、真机安全区、生命周期和存储容量验收。
 
-## 微信小游戏说明
+## 本地存档规则
 
-当前源码可以由 Cocos Creator 构建微信小游戏，但仓库仍以本地联调为交付范围。真机运行前至少需要：
+- 存档采用显式 schema 版本，当前为 `1`。
+- 每次玩法写操作前先结算当前在线收益，再更新快照并同步落盘。
+- 前台每 30 秒结算并保存一次，切后台时再执行一次检查点。
+- 回到前台时按离线效率结算，单次最多计算 24 小时。
+- 离线掉落、任务奖励、背包、功法和法宝与角色快照一起保存。
+- 本地存储写入失败时游戏仍可继续，但顶部会提示本次进度仅保留到退出。
+- 读取到结构非法、越界或版本不兼容的存档时会建立新档，避免损坏数据导致场景崩溃。
 
-1. 将客户端 API 地址改为可由设备访问的 HTTPS 域名。
-2. 配置微信小游戏 AppID、服务端 AppSecret 和微信合法域名。
-3. 在微信开发者工具及真机验证登录、前后台切换、弱网和安全区适配。
-4. 使用与当前源码一致的已核验微信构建产物导入微信开发者工具。
-
-当前源码对应的 `0.12.0-r1` 微信小游戏 debug/release 产物已完成构建和 JavaScript 语法检查；debug 包包含离线 1/8/24 小时、固定资源注入和四种网络故障模拟入口，release 包不包含 `DebugRoot`、调试面板标题或调试控制文案；尚未完成微信开发者工具和真机验收。
-
-正式云部署、监控、备份、域名、证书、备案和发布流水线尚未纳入当前阶段。
+详细设计和后续重新引入后端时的边界见 [游戏设计与技术规范](docs/game-design-and-technical-spec.md)。

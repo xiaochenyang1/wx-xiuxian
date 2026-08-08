@@ -83,7 +83,7 @@ export function interpolateBigNumberStrings(
     };
     return stringifyInteger(addIntegers(start, interpolatedDelta));
   } catch {
-    // Invalid authoritative values should settle on the latest server payload.
+    // Invalid persisted values should remain visible without inventing a correction.
     return to;
   }
 }

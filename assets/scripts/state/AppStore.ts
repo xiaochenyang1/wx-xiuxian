@@ -1,5 +1,4 @@
 import type { BootstrapSnapshot } from "@cultivation-diary/shared";
-import { hasSameBootstrapIdentity } from "../core/ClientTypes";
 import type { AppState, FeaturePanel, MainTab } from "../core/ClientTypes";
 
 type StateListener = (state: Readonly<AppState>) => void;
@@ -7,12 +6,11 @@ type StateListener = (state: Readonly<AppState>) => void;
 export class AppStore {
   private state: AppState = {
     phase: "loading",
-    syncStatus: "reconnecting",
-    lastSuccessfulSyncAt: null,
-    loadingMessage: "正在叩问仙门",
+    storageStatus: "saved",
+    lastSavedAt: null,
+    loadingMessage: "正在展开本地仙卷",
     errorMessage: null,
     bootstrap: null,
-    pendingLoadoutOperationCount: 0,
     selectedTab: "cultivation",
     activeFeature: null,
     featureMessage: null,
@@ -33,163 +31,64 @@ export class AppStore {
   setLoading(message: string): void {
     this.update({
       phase: "loading",
-      syncStatus: "reconnecting",
       loadingMessage: message,
       errorMessage: null,
-    });
-  }
-
-  setCachedPreview(
-    bootstrap: BootstrapSnapshot,
-    lastSuccessfulSyncAt: string,
-    pendingLoadoutOperationCount = 0,
-  ): void {
-    this.update({
-      phase: "ready",
-      syncStatus: "reconnecting",
-      lastSuccessfulSyncAt,
-      bootstrap,
-      pendingLoadoutOperationCount,
-      errorMessage: null,
-      selectedTab: "cultivation",
       activeFeature: null,
       featureMessage: null,
     });
   }
 
-  setQueuedLoadoutPreview(
+  setReady(
     bootstrap: BootstrapSnapshot,
-    lastSuccessfulSyncAt: string,
-    pendingLoadoutOperationCount: number,
+    lastSavedAt: string,
+    storageStatus: AppState["storageStatus"] = "saved",
   ): void {
-    const sameIdentity = hasSameBootstrapIdentity(this.state.bootstrap, bootstrap);
+    const identityChanged =
+      this.state.bootstrap !== null &&
+      this.state.bootstrap.player.id !== bootstrap.player.id;
     this.update({
       phase: "ready",
-      syncStatus: "reconnecting",
-      lastSuccessfulSyncAt,
-      bootstrap: sameIdentity
-        ? this.mergePendingOfflineSettlement(bootstrap)
-        : bootstrap,
-      pendingLoadoutOperationCount,
+      storageStatus,
+      lastSavedAt,
+      bootstrap,
       errorMessage: null,
-      ...(sameIdentity
-        ? {}
-        : {
+      ...(identityChanged
+        ? {
             selectedTab: "cultivation" as const,
             activeFeature: null,
             featureMessage: null,
-          }),
-    });
-  }
-
-  setReady(bootstrap: BootstrapSnapshot, lastSuccessfulSyncAt?: string): void {
-    const sameIdentity = hasSameBootstrapIdentity(this.state.bootstrap, bootstrap);
-    this.update({
-      phase: "ready",
-      syncStatus: "online",
-      ...(lastSuccessfulSyncAt === undefined
-        ? sameIdentity
-          ? {}
-          : { lastSuccessfulSyncAt: null }
-        : { lastSuccessfulSyncAt }),
-      bootstrap: sameIdentity
-        ? this.mergePendingOfflineSettlement(bootstrap)
-        : bootstrap,
-      pendingLoadoutOperationCount: 0,
-      errorMessage: null,
-      ...(sameIdentity
-        ? {}
-        : {
-            selectedTab: "cultivation" as const,
-            activeFeature: null,
-            featureMessage: null,
-          }),
+          }
+        : {}),
     });
   }
 
   replaceSnapshot(
     bootstrap: BootstrapSnapshot,
-    pendingLoadoutOperationCount = this.state.pendingLoadoutOperationCount,
+    lastSavedAt = this.state.lastSavedAt,
+    storageStatus = this.state.storageStatus,
   ): void {
-    const sameIdentity = hasSameBootstrapIdentity(this.state.bootstrap, bootstrap);
     this.update({
       phase: "ready",
-      bootstrap: sameIdentity
-        ? this.mergePendingOfflineSettlement(bootstrap)
-        : bootstrap,
-      pendingLoadoutOperationCount,
+      bootstrap,
+      lastSavedAt,
+      storageStatus,
       errorMessage: null,
-      ...(sameIdentity
-        ? {}
-        : {
-            selectedTab: "cultivation" as const,
-            activeFeature: null,
-            featureMessage: null,
-          }),
     });
   }
 
-  markReconnecting(): void {
-    if (!this.state.bootstrap) return;
-    if (this.state.phase === "ready" && this.state.syncStatus === "reconnecting") return;
-    this.update({
-      phase: "ready",
-      syncStatus: "reconnecting",
-      errorMessage: null,
-      featureMessage: null,
-    });
-  }
-
-  markOffline(lastSuccessfulSyncAt?: string): void {
-    if (!this.state.bootstrap) return;
-    if (
-      this.state.syncStatus === "offline" &&
-      (lastSuccessfulSyncAt === undefined ||
-        lastSuccessfulSyncAt === this.state.lastSuccessfulSyncAt)
-    ) {
-      return;
-    }
-    this.update({
-      phase: "ready",
-      syncStatus: "offline",
-      ...(lastSuccessfulSyncAt === undefined ? {} : { lastSuccessfulSyncAt }),
-      errorMessage: null,
-      featureMessage: null,
-    });
-  }
-
-  markOnline(lastSuccessfulSyncAt?: string): void {
-    if (!this.state.bootstrap) return;
-    this.update({
-      phase: "ready",
-      syncStatus: "online",
-      ...(lastSuccessfulSyncAt === undefined ? {} : { lastSuccessfulSyncAt }),
-      errorMessage: null,
-    });
+  setStorageStatus(
+    storageStatus: AppState["storageStatus"],
+    lastSavedAt = this.state.lastSavedAt,
+  ): void {
+    this.update({ storageStatus, lastSavedAt });
   }
 
   setError(message: string): void {
     this.update({ phase: "error", errorMessage: message });
   }
 
-  setAuthenticationError(message: string): void {
-    this.update({
-      phase: "error",
-      syncStatus: "reconnecting",
-      lastSuccessfulSyncAt: null,
-      bootstrap: null,
-      pendingLoadoutOperationCount: 0,
-      errorMessage: message,
-      selectedTab: "cultivation",
-      activeFeature: null,
-      featureMessage: null,
-    });
-  }
-
   selectTab(tab: MainTab): void {
-    if (this.state.selectedTab !== tab) {
-      this.update({ selectedTab: tab });
-    }
+    if (this.state.selectedTab !== tab) this.update({ selectedTab: tab });
   }
 
   openFeature(feature: FeaturePanel): void {
@@ -214,13 +113,5 @@ export class AppStore {
   private update(patch: Partial<AppState>): void {
     this.state = { ...this.state, ...patch };
     for (const listener of this.listeners) listener(this.state);
-  }
-
-  private mergePendingOfflineSettlement(bootstrap: BootstrapSnapshot): BootstrapSnapshot {
-    const pendingOfflineSettlement =
-      bootstrap.offlineSettlement ?? this.state.bootstrap?.offlineSettlement ?? null;
-    return pendingOfflineSettlement === bootstrap.offlineSettlement
-      ? bootstrap
-      : { ...bootstrap, offlineSettlement: pendingOfflineSettlement };
   }
 }

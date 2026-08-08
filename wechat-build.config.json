@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "productVersion": "0.17.2",
+  "releaseId": "0.17.2-r1",
+  "cocosCreatorVersion": "3.8.8",
+  "platform": "wechatgame",
+  "launchScene": "db://assets/scene.scene",
+  "sceneUuid": "c024d01c-217e-4eaf-ae88-87eba35f90a3",
+  "gameBootstrapComponentId": "260b8YP625MDaJ6D9M6Pqmw",
+  "orientation": "portrait",
+  "designResolutionPolicy": 4,
+  "sourceInputs": [
+    ".creator/default-meta.json",
+    "assets",
+    "build-templates/wechatgame/game.ejs",
+    "config/cocos/wechatgame.json",
+    "package.json",
+    "pnpm-lock.yaml",
+    "settings",
+    "shared/package.json",
+    "shared/src",
+    "scripts/build-wechat.mjs",
+    "scripts/wechat-build-manifest.mjs",
+    "tsconfig.json",
+    "wechat-build.config.json"
+  ]
+}
