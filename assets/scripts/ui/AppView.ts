@@ -78,6 +78,7 @@ import {
   drawTribulationLightning,
 } from "./primitives/Scenery";
 import { drawTaskPanel } from "./panels/TaskPanel";
+import { drawTechniquePanel } from "./panels/TechniquePanel";
 import {
   drawUpcomingPanel,
   UPCOMING_FEATURE_COPY,
@@ -131,34 +132,22 @@ export interface AppViewActions {
   feedback(): void;
 }
 
-type PagedList =
+export type PagedList =
   | "inventoryStacks"
   | "harvestChest"
   | "techniques"
   | "equipment";
 
-interface PageWindow {
+export interface PageWindow {
   page: number;
   pageCount: number;
   start: number;
   end: number;
 }
 
-export interface TechniqueSlotLabelLayout {
-  readonly text: string;
-  readonly maxLines: 2;
-  readonly sizing: "fixed";
-}
-
-export function getTechniqueSlotLabelLayout(
-  slotLabel: string,
-  equippedName: string | null,
-): TechniqueSlotLabelLayout {
-  return {
-    text: `${slotLabel}\n${equippedName ?? "未装备"}`,
-    maxLines: 2,
-    sizing: "fixed",
-  };
+export interface PanelPaging {
+  window(list: PagedList, itemCount: number, pageSize: number): PageWindow;
+  show(list: PagedList, page: number): void;
 }
 
 export interface CultivationProgressDisplay {
@@ -298,6 +287,10 @@ export class AppView {
     harvestChest: 0,
     techniques: 0,
     equipment: 0,
+  };
+  private readonly panelPaging: PanelPaging = {
+    window: (list, itemCount, pageSize) => this.pageWindow(list, itemCount, pageSize),
+    show: (list, page) => this.showPage(list, page),
   };
 
   constructor(
@@ -2371,7 +2364,8 @@ export class AppView {
 
     if (feature === "profile") this.drawProfilePanel(overlay, state);
     if (feature === "inventory") this.drawInventoryPanel(overlay, state);
-    if (feature === "techniques") this.drawTechniquePanel(overlay, state);
+    if (feature === "techniques")
+      drawTechniquePanel(overlay, state, this.actions, this.panelPaging);
     if (feature === "equipment") this.drawEquipmentPanel(overlay, state);
     if (feature === "tasks") drawTaskPanel(overlay, state);
     if (isUpcomingFeaturePanel(feature)) drawUpcomingPanel(overlay, feature);
@@ -2968,122 +2962,6 @@ export class AppView {
           addLabel(overlay, "已保护", 231, y, 100, 32, 15, COLORS.gold);
         }
       });
-  }
-
-  private drawTechniquePanel(overlay: Node, state: Readonly<AppState>): void {
-    const techniques = state.bootstrap!.techniques;
-    const mutationsEnabled = canRunLocalMutation(state);
-    const techniqueWindow = this.pageWindow("techniques", techniques.length, 8);
-    addLabel(
-      overlay,
-      `功法 ${techniques.length} 本 · 装备战力 +${formatLargeNumber(state.bootstrap!.progress.loadoutFixedPower)} · 修炼 +${formatBasisPoints(state.bootstrap!.progress.experienceBonusBp)}`,
-      0,
-      393,
-      590,
-      50,
-      17,
-      COLORS.jade,
-      false,
-      2,
-      HorizontalTextAlignment.CENTER,
-      "fixed",
-    );
-    const slots = [
-      { id: "mind", label: "心法" },
-      { id: "movement", label: "身法" },
-      { id: "divine", label: "神通" },
-      { id: "secret", label: "秘术" },
-    ];
-    slots.forEach((slot, index) => {
-      const x = -225 + index * 150;
-      const equipped = techniques.find((technique) => technique.equippedSlot === slot.id);
-      const labelLayout = getTechniqueSlotLabelLayout(
-        slot.label,
-        equipped?.displayName ?? null,
-      );
-      drawBand(overlay, `TechniqueSlot-${slot.id}`, x, 320, 132, 64, COLORS.panel, COLORS.goldMuted);
-      addLabel(
-        overlay,
-        labelLayout.text,
-        x,
-        320,
-        116,
-        54,
-        15,
-        equipped ? qualityColor(equipped.quality) : COLORS.textMuted,
-        false,
-        labelLayout.maxLines,
-        HorizontalTextAlignment.CENTER,
-        labelLayout.sizing,
-      );
-    });
-    if (techniques.length === 0) {
-      addLabel(overlay, "尚未收录功法，可从挂机收获箱中收取", 0, 170, 570, 50, 20, COLORS.text);
-      return;
-    }
-    techniques.slice(techniqueWindow.start, techniqueWindow.end).forEach((technique, index) => {
-      const y = 222 - index * 75;
-      drawBand(overlay, `Technique-${technique.techniqueConfigId}`, 0, y, 600, 62, COLORS.panel);
-      addLabel(
-        overlay,
-        technique.displayName,
-        -190,
-        y,
-        210,
-        34,
-        18,
-        qualityColor(technique.quality),
-        true,
-        1,
-        HorizontalTextAlignment.LEFT,
-      );
-      addLabel(
-        overlay,
-        `${technique.star}星 · 战力 +${formatLargeNumber(technique.fixedPower)}`,
-        25,
-        y,
-        190,
-        32,
-        17,
-        COLORS.gold,
-        false,
-        1,
-        HorizontalTextAlignment.CENTER,
-      );
-      const equipped = technique.equippedSlot !== null;
-      createButton(
-        overlay,
-        equipped
-          ? "卸下"
-          : techniques.some((candidate) => candidate.equippedSlot === technique.slot)
-            ? "替换"
-            : "装备",
-        245,
-        y,
-        92,
-        44,
-        {
-          fill: equipped ? COLORS.red : COLORS.inkGreenLight,
-          stroke: COLORS.goldMuted,
-          fontSize: 15,
-          enabled: mutationsEnabled,
-        },
-        () =>
-          equipped
-            ? this.actions.unequipTechnique(technique.techniqueConfigId)
-            : this.actions.equipTechnique(technique.techniqueConfigId),
-      );
-    });
-    drawPagination(
-      overlay,
-      "TechniquePager",
-      0,
-      -382,
-      techniqueWindow.page,
-      techniqueWindow.pageCount,
-      () => this.showPage("techniques", techniqueWindow.page - 1),
-      () => this.showPage("techniques", techniqueWindow.page + 1),
-    );
   }
 
   private drawEquipmentPanel(overlay: Node, state: Readonly<AppState>): void {
@@ -3714,11 +3592,6 @@ function regularEquipmentSlot(value: string): EquippedEquipmentSlot | null {
     return value;
   }
   return null;
-}
-
-function formatBasisPoints(value: number): string {
-  const percent = value / 100;
-  return `${Number.isInteger(percent) ? percent.toFixed(0) : percent.toFixed(2)}%`;
 }
 
 function ratio(value: string, total: string): number {
