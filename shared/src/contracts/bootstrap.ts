@@ -90,6 +90,12 @@ export interface BootstrapSnapshot {
       acquiredAt: string;
     }>;
   };
+  cave: {
+    buildings: Array<{
+      buildingConfigId: string;
+      level: number;
+    }>;
+  };
   newcomerTasks: Array<{
     taskConfigId: string;
     progress: BigNumberString;

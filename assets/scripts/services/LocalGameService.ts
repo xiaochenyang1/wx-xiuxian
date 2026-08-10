@@ -1,5 +1,7 @@
 import {
   BASIS_POINTS,
+  CAVE_BUILDING_CONFIGS,
+  CAVE_MAX_LEVEL,
   EQUIPMENT_CONFIGS,
   MAX_LEVEL,
   NEWCOMER_REACH_LEVEL_8_TASK_ID,
@@ -11,7 +13,9 @@ import {
   calculateSpiritStonePerMinute,
   calculateTotalPower,
   completeBreakthrough,
+  createEmptyCaveBuildings,
   decimal,
+  getCaveBuildingConfig,
   getEquipmentConfig,
   getItemConfig,
   getRealmConfigForLevel,
@@ -34,7 +38,8 @@ import { CLIENT_CONFIG } from "../core/ClientConfig";
 import type { PlatformAdapter } from "../platform/PlatformAdapter";
 
 const LOCAL_SAVE_SCHEMA_VERSION = 1 as const;
-const GAME_CONFIG_VERSION = "local-1.0.0";
+const GAME_CONFIG_VERSION = "local-1.1.0";
+const GAME_CONFIG_VERSION_PRE_CAVE = "local-1.0.0";
 const DROP_CONFIG_VERSION = "local-idle-drop-v1";
 const OFFLINE_NOTICE_MIN_SECONDS = 60;
 const HARVEST_CHEST_CAPACITY = 100;
@@ -788,6 +793,7 @@ function createInitialSave(now: Date): LocalGameSave {
     techniques: [],
     equipment: [],
     harvestChest: { pendingCount: 0, entries: [] },
+    cave: { buildings: createEmptyCaveBuildings() },
     newcomerTasks: NEWCOMER_TASK_CONFIGS.map((task) => ({
       taskConfigId: task.id,
       progress: "1",
@@ -1175,23 +1181,42 @@ function equipmentFitsSlot(slot: string, equippedSlot: EquippedEquipmentSlot): b
     : slot === equippedSlot;
 }
 
+/**
+ * Only `local-1.0.0` is migrated, and only by adding the cave field it predates.
+ * Anything else is returned untouched so that a genuinely corrupt save still
+ * fails validation instead of being silently repaired.
+ */
+function migrateSnapshot(snapshot: unknown): unknown {
+  if (!isRecord(snapshot)) return snapshot;
+  const config = snapshot.config;
+  if (!isRecord(config) || config.version !== GAME_CONFIG_VERSION_PRE_CAVE) {
+    return snapshot;
+  }
+  return {
+    ...snapshot,
+    cave: { buildings: createEmptyCaveBuildings() },
+    config: { ...config, version: GAME_CONFIG_VERSION },
+  };
+}
+
 function parseLocalGameSave(value: unknown): LocalGameSave | null {
   if (!isRecord(value) || value.schemaVersion !== LOCAL_SAVE_SCHEMA_VERSION) return null;
+  const snapshot = migrateSnapshot(value.snapshot);
   if (
     !isIsoTimestamp(value.savedAt) ||
     !isIntegerBetween(value.spiritStoneRemainderMicros, 0, 999_999) ||
     !isIntegerBetween(value.dropClockRemainderMicros, 0, DROP_CLOCK_MAX_REMAINDER - 1) ||
-    !isBootstrapSnapshot(value.snapshot)
+    !isBootstrapSnapshot(snapshot)
   ) {
     return null;
   }
 
   try {
-    applyWholeExperience(value.snapshot.progress, 0);
+    applyWholeExperience(snapshot.progress, 0);
     if (
-      value.snapshot.progress.status === "gaining" &&
-      decimal(value.snapshot.progress.experience).greaterThanOrEqualTo(
-        requiredExperienceForLevel(value.snapshot.progress.level),
+      snapshot.progress.status === "gaining" &&
+      decimal(snapshot.progress.experience).greaterThanOrEqualTo(
+        requiredExperienceForLevel(snapshot.progress.level),
       )
     ) {
       return null;
@@ -1201,7 +1226,7 @@ function parseLocalGameSave(value: unknown): LocalGameSave | null {
       savedAt: value.savedAt,
       spiritStoneRemainderMicros: Number(value.spiritStoneRemainderMicros),
       dropClockRemainderMicros: Number(value.dropClockRemainderMicros),
-      snapshot: refreshSnapshot(value.snapshot),
+      snapshot: refreshSnapshot(snapshot),
     };
   } catch {
     return null;
@@ -1234,6 +1259,7 @@ function isBootstrapSnapshot(value: unknown): value is BootstrapSnapshot {
     isTechniqueList(value.techniques) &&
     isEquipmentList(value.equipment) &&
     isHarvestChest(chest) &&
+    isCaveSnapshot(value.cave) &&
     isNewcomerTaskList(value.newcomerTasks) &&
     isRecord(value.unlocks) &&
     typeof value.unlocks.partner === "boolean" &&
@@ -1251,6 +1277,24 @@ function isBootstrapSnapshot(value: unknown): value is BootstrapSnapshot {
     isOfflineSettlement(value.offlineSettlement) &&
     hasConsistentInventory(value)
   );
+}
+
+function isCaveSnapshot(value: unknown): boolean {
+  if (!isRecord(value) || !Array.isArray(value.buildings)) return false;
+  if (value.buildings.length !== CAVE_BUILDING_CONFIGS.length) return false;
+  const seen = new Set<string>();
+  for (const building of value.buildings) {
+    if (!isRecord(building) || typeof building.buildingConfigId !== "string") return false;
+    try {
+      getCaveBuildingConfig(building.buildingConfigId);
+    } catch {
+      return false;
+    }
+    if (seen.has(building.buildingConfigId)) return false;
+    seen.add(building.buildingConfigId);
+    if (!isIntegerBetween(building.level, 0, CAVE_MAX_LEVEL)) return false;
+  }
+  return true;
 }
 
 function isProgressSnapshot(value: unknown): boolean {
