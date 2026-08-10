@@ -58,10 +58,7 @@ import {
   removeAndDestroy,
   setSize,
 } from "./primitives/Draw";
-import {
-  avatarVariantName,
-  formatSignedPowerDelta,
-} from "./primitives/Format";
+import { formatSignedPowerDelta } from "./primitives/Format";
 import {
   drawAvatarPortrait,
   drawCurrencyChip,
@@ -74,6 +71,11 @@ import {
 } from "./primitives/Scenery";
 import { drawEquipmentPanel } from "./panels/EquipmentPanel";
 import { drawInventoryPanel } from "./panels/InventoryPanel";
+import {
+  drawProfilePanel,
+  type ProfileDraftState,
+  type ProfileResetControls,
+} from "./panels/ProfilePanel";
 import { drawTaskPanel } from "./panels/TaskPanel";
 import { drawTechniquePanel } from "./panels/TechniquePanel";
 import {
@@ -191,49 +193,6 @@ export function getCultivationProgressDisplay(
   };
 }
 
-export interface ProfileResetControlDisplay {
-  readonly description: string;
-  readonly primaryLabel: string;
-  readonly cancelLabel: string | null;
-  readonly enabled: boolean;
-}
-
-export function getProfileResetControlDisplay(
-  armed: boolean,
-  enabled = true,
-  pending = false,
-): ProfileResetControlDisplay {
-  if (pending) {
-    return {
-      description: "正在重置本地进度，请稍候",
-      primaryLabel: "正在重置",
-      cancelLabel: null,
-      enabled: false,
-    };
-  }
-  if (!enabled) {
-    return {
-      description: "当前状态暂时无法重置本地进度",
-      primaryLabel: armed ? "确认重置" : "重置进度",
-      cancelLabel: armed ? "取消" : null,
-      enabled: false,
-    };
-  }
-  return armed
-    ? {
-        description: "此操作会永久清除本机存档并从 Lv.1 重新开始",
-        primaryLabel: "确认重置",
-        cancelLabel: "取消",
-        enabled: true,
-      }
-    : {
-        description: "当前进度仅保存在本机，可在此重新开始",
-        primaryLabel: "重置本地进度",
-        cancelLabel: null,
-        enabled: true,
-      };
-}
-
 export class AppView {
   private readonly contentRoot: Node;
   private readonly presentationRoot: Node;
@@ -288,6 +247,28 @@ export class AppView {
   private readonly panelPaging: PanelPaging = {
     window: (list, itemCount, pageSize) => this.pageWindow(list, itemCount, pageSize),
     show: (list, page) => this.showPage(list, page),
+  };
+  private readonly profileDrafts: ProfileDraftState = {
+    avatar: () => this.profileAvatarDraft,
+    name: () => this.profileNameDraft,
+    nameSource: () => this.profileNameSource,
+    setAvatar: (value) => {
+      this.profileAvatarDraft = value;
+    },
+    setName: (value) => {
+      this.profileNameDraft = value;
+    },
+    setNameSource: (value) => {
+      this.profileNameSource = value;
+    },
+    selectAvatar: (value) => this.selectAvatarDraft(value),
+  };
+  private readonly profileResetControls: ProfileResetControls = {
+    armed: () => this.profileResetArmed,
+    pending: () => this.profileResetPending,
+    arm: () => this.armProfileReset(),
+    cancel: () => this.cancelProfileReset(),
+    confirm: () => this.confirmProfileReset(),
   };
 
   constructor(
@@ -2359,7 +2340,14 @@ export class AppView {
       },
     );
 
-    if (feature === "profile") this.drawProfilePanel(overlay, state);
+    if (feature === "profile")
+      drawProfilePanel(
+        overlay,
+        state,
+        this.actions,
+        this.profileDrafts,
+        this.profileResetControls,
+      );
     if (feature === "inventory")
       drawInventoryPanel(overlay, state, this.actions, this.panelPaging);
     if (feature === "techniques")
@@ -2380,295 +2368,6 @@ export class AppView {
         38,
         17,
         COLORS.gold,
-      );
-    }
-  }
-
-  private drawProfilePanel(overlay: Node, state: Readonly<AppState>): void {
-    const data = state.bootstrap!;
-    const player = data.player;
-    const mutationsEnabled = canRunLocalMutation(state);
-
-    drawBand(overlay, "AvatarProfile", 0, 302, 620, 220, COLORS.inkGreen);
-    addLabel(
-      overlay,
-      "角色形象",
-      -25,
-      376,
-      430,
-      38,
-      22,
-      COLORS.gold,
-      true,
-      1,
-      HorizontalTextAlignment.LEFT,
-    );
-    drawAvatarPortrait(overlay, player.avatarVariant, -225, 300, 1.8);
-
-    if (player.avatarVariant === "neutral") {
-      addLabel(
-        overlay,
-        "首次选择后将永久确定",
-        70,
-        334,
-        390,
-        34,
-        17,
-        COLORS.textMuted,
-      );
-      createButton(
-        overlay,
-        this.profileAvatarDraft === "male" ? "已选男修" : "男修形象",
-        5,
-        278,
-        150,
-        58,
-        {
-          fill:
-            this.profileAvatarDraft === "male"
-              ? COLORS.inkGreen
-              : COLORS.inkGreenLight,
-          stroke: COLORS.jade,
-          fontSize: 18,
-        },
-        () => this.selectAvatarDraft("male"),
-      );
-      createButton(
-        overlay,
-        this.profileAvatarDraft === "female" ? "已选女修" : "女修形象",
-        190,
-        278,
-        150,
-        58,
-        {
-          fill:
-            this.profileAvatarDraft === "female"
-              ? COLORS.inkGreen
-              : COLORS.inkGreenLight,
-          stroke: COLORS.gold,
-          fontSize: 18,
-        },
-        () => this.selectAvatarDraft("female"),
-      );
-      if (this.profileAvatarDraft) {
-        createButton(
-          overlay,
-          `确认${avatarVariantName(this.profileAvatarDraft)}`,
-          98,
-          216,
-          335,
-          44,
-          {
-            fill: COLORS.red,
-            stroke: COLORS.goldMuted,
-            fontSize: 16,
-            enabled: mutationsEnabled,
-          },
-          () => this.actions.chooseAvatar(this.profileAvatarDraft!),
-        );
-      }
-    } else {
-      this.profileAvatarDraft = null;
-      addLabel(
-        overlay,
-        `${avatarVariantName(player.avatarVariant)} · 已确定`,
-        70,
-        318,
-        390,
-        42,
-        23,
-        COLORS.text,
-        true,
-      );
-      addLabel(
-        overlay,
-        "角色形象不可再次修改",
-        70,
-        274,
-        390,
-        32,
-        17,
-        COLORS.textMuted,
-      );
-    }
-
-    drawBand(overlay, "RenameProfile", 0, 18, 620, 324, COLORS.panel);
-    addLabel(
-      overlay,
-      "道号",
-      -245,
-      140,
-      120,
-      38,
-      22,
-      COLORS.gold,
-      true,
-      1,
-      HorizontalTextAlignment.LEFT,
-    );
-    addLabel(
-      overlay,
-      `当前：${player.displayName}`,
-      48,
-      140,
-      450,
-      36,
-      18,
-      COLORS.text,
-      false,
-      1,
-      HorizontalTextAlignment.LEFT,
-    );
-
-    const renameCardQuantity =
-      data.inventory.stacks.find((item) => item.itemConfigId === "rename_card")
-        ?.quantity ?? "0";
-    addLabel(
-      overlay,
-      player.freeRenameAvailable
-        ? "可免费修改 1 次"
-        : `持有改名卡 ${formatLargeNumber(renameCardQuantity)} 张`,
-      -15,
-      92,
-      530,
-      34,
-      17,
-      player.freeRenameAvailable ? COLORS.jade : COLORS.textMuted,
-    );
-
-    if (this.profileNameSource === null) {
-      this.profileNameSource = player.displayName;
-      this.profileNameDraft = player.displayName;
-    } else if (this.profileNameSource !== player.displayName) {
-      this.profileNameSource = player.displayName;
-    }
-    const nameInput = createTextInput(
-      overlay,
-      this.profileNameDraft ?? player.displayName,
-      "输入新的道号",
-      -66,
-      27,
-      420,
-      60,
-      (value) => {
-        this.profileNameDraft = value;
-      },
-      (value) => this.actions.renamePlayer(value),
-      mutationsEnabled,
-    );
-    createButton(
-      overlay,
-      "确认改名",
-      226,
-      27,
-      126,
-      60,
-      {
-        fill: COLORS.inkGreenLight,
-        stroke: COLORS.gold,
-        fontSize: 17,
-        enabled: mutationsEnabled,
-      },
-      () => this.actions.renamePlayer(nameInput.string),
-    );
-    addLabel(
-      overlay,
-      "2 至 12 个中文、英文字母或数字",
-      -65,
-      -27,
-      420,
-      30,
-      15,
-      COLORS.textMuted,
-    );
-
-    const resetDisplay = getProfileResetControlDisplay(
-      this.profileResetArmed,
-      mutationsEnabled,
-      this.profileResetPending,
-    );
-    drawBand(overlay, "AccountProfile", 0, -290, 620, 238, COLORS.panel);
-    addLabel(
-      overlay,
-      "本地存档",
-      -245,
-      -205,
-      120,
-      38,
-      22,
-      COLORS.gold,
-      true,
-      1,
-      HorizontalTextAlignment.LEFT,
-    );
-    addLabel(
-      overlay,
-      `当前角色：${player.displayName} · 仅保存在本机`,
-      48,
-      -205,
-      450,
-      36,
-      18,
-      COLORS.text,
-      false,
-      1,
-      HorizontalTextAlignment.LEFT,
-    );
-    addLabel(
-      overlay,
-      resetDisplay.description,
-      0,
-      -274,
-      540,
-      56,
-      16,
-      this.profileResetArmed ? COLORS.gold : COLORS.textMuted,
-      false,
-      2,
-      HorizontalTextAlignment.CENTER,
-      "fixed",
-    );
-    if (resetDisplay.cancelLabel) {
-      createButton(
-        overlay,
-        resetDisplay.cancelLabel,
-        -150,
-        -359,
-        260,
-        56,
-        { fill: COLORS.panelStrong, stroke: COLORS.goldMuted, fontSize: 18 },
-        () => this.cancelProfileReset(),
-      );
-      createButton(
-        overlay,
-        resetDisplay.primaryLabel,
-        150,
-        -359,
-        260,
-        56,
-        {
-          fill: COLORS.red,
-          stroke: COLORS.goldMuted,
-          fontSize: 18,
-          enabled: resetDisplay.enabled,
-        },
-        () => this.confirmProfileReset(),
-      );
-    } else {
-      createButton(
-        overlay,
-        resetDisplay.primaryLabel,
-        0,
-        -359,
-        300,
-        56,
-        {
-          fill: COLORS.red,
-          stroke: COLORS.goldMuted,
-          fontSize: 18,
-          enabled: resetDisplay.enabled,
-        },
-        () => this.armProfileReset(),
       );
     }
   }
