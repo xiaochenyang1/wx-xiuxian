@@ -8,10 +8,13 @@ import {
   NEWCOMER_TASK_CONFIGS,
   TECHNIQUE_CONFIGS,
   applyWholeExperience,
+  addLoadoutBonuses,
+  calculateCaveBonuses,
   calculateLoadoutBonuses,
   calculateOnlineExperiencePerSecond,
   calculateSpiritStonePerMinute,
   calculateTotalPower,
+  caveUpgradeCost,
   completeBreakthrough,
   createEmptyCaveBuildings,
   decimal,
@@ -283,6 +286,65 @@ export class LocalGameService {
         },
         events: [],
         message: `消耗 ${cost} 灵石，行囊扩展 ${BAG_EXPANSION_SIZE} 格`,
+      };
+    });
+  }
+
+  upgradeCaveBuilding(buildingConfigId: string): LocalMutationResult {
+    return this.mutate((snapshot) => {
+      if (!snapshot.unlocks.cave) {
+        throw new LocalGameError("修为达到 Lv.11 才能开辟洞府");
+      }
+      const config = getCaveBuildingConfig(buildingConfigId);
+      const building = snapshot.cave.buildings.find(
+        (item) => item.buildingConfigId === buildingConfigId,
+      );
+      if (!building) throw new LocalGameError("洞府中没有这座建筑");
+      if (building.level >= config.maxLevel) {
+        throw new LocalGameError(`${config.displayName}已满级`);
+      }
+
+      const cost = caveUpgradeCost(buildingConfigId, building.level);
+      const stones = decimal(snapshot.wallet.spiritStone);
+      if (stones.lessThan(cost.spiritStone)) {
+        throw new LocalGameError(
+          `灵石不足，还需 ${decimal(cost.spiritStone).minus(stones).toFixed(0)} 灵石`,
+        );
+      }
+      for (const material of cost.materials) {
+        const owned = decimal(stackQuantity(snapshot, material.itemConfigId));
+        if (owned.lessThan(material.quantity)) {
+          const missing = decimal(material.quantity).minus(owned).toFixed(0);
+          throw new LocalGameError(
+            `${getItemConfig(material.itemConfigId).displayName}不足，还需 ${missing} 个`,
+          );
+        }
+      }
+
+      let inventory = snapshot.inventory;
+      for (const material of cost.materials) {
+        const remaining = decimal(stackQuantity(snapshot, material.itemConfigId))
+          .minus(material.quantity)
+          .toFixed(0);
+        inventory = setStackQuantity(inventory, material.itemConfigId, remaining);
+      }
+      const buildings = snapshot.cave.buildings.map((item) =>
+        item.buildingConfigId === buildingConfigId
+          ? { ...item, level: item.level + 1 }
+          : item,
+      );
+      return {
+        snapshot: refreshSnapshot({
+          ...snapshot,
+          inventory,
+          cave: { buildings },
+          wallet: {
+            ...snapshot.wallet,
+            spiritStone: stones.minus(cost.spiritStone).toFixed(0),
+          },
+        }),
+        events: [],
+        message: `消耗 ${cost.spiritStone} 灵石，${config.displayName}提升至 Lv.${building.level + 1}`,
       };
     });
   }
@@ -821,7 +883,7 @@ function createInitialSave(now: Date): LocalGameSave {
 }
 
 function refreshSnapshot(snapshot: BootstrapSnapshot): BootstrapSnapshot {
-  const bonuses = calculateLoadoutBonuses({
+  const loadout = calculateLoadoutBonuses({
     techniques: snapshot.techniques
       .filter((item) => item.equippedSlot !== null)
       .map((item) => ({ techniqueConfigId: item.techniqueConfigId, star: item.star })),
@@ -834,6 +896,10 @@ function refreshSnapshot(snapshot: BootstrapSnapshot): BootstrapSnapshot {
         rolledAffixes: item.rolledAffixes,
       })),
   });
+  const bonuses = addLoadoutBonuses(
+    loadout,
+    calculateCaveBonuses(snapshot.cave.buildings),
+  );
   const level = snapshot.progress.level;
   const realm = getRealmConfigForLevel(level);
   const unlocked = level >= 11;
