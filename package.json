@@ -14,11 +14,13 @@
     "build:wechat:release": "pnpm verify:release-config && node scripts/build-wechat.mjs release",
     "build:wechat:production": "pnpm verify:release-config && node scripts/build-wechat.mjs all --production",
     "typecheck:client": "pnpm --filter @cultivation-diary/shared build && tsc -p tsconfig.json --noEmit",
-    "typecheck": "pnpm --filter @cultivation-diary/shared typecheck && pnpm --filter @cultivation-diary/shared build && tsc -p tsconfig.json --noEmit",
+    "typecheck": "pnpm --filter @cultivation-diary/shared typecheck && pnpm --filter @cultivation-diary/shared build && tsc -p tsconfig.json --noEmit && tsc -p test/tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "verify:release-config": "node scripts/verify-release-config.mjs",
     "verify:wechat": "node scripts/verify-wechat-build.mjs",
     "verify:wechat:production": "node scripts/verify-wechat-build.mjs --production",
-    "verify:candidate": "pnpm typecheck && pnpm audit --registry=https://registry.npmjs.org --prod --audit-level=high && pnpm verify:release-config && pnpm verify:wechat"
+    "verify:candidate": "pnpm typecheck && pnpm test && pnpm audit --registry=https://registry.npmjs.org --prod --audit-level=high && pnpm verify:release-config && pnpm verify:wechat"
   },
   "creator": {
     "version": "3.8.8"
@@ -28,6 +30,7 @@
   },
   "devDependencies": {
     "@cocos/creator-types": "3.8.7",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.7"
   }
 }

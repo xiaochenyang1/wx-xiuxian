@@ -58,8 +58,11 @@ cultivation-diary.local-save.v1
 ## 验证命令
 
 ```bash
-# 检查共享数值核心和 Cocos 客户端 TypeScript
+# 检查共享数值核心、Cocos 客户端和测试的 TypeScript
 pnpm typecheck
+
+# 运行结算、存档和掉落的本地测试
+pnpm test
 
 # 只构建浏览器侧共享数值核心
 pnpm build:shared
@@ -74,7 +77,9 @@ pnpm build:wechat
 pnpm verify:wechat
 ```
 
-本仓库当前不包含测试文件；CI 执行依赖安装、发布配置校验、严格类型检查和生产依赖审计。
+测试用 vitest 运行在纯 Node 下，不需要 Cocos Creator、浏览器或微信环境：`LocalGameService` 通过构造函数接收 `PlatformAdapter`，测试传入基于 `Map` 的假实现，时间和掉落种子也都从入参注入。覆盖范围是结算数学、本地存档往返与校验、掉落与收获箱；`AppView` 的绘制代码不在覆盖范围内。
+
+CI 执行依赖安装、发布配置校验、严格类型检查、测试和生产依赖审计。
 
 ## 微信小游戏
 

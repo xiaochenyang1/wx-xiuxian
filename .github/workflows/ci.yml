@@ -13,7 +13,7 @@ concurrency:
 
 jobs:
   verify:
-    name: Typecheck, audit, and verify config
+    name: Typecheck, test, audit, and verify config
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -71,6 +71,9 @@ jobs:
 
       - name: Typecheck
         run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
 
       - name: Audit production dependencies
         run: pnpm audit --registry=https://registry.npmjs.org --prod --audit-level=high

@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "types": [],
+    "paths": {
+      "@cultivation-diary/shared": ["../shared/src/index.ts"]
+    }
+  },
+  // Only the test tree is listed; TypeScript pulls in the client modules the
+  // tests import. That keeps `cc`-dependent files such as AppView and AppArt
+  // out of this program, so no Cocos engine types are needed here.
+  "include": ["**/*.ts"]
+}
