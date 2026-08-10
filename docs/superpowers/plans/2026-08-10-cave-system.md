@@ -13,7 +13,7 @@
 - 存档配置版本 `GAME_CONFIG_VERSION` 从 `local-1.0.0` 升到 `local-1.1.0`；`LOCAL_SAVE_SCHEMA_VERSION` 保持 `1`。
 - 建筑等级范围 `0..10`，`0` 表示未建造，`maxLevel` 统一为 `10`。
 - 第 `n` 级灵石造价 `baseSpiritStoneCost * n^2`；材料需求 `baseQuantity * n`。
-- 材料只用现有五种：`material_wood`、`material_stone`、`material_soil`、`material_herb`、`material_ore`（确切 id 在 Task 3 Step 1 前用 grep 确认）。
+- 材料只用现有五种，确切 id 为：`wood`（木材）、`stone`（石材）、`spiritual_soil`（灵土）、`spiritual_herb`（灵草）、`ore`（矿石）。
 - 洞府解锁条件 `level >= 11`，与 `unlocks.cave` 一致。
 - 金额一律用 `decimal()` 与 `toFixed(0)` 处理，不用 `Number` 做灵石运算。
 - 每个 Task 结束前 `pnpm typecheck` 与 `pnpm test` 都必须通过。
@@ -191,13 +191,13 @@ wc -l assets/scripts/ui/AppView.ts assets/scripts/ui/panels/*.ts assets/scripts/
   export function addLoadoutBonuses(a: LoadoutBonuses, b: LoadoutBonuses): LoadoutBonuses;
   ```
 
-- [ ] **Step 1: 确认材料 id**
+- [ ] **Step 1: 确认材料 id 已在 Global Constraints 给出**
+
+五种材料的确切 id 是 `wood`、`stone`、`spiritual_soil`、`spiritual_herb`、`ore`。用下面这条命令核对一遍再写配置——id 写错只会在运行时抛 `getItemConfig` 错误，编译期不报：
 
 ```bash
-grep -n "displayName: \"木材\"\|displayName: \"石材\"\|displayName: \"灵土\"\|displayName: \"灵草\"\|displayName: \"矿石\"" -B 2 shared/src/config/assets.ts
+grep -nE '^\s+id: "(wood|stone|spiritual_soil|spiritual_herb|ore)"' -A 1 shared/src/config/assets.ts
 ```
-
-抄下五个确切的 `id` 字符串。配置里必须用真实 id，写错会在运行时抛 `getItemConfig` 错误而不是编译期报错。
 
 - [ ] **Step 2: 写失败测试**
 
@@ -210,7 +210,7 @@ import {
   calculateCaveBonuses,
   caveUpgradeCost,
   getCaveBuildingConfig,
-} from "../shared/src/config/cave";
+} from "@cultivation-diary/shared";
 
 describe("cave bonuses", () => {
   it("gives no bonus for unbuilt buildings", () => {
@@ -311,7 +311,7 @@ describe("cave upgrade cost", () => {
 - [ ] **Step 3: 跑测试确认失败**
 
 Run: `pnpm vitest run test/cave-bonuses.test.ts`
-Expected: FAIL，报错为无法解析 `../shared/src/config/cave`。
+Expected: FAIL，报错为 `@cultivation-diary/shared` 没有导出 `calculateCaveBonuses` 等名字。
 
 - [ ] **Step 4: 写 config/cave.ts**
 
