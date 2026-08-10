@@ -41,9 +41,11 @@ import type {
   AppState,
   FeaturePanel,
   MainTab,
+  UpcomingFeaturePanel,
 } from "../core/ClientTypes";
 import {
   canRunLocalMutation,
+  isUpcomingFeaturePanel,
   shouldShowPartnerUnlockNotice,
 } from "../core/ClientTypes";
 import {
@@ -106,6 +108,37 @@ const COLORS = {
   textMuted: color("#9fa9aa"),
   red: color("#a9554d"),
   black: color("#080d12"),
+};
+
+interface UpcomingFeatureCopy {
+  readonly title: string;
+  readonly summary: string;
+  readonly detail: string;
+}
+
+const UPCOMING_FEATURE_COPY: Readonly<
+  Record<UpcomingFeaturePanel, UpcomingFeatureCopy>
+> = {
+  alchemy: {
+    title: "炼丹房",
+    summary: "消耗草药与灵石炼制丹药",
+    detail: "当前版本可通过挂机掉落获得突破丹，尚不能自行炼制。",
+  },
+  crafting: {
+    title: "炼器室",
+    summary: "消耗材料与强化石打造法宝",
+    detail: "当前版本法宝只能通过挂机掉落获得，强化石暂无用途。",
+  },
+  sect: {
+    title: "宗门",
+    summary: "加入宗门、领取宗门任务与贡献",
+    detail: "宗门需要多人数据支撑，当前单机版本尚未开放。",
+  },
+  expedition: {
+    title: "历练",
+    summary: "派遣角色外出历练换取资源",
+    detail: "当前版本的资源产出集中在修炼挂机与掉落。",
+  },
 };
 
 interface AppViewActions {
@@ -2367,11 +2400,12 @@ export class AppView {
     }> = [
       { label: "功法", feature: "techniques" },
       { label: "法宝", feature: "equipment" },
-      { label: "炼丹", feature: "inventory" },
-      { label: "炼器", feature: "inventory" },
-      { label: "灵宠", feature: "profile" },
-      { label: "宗门", feature: "tasks" },
-      { label: "历练", feature: "tasks" },
+      { label: "炼丹", feature: "alchemy" },
+      { label: "炼器", feature: "crafting" },
+      // 灵宠是法宝的一个槽位（月影灵狐），直接开到法宝面板。
+      { label: "灵宠", feature: "equipment" },
+      { label: "宗门", feature: "sect" },
+      { label: "历练", feature: "expedition" },
     ];
     features.forEach((item, index) => {
       createBottomFeatureButton(
@@ -2384,6 +2418,7 @@ export class AppView {
           this.actions.feedback();
           this.actions.openFeature(item.feature);
         },
+        isUpcomingFeaturePanel(item.feature),
       );
     });
   }
@@ -2403,13 +2438,15 @@ export class AppView {
     shade.fill();
 
     drawBand(overlay, "FeaturePanelBody", 0, 0, 700, 1060, COLORS.panelStrong, COLORS.goldMuted);
-    const title = {
-      profile: "个人档案",
-      techniques: "功法库",
-      equipment: "法宝",
-      inventory: "行囊与挂机收获",
-      tasks: "修行任务",
-    }[feature];
+    const title = isUpcomingFeaturePanel(feature)
+      ? UPCOMING_FEATURE_COPY[feature].title
+      : {
+          profile: "个人档案",
+          techniques: "功法库",
+          equipment: "法宝",
+          inventory: "行囊与挂机收获",
+          tasks: "修行任务",
+        }[feature];
     addLabel(overlay, title, 0, 466, 420, 54, 31, COLORS.gold, true);
     createButton(
       overlay,
@@ -2430,6 +2467,7 @@ export class AppView {
     if (feature === "techniques") this.drawTechniquePanel(overlay, state);
     if (feature === "equipment") this.drawEquipmentPanel(overlay, state);
     if (feature === "tasks") this.drawTaskPanel(overlay, state);
+    if (isUpcomingFeaturePanel(feature)) this.drawUpcomingPanel(overlay, feature);
 
     if (state.featureMessage) {
       drawBand(overlay, "FeatureMessage", 0, -473, 620, 54, COLORS.inkGreenLight);
@@ -2444,6 +2482,42 @@ export class AppView {
         COLORS.gold,
       );
     }
+  }
+
+  private drawUpcomingPanel(
+    overlay: Node,
+    feature: UpcomingFeaturePanel,
+  ): void {
+    const copy = UPCOMING_FEATURE_COPY[feature];
+
+    const lock = graphicsNode(overlay, "UpcomingLock", 0, 190);
+    lock.strokeColor = COLORS.goldMuted;
+    lock.lineWidth = 8;
+    lock.arc(0, 30, 58, Math.PI, 0, false);
+    lock.stroke();
+    lock.fillColor = COLORS.inkGreenLight;
+    lock.roundRect(-78, -84, 156, 122, 12);
+    lock.fill();
+    lock.fillColor = COLORS.gold;
+    lock.circle(0, -22, 12);
+    lock.fill();
+    lock.rect(-5, -55, 10, 35);
+    lock.fill();
+
+    drawBand(overlay, "UpcomingNotice", 0, 10, 566, 96, COLORS.inkGreen, COLORS.goldMuted);
+    addLabel(overlay, "尚未开放", 0, 34, 420, 44, 26, COLORS.gold, true);
+    addLabel(overlay, copy.summary, 0, -16, 520, 36, 18, COLORS.jade);
+    addLabel(overlay, copy.detail, 0, -104, 560, 76, 17, COLORS.textMuted, false, 2);
+    addLabel(
+      overlay,
+      "后续版本开放后，此处会替换为真实功能。",
+      0,
+      -196,
+      560,
+      36,
+      15,
+      COLORS.textMuted,
+    );
   }
 
   private drawProfilePanel(overlay: Node, state: Readonly<AppState>): void {
@@ -4014,6 +4088,7 @@ function createBottomFeatureButton(
   y: number,
   iconIndex: number,
   onClick: () => void,
+  upcoming = false,
 ): void {
   const node = createUiNode(parent, `BottomFeature-${text}`);
   node.setPosition(x, y);
@@ -4022,7 +4097,7 @@ function createBottomFeatureButton(
   plate.fillColor = COLORS.panel;
   plate.roundRect(-50, -79, 100, 158, 5);
   plate.fill();
-  plate.strokeColor = COLORS.goldMuted;
+  plate.strokeColor = upcoming ? withAlpha(COLORS.goldMuted, 110) : COLORS.goldMuted;
   plate.lineWidth = 1;
   plate.roundRect(-50, -79, 100, 158, 5);
   plate.stroke();
@@ -4035,7 +4110,8 @@ function createBottomFeatureButton(
   medallion.fillColor = COLORS.black;
   medallion.circle(0, 0, 34);
   medallion.fill();
-  medallion.strokeColor = iconIndex % 2 === 0 ? COLORS.gold : COLORS.cyan;
+  const accent = iconIndex % 2 === 0 ? COLORS.gold : COLORS.cyan;
+  medallion.strokeColor = upcoming ? withAlpha(accent, 110) : accent;
   medallion.lineWidth = 2;
   medallion.circle(0, 0, 34);
   medallion.stroke();
@@ -4048,7 +4124,7 @@ function createBottomFeatureButton(
     92,
     32,
     19,
-    COLORS.text,
+    upcoming ? COLORS.textMuted : COLORS.text,
     true,
     1,
     HorizontalTextAlignment.CENTER,

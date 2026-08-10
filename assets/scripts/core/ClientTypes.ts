@@ -2,12 +2,34 @@ import type { BootstrapSnapshot } from "@cultivation-diary/shared";
 
 export type MainTab = "cultivation" | "partner" | "ranking" | "cave";
 export type StorageStatus = "saved" | "volatile";
-export type FeaturePanel =
+export type ImplementedFeaturePanel =
   | "profile"
   | "techniques"
   | "equipment"
   | "inventory"
   | "tasks";
+
+/**
+ * 入口已在界面上出现、但功能尚未实现的面板。点击后展示明确的未开放说明，
+ * 不会跳转到无关面板。
+ */
+export type UpcomingFeaturePanel =
+  | "alchemy"
+  | "crafting"
+  | "sect"
+  | "expedition";
+
+export type FeaturePanel = ImplementedFeaturePanel | UpcomingFeaturePanel;
+
+const UPCOMING_FEATURE_PANELS: ReadonlySet<string> = new Set<UpcomingFeaturePanel>(
+  ["alchemy", "crafting", "sect", "expedition"],
+);
+
+export function isUpcomingFeaturePanel(
+  feature: FeaturePanel,
+): feature is UpcomingFeaturePanel {
+  return UPCOMING_FEATURE_PANELS.has(feature);
+}
 
 export interface AppState {
   phase: "loading" | "ready" | "error";
