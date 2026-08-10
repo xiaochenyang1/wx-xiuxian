@@ -1,7 +1,5 @@
 import {
   getNewcomerTaskConfig,
-  type AssetQuality,
-  type AvatarVariant,
   type BootstrapSnapshot,
   type ChosenAvatarVariant,
   type DebugGrantTarget,
@@ -48,6 +46,39 @@ import {
   isUpcomingFeaturePanel,
   shouldShowPartnerUnlockNotice,
 } from "../core/ClientTypes";
+import { color, COLORS, withAlpha } from "./primitives/Colors";
+import {
+  addLabel,
+  createButton,
+  createTextInput,
+  createUiNode,
+  drawBand,
+  drawOrnatePanel,
+  drawPagination,
+  drawProgress,
+  graphicsNode,
+  redrawProgress,
+  removeAndDestroy,
+  setSize,
+} from "./primitives/Draw";
+import {
+  avatarVariantName,
+  formatSignedPowerDelta,
+  QUALITY_ORDER,
+  qualityColor,
+  qualityName,
+  qualityRank,
+} from "./primitives/Format";
+import {
+  drawAvatarPortrait,
+  drawCurrencyChip,
+  drawFeatureGlyph,
+  drawGoldenFormation,
+  drawMountainLayer,
+  drawPowerBanner,
+  drawTabIcon,
+  drawTribulationLightning,
+} from "./primitives/Scenery";
 import {
   Button,
   BlockInputEvents,
@@ -61,8 +92,6 @@ import {
   tween,
   type Tween,
   UIOpacity,
-  UITransform,
-  VerticalTextAlignment,
   Vec3,
 } from "cc";
 import { DEBUG } from "cc/env";
@@ -70,45 +99,6 @@ import { DEBUG } from "cc/env";
 const MAX_DEBUG_DROP_SEED = 0xffff_ffff;
 
 type DebugLifecycleStatus = "foreground" | "background";
-
-const QUALITY_ORDER: Readonly<Record<AssetQuality, number>> = {
-  common: 0,
-  uncommon: 1,
-  rare: 2,
-  epic: 3,
-  legendary: 4,
-  mythic: 5,
-  primordial: 6,
-};
-
-const QUALITY_NAMES: Readonly<Record<AssetQuality, string>> = {
-  common: "普通",
-  uncommon: "优秀",
-  rare: "稀有",
-  epic: "史诗",
-  legendary: "传说",
-  mythic: "神话",
-  primordial: "洪荒",
-};
-
-const COLORS = {
-  background: color("#0c141f"),
-  backgroundBlue: color("#132536"),
-  inkGreen: color("#17372f"),
-  inkGreenLight: color("#245247"),
-  panel: color("#14212d"),
-  panelStrong: color("#1b2f3b"),
-  gold: color("#d6b66a"),
-  goldBright: color("#f2d58a"),
-  goldMuted: color("#8f7a4d"),
-  jade: color("#74a99c"),
-  cyan: color("#62c9cf"),
-  green: color("#58cf72"),
-  text: color("#e8e3d5"),
-  textMuted: color("#9fa9aa"),
-  red: color("#a9554d"),
-  black: color("#080d12"),
-};
 
 interface UpcomingFeatureCopy {
   readonly title: string;
@@ -169,14 +159,6 @@ interface AppViewActions {
   feedback(): void;
 }
 
-interface ButtonStyle {
-  fill: Color;
-  stroke?: Color;
-  text?: Color;
-  fontSize?: number;
-  enabled?: boolean;
-}
-
 type PagedList =
   | "inventoryStacks"
   | "harvestChest"
@@ -189,8 +171,6 @@ interface PageWindow {
   start: number;
   end: number;
 }
-
-type LabelSizing = "shrink" | "fixed";
 
 export interface TechniqueSlotLabelLayout {
   readonly text: string;
@@ -3660,241 +3640,6 @@ function snapshotMatchesPresentationSource(
   );
 }
 
-function formatSignedPowerDelta(value: string): string {
-  return value.startsWith("-")
-    ? formatLargeNumber(value)
-    : `+${formatLargeNumber(value)}`;
-}
-
-function removeAndDestroy(node: Node): void {
-  node.removeFromParent();
-  node.destroy();
-}
-
-function drawGoldenFormation(parent: Node): void {
-  const graphic = graphicsNode(parent, "FormationLines", 0, 0);
-  graphic.strokeColor = COLORS.gold;
-  graphic.lineWidth = 3;
-  graphic.circle(0, 0, 118);
-  graphic.circle(0, 0, 84);
-  graphic.circle(0, 0, 42);
-  for (let index = 0; index < 12; index += 1) {
-    const angle = (Math.PI * 2 * index) / 12;
-    const inner = 45;
-    const outer = index % 2 === 0 ? 148 : 126;
-    graphic.moveTo(Math.cos(angle) * inner, Math.sin(angle) * inner);
-    graphic.lineTo(Math.cos(angle) * outer, Math.sin(angle) * outer);
-  }
-  graphic.stroke();
-  graphic.fillColor = COLORS.gold;
-  graphic.circle(0, 0, 8);
-  graphic.fill();
-}
-
-function drawTribulationLightning(parent: Node): void {
-  const graphic = graphicsNode(parent, "Lightning", 0, 94);
-  graphic.strokeColor = color("#b8d7e5");
-  graphic.lineWidth = 4;
-  const bolts: ReadonlyArray<ReadonlyArray<readonly [number, number]>> = [
-    [
-      [-220, 260],
-      [-164, 176],
-      [-192, 176],
-      [-98, 54],
-      [-126, 54],
-      [-38, -110],
-    ],
-    [
-      [220, 260],
-      [164, 176],
-      [192, 176],
-      [98, 54],
-      [126, 54],
-      [38, -110],
-    ],
-    [
-      [-38, 320],
-      [-14, 215],
-      [-38, 215],
-      [0, 92],
-      [38, 215],
-      [14, 215],
-      [38, 320],
-    ],
-  ];
-  for (const bolt of bolts) {
-    const first = bolt[0];
-    if (!first) continue;
-    graphic.moveTo(first[0], first[1]);
-    for (const point of bolt.slice(1)) graphic.lineTo(point[0], point[1]);
-  }
-  graphic.stroke();
-  graphic.strokeColor = COLORS.gold;
-  graphic.lineWidth = 1;
-  graphic.circle(0, 94, 138);
-  graphic.circle(0, 94, 182);
-  graphic.stroke();
-}
-
-function addLabel(
-  parent: Node,
-  text: string,
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-  fontSize: number,
-  textColor: Color,
-  bold = false,
-  maxLines = 1,
-  horizontalAlign = HorizontalTextAlignment.CENTER,
-  sizing: LabelSizing = "shrink",
-): Label {
-  const node = createUiNode(parent, `Label-${text.slice(0, 12)}`);
-  node.setPosition(x, y);
-  setSize(node, width, height);
-  const label = node.addComponent(Label);
-  label.string = text;
-  label.fontSize = fontSize;
-  label.lineHeight = Math.max(fontSize + 6, Math.floor(height / maxLines));
-  label.color = textColor;
-  label.horizontalAlign = horizontalAlign;
-  label.verticalAlign = VerticalTextAlignment.CENTER;
-  label.enableWrapText = maxLines > 1;
-  label.overflow =
-    sizing === "fixed" ? Label.Overflow.CLAMP : Label.Overflow.SHRINK;
-  label.isBold = bold;
-  return label;
-}
-
-function createButton(
-  parent: Node,
-  text: string,
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-  style: ButtonStyle,
-  onClick: () => void,
-): Node {
-  const enabled = style.enabled ?? true;
-  const node = createUiNode(parent, `Button-${text}`);
-  node.setPosition(x, y);
-  setSize(node, width, height);
-  const background = node.addComponent(Graphics);
-  background.fillColor = enabled ? style.fill : COLORS.panel;
-  background.roundRect(-width / 2, -height / 2, width, height, 6);
-  background.fill();
-  if (style.stroke) {
-    background.strokeColor = enabled ? style.stroke : COLORS.textMuted;
-    background.lineWidth = 2;
-    background.roundRect(-width / 2, -height / 2, width, height, 6);
-    background.stroke();
-  }
-  const button = node.addComponent(Button);
-  button.interactable = enabled;
-  button.transition = Button.Transition.SCALE;
-  button.zoomScale = 0.96;
-  if (enabled) node.on(Button.EventType.CLICK, onClick);
-  addLabel(
-    node,
-    text,
-    0,
-    0,
-    width - 20,
-    height - 10,
-    style.fontSize ?? 21,
-    enabled ? (style.text ?? COLORS.text) : COLORS.textMuted,
-    true,
-    1,
-    HorizontalTextAlignment.CENTER,
-    "fixed",
-  );
-  return node;
-}
-
-function createTextInput(
-  parent: Node,
-  value: string,
-  placeholder: string,
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-  onChange: (value: string) => void,
-  onSubmit: (value: string) => void,
-  enabled = true,
-  options: {
-    name?: string;
-    fontSize?: number;
-    inputMode?: EditBox["inputMode"];
-    maxLength?: number;
-  } = {},
-): EditBox {
-  const node = createUiNode(parent, options.name ?? "ProfileNameInput");
-  node.setPosition(x, y);
-  setSize(node, width, height);
-
-  const background = node.addComponent(Graphics);
-  background.fillColor = enabled ? COLORS.black : COLORS.panel;
-  background.roundRect(-width / 2, -height / 2, width, height, 6);
-  background.fill();
-  background.strokeColor = enabled ? COLORS.goldMuted : COLORS.textMuted;
-  background.lineWidth = 2;
-  background.roundRect(-width / 2, -height / 2, width, height, 6);
-  background.stroke();
-
-  const textLabel = addLabel(
-    node,
-    value,
-    0,
-    0,
-    width - 32,
-    height - 12,
-    options.fontSize ?? 19,
-    COLORS.text,
-    false,
-    1,
-    HorizontalTextAlignment.LEFT,
-  );
-  const placeholderLabel = addLabel(
-    node,
-    placeholder,
-    0,
-    0,
-    width - 32,
-    height - 12,
-    options.fontSize ?? 19,
-    COLORS.textMuted,
-    false,
-    1,
-    HorizontalTextAlignment.LEFT,
-  );
-  const editBox = node.addComponent(EditBox);
-  editBox.enabled = enabled;
-  editBox.textLabel = textLabel;
-  editBox.placeholderLabel = placeholderLabel;
-  editBox.inputMode = options.inputMode ?? EditBox.InputMode.SINGLE_LINE;
-  editBox.inputFlag = EditBox.InputFlag.DEFAULT;
-  editBox.returnType = EditBox.KeyboardReturnType.DONE;
-  editBox.maxLength = options.maxLength ?? 12;
-  editBox.placeholder = placeholder;
-  editBox.string = value;
-  node.on(EditBox.EventType.TEXT_CHANGED, (box: EditBox) => {
-    onChange(box.string);
-  });
-  node.on(
-    EditBox.EventType.EDITING_RETURN,
-    (box: EditBox, finalText?: string) => {
-      const value = finalText ?? box.string;
-      box.string = value;
-      onChange(value);
-      onSubmit(value);
-    },
-  );
-  return editBox;
-}
-
 function parseDebugDropSeed(value: string): number | null {
   if (!/^\d{1,10}$/.test(value)) return null;
   const seed = Number(value);
@@ -3916,58 +3661,6 @@ function presentationKindName(kind: CultivationPresentationPlan["kind"]): string
   if (kind === "level_up") return "升级";
   if (kind === "breakthrough") return "突破";
   return "战力";
-}
-
-function drawPagination(
-  parent: Node,
-  name: string,
-  x: number,
-  y: number,
-  page: number,
-  pageCount: number,
-  onPrevious: () => void,
-  onNext: () => void,
-): void {
-  if (pageCount <= 1) return;
-
-  drawPageButton(parent, `${name}-Previous`, "<", x - 72, y, page > 0, onPrevious);
-  addLabel(parent, `${page + 1} / ${pageCount}`, x, y, 78, 32, 16, COLORS.textMuted, true);
-  drawPageButton(
-    parent,
-    `${name}-Next`,
-    ">",
-    x + 72,
-    y,
-    page + 1 < pageCount,
-    onNext,
-  );
-}
-
-function drawPageButton(
-  parent: Node,
-  name: string,
-  text: string,
-  x: number,
-  y: number,
-  enabled: boolean,
-  onClick: () => void,
-): void {
-  if (enabled) {
-    createButton(
-      parent,
-      text,
-      x,
-      y,
-      52,
-      36,
-      { fill: COLORS.inkGreenLight, stroke: COLORS.goldMuted, fontSize: 18 },
-      onClick,
-    );
-    return;
-  }
-
-  drawBand(parent, name, x, y, 52, 36, COLORS.panel);
-  addLabel(parent, text, x, y, 32, 26, 18, COLORS.textMuted, true);
 }
 
 function createFeatureButton(
@@ -4198,395 +3891,11 @@ function createSideFeatureButton(
   }
 }
 
-function drawFeatureGlyph(
-  graphic: Graphics,
-  iconIndex: number,
-  scale: number,
-): void {
-  graphic.strokeColor = iconIndex % 2 === 0 ? COLORS.goldBright : COLORS.cyan;
-  graphic.fillColor = iconIndex % 2 === 0 ? COLORS.goldBright : COLORS.cyan;
-  graphic.lineWidth = 3;
-  const point = (value: number): number => value * scale;
-  if (iconIndex === 0) {
-    graphic.moveTo(point(-18), point(10));
-    graphic.lineTo(point(18), point(10));
-    graphic.moveTo(point(-18), point(-2));
-    graphic.lineTo(point(18), point(-2));
-    graphic.moveTo(point(-18), point(-14));
-    graphic.lineTo(point(18), point(-14));
-  } else if (iconIndex === 1) {
-    graphic.circle(0, point(-3), point(18));
-    graphic.moveTo(point(-9), point(14));
-    graphic.lineTo(0, point(24));
-    graphic.lineTo(point(9), point(14));
-  } else if (iconIndex === 2) {
-    graphic.roundRect(point(-20), point(-16), point(40), point(34), point(4));
-    graphic.moveTo(point(-10), point(18));
-    graphic.lineTo(point(-6), point(25));
-    graphic.lineTo(point(6), point(25));
-    graphic.lineTo(point(10), point(18));
-  } else if (iconIndex === 3) {
-    graphic.circle(0, point(2), point(18));
-    graphic.moveTo(0, point(2));
-    graphic.lineTo(0, point(14));
-    graphic.moveTo(0, point(2));
-    graphic.lineTo(point(10), point(-5));
-  } else if (iconIndex === 4) {
-    graphic.moveTo(point(-20), point(-16));
-    graphic.lineTo(0, point(22));
-    graphic.lineTo(point(20), point(-16));
-    graphic.moveTo(point(-13), point(-4));
-    graphic.lineTo(point(13), point(-4));
-  } else {
-    graphic.moveTo(point(-18), point(12));
-    graphic.lineTo(point(-8), point(-15));
-    graphic.lineTo(point(8), point(-15));
-    graphic.lineTo(point(18), point(12));
-    graphic.close();
-    graphic.moveTo(point(-12), point(3));
-    graphic.lineTo(point(12), point(3));
-  }
-  graphic.stroke();
-}
-
-function drawTabIcon(parent: Node, tab: MainTab, selected: boolean): Graphics {
-  const graphic = graphicsNode(parent, "TabIcon", 0, 20);
-  graphic.strokeColor = selected ? COLORS.gold : COLORS.textMuted;
-  graphic.fillColor = selected ? COLORS.gold : COLORS.textMuted;
-  graphic.lineWidth = 3;
-
-  if (tab === "cultivation") {
-    graphic.moveTo(-17, -17);
-    graphic.lineTo(15, 18);
-    graphic.moveTo(7, 17);
-    graphic.lineTo(17, 17);
-    graphic.lineTo(17, 7);
-    graphic.moveTo(-20, -20);
-    graphic.lineTo(-9, -16);
-    graphic.stroke();
-    return graphic;
-  }
-  if (tab === "partner") {
-    graphic.circle(-10, 10, 8);
-    graphic.circle(11, 10, 8);
-    graphic.stroke();
-    graphic.arc(-10, -13, 15, 0, Math.PI, false);
-    graphic.arc(11, -13, 15, 0, Math.PI, false);
-    graphic.stroke();
-    return graphic;
-  }
-  if (tab === "ranking") {
-    graphic.moveTo(-18, 18);
-    graphic.lineTo(18, 18);
-    graphic.lineTo(13, -2);
-    graphic.arc(0, -2, 13, 0, Math.PI, false);
-    graphic.lineTo(-18, 18);
-    graphic.moveTo(0, -15);
-    graphic.lineTo(0, -25);
-    graphic.moveTo(-12, -25);
-    graphic.lineTo(12, -25);
-    graphic.stroke();
-    return graphic;
-  }
-
-  graphic.moveTo(-25, -20);
-  graphic.lineTo(-8, 10);
-  graphic.lineTo(0, -2);
-  graphic.lineTo(12, 22);
-  graphic.lineTo(28, -20);
-  graphic.close();
-  graphic.stroke();
-  return graphic;
-}
-
-function drawPowerBanner(
-  parent: Node,
-  x: number,
-  y: number,
-  value: string,
-): void {
-  const banner = graphicsNode(parent, "PowerBanner", x, y);
-  banner.fillColor = withAlpha(COLORS.red, 238);
-  banner.moveTo(-150, 0);
-  banner.lineTo(-128, 31);
-  banner.lineTo(118, 31);
-  banner.lineTo(150, 0);
-  banner.lineTo(118, -31);
-  banner.lineTo(-128, -31);
-  banner.close();
-  banner.fill();
-  banner.strokeColor = COLORS.goldBright;
-  banner.lineWidth = 2;
-  banner.moveTo(-142, 0);
-  banner.lineTo(-121, 25);
-  banner.lineTo(112, 25);
-  banner.lineTo(140, 0);
-  banner.lineTo(112, -25);
-  banner.lineTo(-121, -25);
-  banner.close();
-  banner.stroke();
-  addLabel(
-    parent,
-    `战力 ${value}`,
-    x,
-    y,
-    258,
-    48,
-    29,
-    COLORS.goldBright,
-    true,
-    1,
-    HorizontalTextAlignment.CENTER,
-    "fixed",
-  );
-}
-
-function drawCurrencyChip(
-  parent: Node,
-  x: number,
-  y: number,
-  label: string,
-  value: string,
-  accent: Color,
-): void {
-  drawBand(
-    parent,
-    `Currency-${label}`,
-    x,
-    y,
-    138,
-    44,
-    COLORS.black,
-    COLORS.goldMuted,
-  );
-  const icon = graphicsNode(parent, `CurrencyIcon-${label}`, x - 47, y);
-  icon.fillColor = accent;
-  icon.circle(0, 0, 11);
-  icon.fill();
-  icon.strokeColor = COLORS.text;
-  icon.lineWidth = 1;
-  icon.circle(0, 0, 11);
-  icon.stroke();
-  addLabel(
-    parent,
-    value,
-    x + 17,
-    y,
-    82,
-    30,
-    17,
-    COLORS.text,
-    true,
-    1,
-    HorizontalTextAlignment.RIGHT,
-    "fixed",
-  );
-}
-
-function drawOrnatePanel(
-  parent: Node,
-  name: string,
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-): void {
-  drawBand(
-    parent,
-    name,
-    x,
-    y,
-    width,
-    height,
-    withAlpha(COLORS.panelStrong, 239),
-    COLORS.goldMuted,
-  );
-  const ornaments = graphicsNode(parent, `${name}-Ornaments`, x, y);
-  ornaments.strokeColor = COLORS.goldMuted;
-  ornaments.lineWidth = 2;
-  const halfWidth = width / 2;
-  const halfHeight = height / 2;
-  for (const direction of [-1, 1]) {
-    ornaments.moveTo(direction * (halfWidth - 10), halfHeight - 12);
-    ornaments.lineTo(direction * (halfWidth - 28), halfHeight - 12);
-    ornaments.lineTo(direction * (halfWidth - 38), halfHeight - 2);
-    ornaments.moveTo(direction * (halfWidth - 10), -halfHeight + 12);
-    ornaments.lineTo(direction * (halfWidth - 28), -halfHeight + 12);
-    ornaments.lineTo(direction * (halfWidth - 38), -halfHeight + 2);
-  }
-  ornaments.stroke();
-}
-
-function drawBand(
-  parent: Node,
-  name: string,
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-  fill: Color,
-  stroke?: Color,
-): void {
-  const graphic = graphicsNode(parent, name, x, y);
-  graphic.fillColor = fill;
-  graphic.roundRect(-width / 2, -height / 2, width, height, 6);
-  graphic.fill();
-  if (stroke) {
-    graphic.strokeColor = stroke;
-    graphic.lineWidth = 1;
-    graphic.roundRect(-width / 2, -height / 2, width, height, 6);
-    graphic.stroke();
-  }
-}
-
-function drawAvatarPortrait(
-  parent: Node,
-  variant: AvatarVariant,
-  x: number,
-  y: number,
-  scale = 1,
-): void {
-  const portrait = graphicsNode(parent, `Avatar-${variant}`, x, y);
-  portrait.node.setScale(scale, scale, 1);
-  portrait.fillColor = COLORS.black;
-  portrait.circle(0, 0, 31);
-  portrait.fill();
-  portrait.strokeColor = variant === "female" ? COLORS.gold : COLORS.jade;
-  portrait.lineWidth = 2;
-  portrait.circle(0, 0, 31);
-  portrait.stroke();
-
-  portrait.fillColor =
-    variant === "female"
-      ? COLORS.gold
-      : variant === "male"
-        ? COLORS.jade
-        : COLORS.textMuted;
-  portrait.circle(0, 9, 10);
-  portrait.fill();
-  portrait.arc(0, -18, 18, 0, Math.PI, false);
-  portrait.lineTo(-18, -18);
-  portrait.lineTo(18, -18);
-  portrait.close();
-  portrait.fill();
-
-  if (variant === "female") {
-    portrait.strokeColor = COLORS.gold;
-    portrait.lineWidth = 3;
-    portrait.arc(0, 10, 15, Math.PI * 0.05, Math.PI * 0.95, false);
-    portrait.stroke();
-  } else if (variant === "male") {
-    portrait.strokeColor = COLORS.jade;
-    portrait.lineWidth = 3;
-    portrait.moveTo(-11, 19);
-    portrait.lineTo(0, 24);
-    portrait.lineTo(11, 19);
-    portrait.stroke();
-  } else {
-    addLabel(portrait.node, "?", 0, 2, 30, 36, 22, COLORS.black, true);
-  }
-}
-
-function avatarVariantName(variant: ChosenAvatarVariant): string {
-  return variant === "male" ? "男修形象" : "女修形象";
-}
-
-function drawProgress(
-  parent: Node,
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-  progress: number,
-): Graphics {
-  const graphic = graphicsNode(parent, "Progress", x, y);
-  redrawProgress(graphic, width, height, progress);
-  return graphic;
-}
-
-function redrawProgress(
-  graphic: Graphics,
-  width: number,
-  height: number,
-  progress: number,
-): void {
-  graphic.clear();
-  graphic.fillColor = COLORS.black;
-  graphic.roundRect(-width / 2, -height / 2, width, height, height / 2);
-  graphic.fill();
-  const fillWidth = Math.max(height, width * Math.min(1, Math.max(0, progress)));
-  graphic.fillColor = COLORS.gold;
-  graphic.roundRect(-width / 2, -height / 2, fillWidth, height, height / 2);
-  graphic.fill();
-}
-
 function liveCultivationGainText(
   status: BootstrapSnapshot["progress"]["status"],
   gainedSinceAnchor: string,
 ): string {
   return `${status === "version_cap" ? "本轮积蓄" : "本轮修炼"} +${formatLargeNumber(gainedSinceAnchor)}`;
-}
-
-function drawMountainLayer(
-  graphic: Graphics,
-  baseY: number,
-  fill: Color,
-  points: ReadonlyArray<readonly [number, number]>,
-): void {
-  const first = points[0];
-  if (!first) return;
-  graphic.fillColor = fill;
-  graphic.moveTo(first[0], baseY + first[1]);
-  for (const point of points.slice(1)) graphic.lineTo(point[0], baseY + point[1]);
-  graphic.lineTo(points[points.length - 1]?.[0] ?? 0, baseY - 120);
-  graphic.lineTo(first[0], baseY - 120);
-  graphic.close();
-  graphic.fill();
-}
-
-function graphicsNode(parent: Node, name: string, x: number, y: number): Graphics {
-  const node = createUiNode(parent, name);
-  node.setPosition(x, y);
-  return node.addComponent(Graphics);
-}
-
-function createUiNode(parent: Node, name: string): Node {
-  const node = new Node(name);
-  node.layer = parent.layer;
-  parent.addChild(node);
-  return node;
-}
-
-function setSize(node: Node, width: number, height: number): UITransform {
-  const transform = node.getComponent(UITransform) ?? node.addComponent(UITransform);
-  transform.setContentSize(width, height);
-  transform.setAnchorPoint(0.5, 0.5);
-  return transform;
-}
-
-function qualityRank(quality: string): number {
-  return isKnownQuality(quality) ? QUALITY_ORDER[quality] : -1;
-}
-
-function qualityName(quality: string): string {
-  return isKnownQuality(quality) ? QUALITY_NAMES[quality] : quality;
-}
-
-function qualityColor(quality: string): Color {
-  const colors: Record<AssetQuality, Color> = {
-    common: COLORS.text,
-    uncommon: COLORS.jade,
-    rare: color("#66aee8"),
-    epic: color("#b28ae2"),
-    legendary: color("#e0a35c"),
-    mythic: color("#d96767"),
-    primordial: COLORS.gold,
-  };
-  return isKnownQuality(quality) ? colors[quality] : COLORS.text;
-}
-
-function isKnownQuality(value: string): value is AssetQuality {
-  return value in QUALITY_ORDER;
 }
 
 function regularEquipmentSlot(value: string): EquippedEquipmentSlot | null {
@@ -4604,14 +3913,6 @@ function regularEquipmentSlot(value: string): EquippedEquipmentSlot | null {
 function formatBasisPoints(value: number): string {
   const percent = value / 100;
   return `${Number.isInteger(percent) ? percent.toFixed(0) : percent.toFixed(2)}%`;
-}
-
-function color(hex: string): Color {
-  return new Color().fromHEX(hex);
-}
-
-function withAlpha(source: Color, alpha: number): Color {
-  return new Color(source.r, source.g, source.b, alpha);
 }
 
 function ratio(value: string, total: string): number {
