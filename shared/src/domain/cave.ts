@@ -1,0 +1,60 @@
+import { CAVE_BUILDING_CONFIGS, getCaveBuildingConfig } from "../config/cave";
+import type { LoadoutBonuses } from "./loadout";
+
+export interface CaveBuildingInput {
+  buildingConfigId: string;
+  level: number;
+}
+
+export function calculateCaveBonuses(
+  buildings: readonly CaveBuildingInput[],
+): LoadoutBonuses {
+  const total: LoadoutBonuses = {
+    fixedPower: "0",
+    experienceBonusBp: 0,
+    spiritStoneBonusBp: 0,
+    dropBonusBp: 0,
+  };
+
+  for (const building of buildings) {
+    const config = getCaveBuildingConfig(building.buildingConfigId);
+    if (
+      !Number.isInteger(building.level) ||
+      building.level < 0 ||
+      building.level > config.maxLevel
+    ) {
+      throw new RangeError(
+        `Cave building level must be between 0 and ${config.maxLevel}: ${building.level}`,
+      );
+    }
+    if (building.level === 0) continue;
+
+    const amount = config.bonusPerLevelBp * building.level;
+    if (config.bonusStat === "experience") total.experienceBonusBp += amount;
+    if (config.bonusStat === "spirit_stone") total.spiritStoneBonusBp += amount;
+    if (config.bonusStat === "drop") total.dropBonusBp += amount;
+    if (config.bonusStat === "power") {
+      total.fixedPower = (BigInt(total.fixedPower) + BigInt(amount)).toString();
+    }
+  }
+  return total;
+}
+
+export function addLoadoutBonuses(
+  a: LoadoutBonuses,
+  b: LoadoutBonuses,
+): LoadoutBonuses {
+  return {
+    fixedPower: (BigInt(a.fixedPower) + BigInt(b.fixedPower)).toString(),
+    experienceBonusBp: a.experienceBonusBp + b.experienceBonusBp,
+    spiritStoneBonusBp: a.spiritStoneBonusBp + b.spiritStoneBonusBp,
+    dropBonusBp: a.dropBonusBp + b.dropBonusBp,
+  };
+}
+
+export function createEmptyCaveBuildings(): CaveBuildingInput[] {
+  return CAVE_BUILDING_CONFIGS.map((config) => ({
+    buildingConfigId: config.id,
+    level: 0,
+  }));
+}
