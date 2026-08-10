@@ -138,7 +138,33 @@ Expected: 58 passed。
 
 顺序：`TaskPanel`（3371-3455）→ `TechniquePanel`（3102-3217）→ `EquipmentPanel`（3218-3370）→ `InventoryPanel`（2853-3101）→ `ProfilePanel`（2523-2852）。从小到大做，每个都重复 Step 2-3 的完整循环：抽出 → 改 `this` 为参数 → 改 switch 分支 → typecheck + test → 单独提交。
 
-翻页相关的 `this.showPage` 调用改为通过 `actions` 传入的回调。`PagedList` 和 `showPage` 本身留在 `AppView`，不要移进面板。
+分页不走 `actions`。`AppViewActions` 是 `GameBootstrap` 实现的应用层契约，分页是纯视图状态，塞进去会把 `PagedList` 推到应用层。改为给需要分页的面板加第四个参数：
+
+```ts
+export interface PanelPaging {
+  window(list: PagedList, itemCount: number, pageSize: number): PageWindow;
+  show(list: PagedList, page: number): void;
+}
+```
+
+由 `AppView` 自己实现并传入，`PagedList`、`PageWindow`、页码状态全部留在 `AppView`。`AppViewActions` 与 `GameBootstrap` 不动。
+
+`ProfilePanel` 在绘制中读写 `profileAvatarDraft`、`profileNameDraft`、`profileNameSource` 三个 AppView 字段，且与留在 AppView 的 `acceptProfileName`/`clearProfileDraft` 共享。同样用访问器接口传入，字段本体仍归 `AppView`：
+
+```ts
+export interface ProfileDraftState {
+  readonly avatar: ChosenAvatarVariant | null;
+  readonly name: string | null;
+  readonly nameSource: string | null;
+  setAvatar(value: ChosenAvatarVariant | null): void;
+  setName(value: string | null): void;
+  setNameSource(value: string | null): void;
+}
+```
+
+面板不得 import `AppView`——那是循环依赖。
+
+`AppState` 已经在 `core/ClientTypes.ts:34` 导出，Step 1 只需导出 `AppViewActions`。
 
 `drawOfflineSettlement`（3456）和 `drawPartnerUnlockNotice`（3563）不是 feature 面板，留在 `AppView`。
 
