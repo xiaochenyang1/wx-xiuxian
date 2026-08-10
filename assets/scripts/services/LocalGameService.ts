@@ -1317,8 +1317,8 @@ function isProgressSnapshot(value: unknown): boolean {
       value.status === "version_cap") &&
     isDecimalString(value.totalPower) &&
     isDecimalString(value.cultivationReserve) &&
-    isDecimalString(value.experiencePerSecond) &&
-    isDecimalString(value.spiritStonePerMinute) &&
+    isRateString(value.experiencePerSecond) &&
+    isRateString(value.spiritStonePerMinute) &&
     isDecimalString(value.loadoutFixedPower) &&
     isNonNegativeSafeInteger(value.experienceBonusBp) &&
     isNonNegativeSafeInteger(value.spiritStoneBonusBp) &&
@@ -1718,6 +1718,19 @@ function isDecimalString(value: unknown): value is string {
     typeof value === "string" &&
     value.length <= 256 &&
     /^(0|[1-9]\d*)$/.test(value)
+  );
+}
+
+/**
+ * Derived rates keep the fraction that a percentage bonus produces — a Lv.11
+ * cultivator with a 3% technique earns 22.66 experience per second. Stored
+ * balances stay whole; only these projections may carry decimals.
+ */
+function isRateString(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length <= 256 &&
+    /^(0|[1-9]\d*)(\.\d+)?$/.test(value)
   );
 }
 
