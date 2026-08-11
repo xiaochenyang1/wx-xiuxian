@@ -82,6 +82,7 @@ import {
   drawUpcomingPanel,
   UPCOMING_FEATURE_COPY,
 } from "./panels/UpcomingPanel";
+import { drawCavePanel } from "./panels/CavePanel";
 import {
   Button,
   BlockInputEvents,
@@ -114,6 +115,7 @@ export interface AppViewActions {
   renamePlayer(displayName: string): void;
   markPartnerUnlockNoticeSeen(): void;
   expandInventory(): void;
+  upgradeCaveBuilding(buildingConfigId: string): void;
   useInventoryItem(itemConfigId: string): void;
   transferHarvest(entryId: string): void;
   salvageHarvest(entryId: string): void;
@@ -2152,8 +2154,14 @@ export class AppView {
         : COLORS.inkGreen,
     );
     addLabel(this.root, `${state.bootstrap!.player.displayName}的洞府`, -56, 420, 500, 54, 31, COLORS.gold, true);
-    addLabel(this.root, "繁荣度 0", -56, 355, 340, 36, 19, COLORS.jade);
-    this.drawCaveBuildings();
+    drawCavePanel(
+      this.root,
+      state,
+      this.actions,
+      this.hasMainBackground("cave")
+        ? withAlpha(COLORS.panelStrong, 220)
+        : COLORS.panelStrong,
+    );
   }
 
   private drawLockedPage(
@@ -2190,23 +2198,6 @@ export class AppView {
     addLabel(this.root, title, -56, 57, 420, 58, 34, COLORS.text, true);
     addLabel(this.root, condition, -56, -18, 500, 44, 24, COLORS.gold);
     addLabel(this.root, detail, -56, -75, 520, 40, 18, COLORS.textMuted);
-  }
-
-  private drawCaveBuildings(): void {
-    const panelColor = this.hasMainBackground("cave")
-      ? withAlpha(COLORS.panelStrong, 220)
-      : COLORS.panelStrong;
-    const buildings = ["灵田", "炼丹房", "炼器室", "闭关室", "聚灵阵"];
-    buildings.forEach((name, index) => {
-      const column = index % 2;
-      const row = Math.floor(index / 2);
-      const x = column === 0 ? -205 : 95;
-      const y = 225 - row * 145;
-      drawBand(this.root, `Building${name}`, x, y, 292, 112, panelColor, COLORS.goldMuted);
-      addLabel(this.root, name, x - 54, y + 13, 160, 34, 20, COLORS.text, true);
-      addLabel(this.root, "Lv.1", x - 54, y - 23, 160, 28, 16, COLORS.jade);
-      addLabel(this.root, "+", x + 95, y, 42, 42, 27, COLORS.gold, true);
-    });
   }
 
   private drawNavigation(selected: MainTab): void {

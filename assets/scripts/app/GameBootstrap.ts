@@ -67,6 +67,11 @@ export class GameBootstrap extends Component {
           this.runMutation(() => this.localGame.markPartnerUnlockNoticeSeen()),
         expandInventory: () =>
           this.runMutation(() => this.localGame.expandInventory()),
+        upgradeCaveBuilding: (buildingConfigId) =>
+          this.runMutation(
+            () => this.localGame.upgradeCaveBuilding(buildingConfigId),
+            "power_change",
+          ),
         useInventoryItem: (itemConfigId) =>
           this.runMutation(() => this.localGame.useInventoryItem(itemConfigId)),
         transferHarvest: (entryId) =>
