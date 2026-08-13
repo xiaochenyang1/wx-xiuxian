@@ -1,10 +1,14 @@
 import {
+  ASSET_QUALITY_DISPLAY_NAMES,
   BASIS_POINTS,
+  CRAFTING_QUALITY_WEIGHTS,
   CAVE_BUILDING_CONFIGS,
   CAVE_MAX_LEVEL,
   EQUIPMENT_MAX_ENHANCE_LEVEL,
   EQUIPMENT_CONFIGS,
   EXPEDITION_STAGE_CONFIGS,
+  PARTNER_MAX_LEVEL,
+  SECT_MAX_LEVEL,
   MAX_LEVEL,
   NEWCOMER_REACH_LEVEL_8_TASK_ID,
   NEWCOMER_TASK_CONFIGS,
@@ -12,6 +16,8 @@ import {
   TECHNIQUE_CONFIGS,
   applyWholeExperience,
   addLoadoutBonuses,
+  calculatePartnerBonuses,
+  calculateSectBonuses,
   calculateCaveBonuses,
   calculateEquipmentContribution,
   calculateLoadoutBonuses,
@@ -20,22 +26,29 @@ import {
   calculateTechniqueContribution,
   calculateTotalPower,
   caveUpgradeCost,
+  craftingQualityWeight,
   completeBreakthrough,
   createEmptyCaveBuildings,
   decimal,
   equipmentEnhanceCost,
   evaluateExpeditionStage,
   getCaveBuildingConfig,
+  getAlchemyRecipeConfig,
+  getCraftingRecipeConfig,
   getEquipmentConfig,
   getExpeditionStageConfig,
   getItemConfig,
+  getPartnerConfig,
   getRealmConfigForLevel,
   getRealmStage,
   getRealmTitle,
   getTechniqueConfig,
+  getSectConfig,
   isAssetQuality,
+  partnerBondRequirement,
   requiredExperienceForLevel,
   settleCultivation,
+  sectContributionRequirement,
   simulateOnlineExperience,
   techniqueStarUpgradeCost,
   type AssetQuality,
@@ -50,7 +63,8 @@ import { CLIENT_CONFIG } from "../core/ClientConfig";
 import type { PlatformAdapter } from "../platform/PlatformAdapter";
 
 const LOCAL_SAVE_SCHEMA_VERSION = 1 as const;
-const GAME_CONFIG_VERSION = "local-1.2.0";
+const GAME_CONFIG_VERSION = "local-2.0.0";
+const GAME_CONFIG_VERSION_PRE_FEATURE_COMPLETION = "local-1.2.0";
 const GAME_CONFIG_VERSION_PRE_EXPEDITION = "local-1.1.0";
 const GAME_CONFIG_VERSION_PRE_CAVE = "local-1.0.0";
 const DROP_CONFIG_VERSION = "local-idle-drop-v1";
@@ -432,6 +446,276 @@ export class LocalGameService {
         },
         events: [],
         message: `首通${config.displayName}，获得 ${config.spiritStoneReward} 灵石和历练物资`,
+      };
+    });
+  }
+
+  brewAlchemy(recipeId: string): LocalMutationResult {
+    return this.mutate((snapshot) => {
+      let recipe: ReturnType<typeof getAlchemyRecipeConfig>;
+      try {
+        recipe = getAlchemyRecipeConfig(recipeId);
+      } catch {
+        throw new LocalGameError("未知的炼丹配方");
+      }
+      const alchemyRoomLevel = caveBuildingLevel(snapshot, "alchemy_room");
+      if (alchemyRoomLevel < recipe.requiredAlchemyRoomLevel) {
+        throw new LocalGameError(
+          `炼丹房需达到 Lv.${recipe.requiredAlchemyRoomLevel}`,
+        );
+      }
+      const stones = decimal(snapshot.wallet.spiritStone);
+      if (stones.lessThan(recipe.spiritStoneCost)) {
+        throw new LocalGameError(
+          `灵石不足，还需 ${decimal(recipe.spiritStoneCost).minus(stones).toFixed(0)} 灵石`,
+        );
+      }
+      for (const ingredient of recipe.ingredients) {
+        const owned = decimal(stackQuantity(snapshot, ingredient.itemConfigId));
+        if (owned.lessThan(ingredient.quantity)) {
+          throw new LocalGameError(
+            `${getItemConfig(ingredient.itemConfigId).displayName}不足，还需 ${decimal(ingredient.quantity).minus(owned).toFixed(0)} 个`,
+          );
+        }
+      }
+      let inventory = snapshot.inventory;
+      for (const ingredient of recipe.ingredients) {
+        inventory = setStackQuantity(
+          inventory,
+          ingredient.itemConfigId,
+          decimal(stackQuantity(snapshot, ingredient.itemConfigId))
+            .minus(ingredient.quantity)
+            .toFixed(0),
+        );
+      }
+      ensureStackOutputCapacity(
+        { ...snapshot, inventory },
+        recipe.outputItemConfigId,
+      );
+      inventory = addStack(
+        inventory,
+        recipe.outputItemConfigId,
+        recipe.outputQuantity,
+      );
+      return {
+        snapshot: {
+          ...snapshot,
+          inventory,
+          wallet: {
+            ...snapshot.wallet,
+            spiritStone: stones.minus(recipe.spiritStoneCost).toFixed(0),
+          },
+        },
+        events: [],
+        message: `炼成 ${recipe.displayName} x${recipe.outputQuantity}`,
+      };
+    });
+  }
+
+  craftEquipment(recipeId: string): LocalMutationResult {
+    return this.mutate((snapshot) => {
+      let recipe: ReturnType<typeof getCraftingRecipeConfig>;
+      try {
+        recipe = getCraftingRecipeConfig(recipeId);
+      } catch {
+        throw new LocalGameError("未知的炼器图谱");
+      }
+      const craftingRoomLevel = caveBuildingLevel(snapshot, "crafting_room");
+      if (craftingRoomLevel < recipe.requiredCraftingRoomLevel) {
+        throw new LocalGameError(
+          `炼器室需达到 Lv.${recipe.requiredCraftingRoomLevel}`,
+        );
+      }
+      const stones = decimal(snapshot.wallet.spiritStone);
+      if (stones.lessThan(recipe.spiritStoneCost)) {
+        throw new LocalGameError(
+          `灵石不足，还需 ${decimal(recipe.spiritStoneCost).minus(stones).toFixed(0)} 灵石`,
+        );
+      }
+      for (const material of recipe.materials) {
+        const owned = decimal(stackQuantity(snapshot, material.itemConfigId));
+        if (owned.lessThan(material.quantity)) {
+          throw new LocalGameError(
+            `${getItemConfig(material.itemConfigId).displayName}不足，还需 ${decimal(material.quantity).minus(owned).toFixed(0)} 个`,
+          );
+        }
+      }
+      let inventory = snapshot.inventory;
+      for (const material of recipe.materials) {
+        inventory = setStackQuantity(
+          inventory,
+          material.itemConfigId,
+          decimal(stackQuantity(snapshot, material.itemConfigId))
+            .minus(material.quantity)
+            .toFixed(0),
+        );
+      }
+      ensureEquipmentCapacity({ ...snapshot, inventory });
+      const quality = rollCraftingQuality(craftingRoomLevel, randomInteger);
+      const equipment = [
+        ...snapshot.equipment,
+        createCraftedEquipment(recipe.equipmentConfigId, quality),
+      ];
+      return {
+        snapshot: refreshSnapshot({
+          ...snapshot,
+          inventory,
+          equipment,
+          wallet: {
+            ...snapshot.wallet,
+            spiritStone: stones.minus(recipe.spiritStoneCost).toFixed(0),
+          },
+        }),
+        events: [],
+        message: `${recipe.displayName}成功，获得${qualityDisplayName(quality)}品质法宝`,
+      };
+    });
+  }
+
+  choosePartner(partnerId: string): LocalMutationResult {
+    return this.mutate((snapshot) => {
+      if (!snapshot.unlocks.partner) {
+        throw new LocalGameError("修为达到 Lv.11 才能结识道侣");
+      }
+      if (snapshot.partner.partnerId !== null) {
+        throw new LocalGameError("道侣已经确定，不能再次选择");
+      }
+      let config: ReturnType<typeof getPartnerConfig>;
+      try {
+        config = getPartnerConfig(partnerId);
+      } catch {
+        throw new LocalGameError("未知的道侣");
+      }
+      return {
+        snapshot: refreshSnapshot({
+          ...snapshot,
+          partner: { partnerId: config.id, level: 1, bond: 0 },
+        }),
+        events: [],
+        message: `已与${config.displayName}结为道侣`,
+      };
+    });
+  }
+
+  cultivateWithPartner(): LocalMutationResult {
+    return this.mutate((snapshot) => {
+      const partnerId = snapshot.partner.partnerId;
+      if (partnerId === null) throw new LocalGameError("请先选择一位道侣");
+      if (snapshot.partner.level >= PARTNER_MAX_LEVEL) {
+        throw new LocalGameError("道侣亲密等级已满");
+      }
+      const pills = decimal(stackQuantity(snapshot, "dual_cultivation_pill"));
+      if (pills.lessThan(1)) throw new LocalGameError("双修丹不足");
+      const targetLevel = snapshot.partner.level + 1;
+      const gainedBond = 100;
+      const nextBond = snapshot.partner.bond + gainedBond;
+      const required = partnerBondRequirement(targetLevel);
+      const level = nextBond >= required ? targetLevel : snapshot.partner.level;
+      const bond =
+        level >= PARTNER_MAX_LEVEL
+          ? 0
+          : nextBond >= required
+            ? nextBond - required
+            : nextBond;
+      const inventory = setStackQuantity(
+        snapshot.inventory,
+        "dual_cultivation_pill",
+        pills.minus(1).toFixed(0),
+      );
+      const config = getPartnerConfig(partnerId);
+      return {
+        snapshot: refreshSnapshot({
+          ...snapshot,
+          inventory,
+          partner: { partnerId, level, bond },
+        }),
+        events: [],
+        message:
+          level > snapshot.partner.level
+            ? `${config.displayName}亲密提升至 Lv.${level}`
+            : `与${config.displayName}双修，亲密 +${gainedBond}`,
+      };
+    });
+  }
+
+  joinSect(sectId: string): LocalMutationResult {
+    return this.mutate((snapshot) => {
+      if (snapshot.progress.level < 11) {
+        throw new LocalGameError("修为达到 Lv.11 才能拜入宗门");
+      }
+      if (snapshot.sect.sectId !== null) {
+        throw new LocalGameError("已经加入宗门，当前不能改投他派");
+      }
+      let config: ReturnType<typeof getSectConfig>;
+      try {
+        config = getSectConfig(sectId);
+      } catch {
+        throw new LocalGameError("未知的宗门");
+      }
+      return {
+        snapshot: refreshSnapshot({
+          ...snapshot,
+          sect: { sectId: config.id, level: 1, contribution: 0 },
+        }),
+        events: [],
+        message: `已拜入${config.displayName}`,
+      };
+    });
+  }
+
+  donateToSect(): LocalMutationResult {
+    return this.mutate((snapshot) => {
+      const sectId = snapshot.sect.sectId;
+      if (sectId === null) throw new LocalGameError("请先加入宗门");
+      if (snapshot.sect.level >= SECT_MAX_LEVEL) {
+        throw new LocalGameError("宗门声望已满级");
+      }
+      const donation = [
+        { itemConfigId: "wood", quantity: 5 },
+        { itemConfigId: "stone", quantity: 5 },
+        { itemConfigId: "spiritual_herb", quantity: 5 },
+      ] as const;
+      for (const material of donation) {
+        const owned = decimal(stackQuantity(snapshot, material.itemConfigId));
+        if (owned.lessThan(material.quantity)) {
+          throw new LocalGameError(
+            `${getItemConfig(material.itemConfigId).displayName}不足，还需 ${decimal(material.quantity).minus(owned).toFixed(0)} 个`,
+          );
+        }
+      }
+      let inventory = snapshot.inventory;
+      for (const material of donation) {
+        inventory = setStackQuantity(
+          inventory,
+          material.itemConfigId,
+          decimal(stackQuantity(snapshot, material.itemConfigId))
+            .minus(material.quantity)
+            .toFixed(0),
+        );
+      }
+      const contributionGain = 100;
+      const targetLevel = snapshot.sect.level + 1;
+      const totalContribution = snapshot.sect.contribution + contributionGain;
+      const required = sectContributionRequirement(targetLevel);
+      const level = totalContribution >= required ? targetLevel : snapshot.sect.level;
+      const contribution =
+        level >= SECT_MAX_LEVEL
+          ? 0
+          : totalContribution >= required
+            ? totalContribution - required
+            : totalContribution;
+      const config = getSectConfig(sectId);
+      return {
+        snapshot: refreshSnapshot({
+          ...snapshot,
+          inventory,
+          sect: { sectId, level, contribution },
+        }),
+        events: [],
+        message:
+          level > snapshot.sect.level
+            ? `${config.displayName}声望提升至 Lv.${level}`
+            : `向${config.displayName}捐献物资，贡献 +${contributionGain}`,
       };
     });
   }
@@ -1041,6 +1325,8 @@ function createInitialSave(now: Date): LocalGameSave {
     harvestChest: { pendingCount: 0, entries: [] },
     cave: { buildings: createEmptyCaveBuildings() },
     expedition: { clearedStageIds: [] },
+    partner: { partnerId: null, level: 0, bond: 0 },
+    sect: { sectId: null, level: 0, contribution: 0 },
     newcomerTasks: NEWCOMER_TASK_CONFIGS.map((task) => ({
       taskConfigId: task.id,
       progress: "1",
@@ -1104,10 +1390,12 @@ function refreshSnapshot(snapshot: BootstrapSnapshot): BootstrapSnapshot {
         rolledAffixes: item.rolledAffixes,
       })),
   });
-  const bonuses = addLoadoutBonuses(
+  let bonuses = addLoadoutBonuses(
     loadout,
     calculateCaveBonuses(snapshot.cave.buildings),
   );
+  bonuses = addLoadoutBonuses(bonuses, calculatePartnerBonuses(snapshot.partner));
+  bonuses = addLoadoutBonuses(bonuses, calculateSectBonuses(snapshot.sect));
   const level = snapshot.progress.level;
   const realm = getRealmConfigForLevel(level);
   const unlocked = level >= 11;
@@ -1383,6 +1671,110 @@ function createTechniqueSnapshot(
   };
 }
 
+function caveBuildingLevel(
+  snapshot: BootstrapSnapshot,
+  buildingConfigId: string,
+): number {
+  return (
+    snapshot.cave.buildings.find(
+      (building) => building.buildingConfigId === buildingConfigId,
+    )?.level ?? 0
+  );
+}
+
+function occupiedBagSlots(snapshot: BootstrapSnapshot): number {
+  return (
+    snapshot.inventory.stacks.length +
+    snapshot.equipment.filter((equipment) => equipment.location !== "harvest")
+      .length
+  );
+}
+
+function ensureStackOutputCapacity(
+  snapshot: BootstrapSnapshot,
+  itemConfigId: string,
+): void {
+  const alreadyOwned = snapshot.inventory.stacks.some(
+    (stack) => stack.itemConfigId === itemConfigId,
+  );
+  if (!alreadyOwned && occupiedBagSlots(snapshot) >= snapshot.inventory.bagCapacity) {
+    throw new LocalGameError("行囊空间不足，无法收取炼丹产物");
+  }
+}
+
+function ensureEquipmentCapacity(snapshot: BootstrapSnapshot): void {
+  if (occupiedBagSlots(snapshot) >= snapshot.inventory.bagCapacity) {
+    throw new LocalGameError("行囊空间不足，无法收取炼器产物");
+  }
+}
+
+function rollCraftingQuality(
+  craftingRoomLevel: number,
+  randomInt: (maxExclusive: number) => number,
+): AssetQuality {
+  const weights = CRAFTING_QUALITY_WEIGHTS.map(({ quality }) => ({
+    quality,
+    weight: craftingQualityWeight(quality, craftingRoomLevel),
+  }));
+  const totalWeight = weights.reduce((total, entry) => total + entry.weight, 0);
+  let rollValue = randomInt(totalWeight);
+  for (const entry of weights) {
+    if (rollValue < entry.weight) return entry.quality;
+    rollValue -= entry.weight;
+  }
+  return "common";
+}
+
+function createCraftedEquipment(
+  equipmentConfigId: string,
+  quality: AssetQuality,
+): BootstrapSnapshot["equipment"][number] {
+  const config = getEquipmentConfig(equipmentConfigId);
+  const affixStats: ReadonlyArray<
+    "experience_bonus" | "spirit_stone_bonus" | "drop_bonus"
+  > = ["experience_bonus", "spirit_stone_bonus", "drop_bonus"];
+  const affixCount =
+    quality === "legendary"
+      ? 3
+      : quality === "epic"
+        ? 2
+        : quality === "rare" || quality === "uncommon"
+          ? 1
+          : 0;
+  const affixValueBp =
+    quality === "legendary"
+      ? 350
+      : quality === "epic"
+        ? 250
+        : quality === "rare"
+          ? 180
+          : 100;
+  const startIndex = ["weapon", "armor", "accessory", "mount", "pet"].indexOf(
+    config.slot,
+  );
+  return {
+    id: createLocalId(),
+    equipmentConfigId,
+    displayName: config.displayName,
+    quality,
+    slot: config.slot,
+    fixedPower: "0",
+    enhanceLevel: 0,
+    rolledAffixes: Array.from({ length: affixCount }, (_, index) => ({
+      stat: affixStats[(startIndex + index) % affixStats.length]!,
+      valueBp: affixValueBp,
+    })),
+    location: "bag",
+    equippedSlot: null,
+    isLocked: false,
+    configVersion: DROP_CONFIG_VERSION,
+  };
+}
+
+function qualityDisplayName(quality: AssetQuality): string {
+  return ASSET_QUALITY_DISPLAY_NAMES[quality];
+}
+
 function addStack(
   inventory: BootstrapSnapshot["inventory"],
   itemConfigId: string,
@@ -1478,6 +1870,18 @@ function migrateSnapshot(snapshot: unknown): unknown {
     migrated = {
       ...migrated,
       expedition: { clearedStageIds: [] },
+      config: { ...config, version: GAME_CONFIG_VERSION_PRE_FEATURE_COMPLETION },
+    };
+    config = migrated.config;
+  }
+  if (
+    isRecord(config) &&
+    config.version === GAME_CONFIG_VERSION_PRE_FEATURE_COMPLETION
+  ) {
+    migrated = {
+      ...migrated,
+      partner: { partnerId: null, level: 0, bond: 0 },
+      sect: { sectId: null, level: 0, contribution: 0 },
       config: { ...config, version: GAME_CONFIG_VERSION },
     };
   }
@@ -1546,6 +1950,8 @@ function isBootstrapSnapshot(value: unknown): value is BootstrapSnapshot {
     isHarvestChest(chest) &&
     isCaveSnapshot(value.cave) &&
     isExpeditionSnapshot(value.expedition) &&
+    isPartnerSnapshot(value.partner) &&
+    isSectSnapshot(value.sect) &&
     isNewcomerTaskList(value.newcomerTasks) &&
     isRecord(value.unlocks) &&
     typeof value.unlocks.partner === "boolean" &&
@@ -1563,6 +1969,45 @@ function isBootstrapSnapshot(value: unknown): value is BootstrapSnapshot {
     isOfflineSettlement(value.offlineSettlement) &&
     hasConsistentInventory(value)
   );
+}
+
+function isPartnerSnapshot(value: unknown): boolean {
+  if (!isRecord(value) || !isIntegerBetween(value.bond, 0, 1_000_000_000)) {
+    return false;
+  }
+  if (value.partnerId === null) {
+    return value.level === 0 && value.bond === 0;
+  }
+  if (typeof value.partnerId !== "string") return false;
+  try {
+    getPartnerConfig(value.partnerId);
+  } catch {
+    return false;
+  }
+  if (!isIntegerBetween(value.level, 1, PARTNER_MAX_LEVEL)) return false;
+  if (value.level === PARTNER_MAX_LEVEL) return value.bond === 0;
+  return Number(value.bond) < partnerBondRequirement(Number(value.level) + 1);
+}
+
+function isSectSnapshot(value: unknown): boolean {
+  if (
+    !isRecord(value) ||
+    !isIntegerBetween(value.contribution, 0, 1_000_000_000)
+  ) {
+    return false;
+  }
+  if (value.sectId === null) {
+    return value.level === 0 && value.contribution === 0;
+  }
+  if (typeof value.sectId !== "string") return false;
+  try {
+    getSectConfig(value.sectId);
+  } catch {
+    return false;
+  }
+  if (!isIntegerBetween(value.level, 1, SECT_MAX_LEVEL)) return false;
+  if (value.level === SECT_MAX_LEVEL) return value.contribution === 0;
+  return Number(value.contribution) < sectContributionRequirement(Number(value.level) + 1);
 }
 
 function isExpeditionSnapshot(value: unknown): boolean {

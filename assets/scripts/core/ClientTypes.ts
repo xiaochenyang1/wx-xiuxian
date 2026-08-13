@@ -8,28 +8,12 @@ export type ImplementedFeaturePanel =
   | "equipment"
   | "inventory"
   | "tasks"
-  | "expedition";
-
-/**
- * 入口已在界面上出现、但功能尚未实现的面板。点击后展示明确的未开放说明，
- * 不会跳转到无关面板。
- */
-export type UpcomingFeaturePanel =
   | "alchemy"
   | "crafting"
-  | "sect";
+  | "sect"
+  | "expedition";
 
-export type FeaturePanel = ImplementedFeaturePanel | UpcomingFeaturePanel;
-
-const UPCOMING_FEATURE_PANELS: ReadonlySet<string> = new Set<UpcomingFeaturePanel>(
-  ["alchemy", "crafting", "sect"],
-);
-
-export function isUpcomingFeaturePanel(
-  feature: FeaturePanel,
-): feature is UpcomingFeaturePanel {
-  return UPCOMING_FEATURE_PANELS.has(feature);
-}
+export type FeaturePanel = ImplementedFeaturePanel;
 
 export interface AppState {
   phase: "loading" | "ready" | "error";

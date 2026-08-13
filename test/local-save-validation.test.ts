@@ -119,6 +119,55 @@ describe("expedition validation", () => {
   });
 });
 
+describe("partner and sect validation", () => {
+  it("accepts valid chosen and joined progression records", () => {
+    expect(
+      corrupt((save) => {
+        save.snapshot.partner = { partnerId: "jun_rulan", level: 3, bond: 200 };
+        save.snapshot.sect = { sectId: "qingyun", level: 3, contribution: 500 };
+      }),
+    ).toBe(false);
+  });
+
+  it("rejects missing, unknown, or inconsistent partner records", () => {
+    expect(corrupt((save) => delete save.snapshot.partner)).toBe(true);
+    expect(
+      corrupt((save) => {
+        save.snapshot.partner = { partnerId: null, level: 1, bond: 0 };
+      }),
+    ).toBe(true);
+    expect(
+      corrupt((save) => {
+        save.snapshot.partner = { partnerId: "unknown", level: 1, bond: 0 };
+      }),
+    ).toBe(true);
+    expect(
+      corrupt((save) => {
+        save.snapshot.partner = { partnerId: "jun_rulan", level: 1, bond: 200 };
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects missing, unknown, or inconsistent sect records", () => {
+    expect(corrupt((save) => delete save.snapshot.sect)).toBe(true);
+    expect(
+      corrupt((save) => {
+        save.snapshot.sect = { sectId: null, level: 1, contribution: 0 };
+      }),
+    ).toBe(true);
+    expect(
+      corrupt((save) => {
+        save.snapshot.sect = { sectId: "unknown", level: 1, contribution: 0 };
+      }),
+    ).toBe(true);
+    expect(
+      corrupt((save) => {
+        save.snapshot.sect = { sectId: "qingyun", level: 1, contribution: 400 };
+      }),
+    ).toBe(true);
+  });
+});
+
 describe("save envelope validation", () => {
   it("rejects an unknown schema version", () => {
     expect(corrupt((save) => (save.schemaVersion = 2))).toBe(true);

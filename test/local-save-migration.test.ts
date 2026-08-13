@@ -48,6 +48,15 @@ function preExpeditionSave(): MutableSave {
   return save;
 }
 
+/** Rewind a current save to the pre-completion `local-1.2.0` format. */
+function preFeatureCompletionSave(): MutableSave {
+  const save = authenticSaveWithProgress();
+  delete save.snapshot.partner;
+  delete save.snapshot.sect;
+  save.snapshot.config.version = "local-1.2.0";
+  return save;
+}
+
 function load(save: unknown): LocalGameService {
   const platform = new FakePlatformAdapter();
   platform.seed(SAVE_KEY, save);
@@ -100,7 +109,7 @@ describe("local-1.0.0 migration", () => {
   it("chains through both migrations and backfills every new subsystem", () => {
     const service = load(legacySave());
 
-    expect(service.snapshot.config.version).toBe("local-1.2.0");
+    expect(service.snapshot.config.version).toBe("local-2.0.0");
     expect(service.snapshot.cave.buildings).toEqual(
       CAVE_BUILDING_CONFIGS.map((config) => ({
         buildingConfigId: config.id,
@@ -108,6 +117,8 @@ describe("local-1.0.0 migration", () => {
       })),
     );
     expect(service.snapshot.expedition.clearedStageIds).toEqual([]);
+    expect(service.snapshot.partner).toEqual({ partnerId: null, level: 0, bond: 0 });
+    expect(service.snapshot.sect).toEqual({ sectId: null, level: 0, contribution: 0 });
   });
 
   it("round-trips cave levels without drift", () => {
@@ -122,7 +133,7 @@ describe("local-1.0.0 migration", () => {
   });
 });
 
-describe("local-1.1.0 to local-1.2.0 migration", () => {
+describe("local-1.1.0 migration", () => {
   it("keeps cave progress while adding an empty expedition record", () => {
     const legacy = preExpeditionSave();
     legacy.snapshot.cave.buildings[0].level = 4;
@@ -130,7 +141,7 @@ describe("local-1.1.0 to local-1.2.0 migration", () => {
 
     const service = load(legacy);
 
-    expect(service.snapshot.config.version).toBe("local-1.2.0");
+    expect(service.snapshot.config.version).toBe("local-2.0.0");
     expect(service.snapshot.cave.buildings[0].level).toBe(4);
     expect(service.snapshot.cave.buildings[3].level).toBe(CAVE_MAX_LEVEL);
     expect(service.snapshot.expedition.clearedStageIds).toEqual([]);
@@ -158,6 +169,36 @@ describe("local-1.1.0 to local-1.2.0 migration", () => {
         save.snapshot.expedition.clearedStageIds,
       );
     }
+  });
+});
+
+describe("local-1.2.0 to local-2.0.0 migration", () => {
+  it("keeps existing progress while adding partner and sect records", () => {
+    const legacy = preFeatureCompletionSave();
+    legacy.snapshot.cave.buildings[0].level = 6;
+    legacy.snapshot.expedition.clearedStageIds = EXPEDITION_STAGE_CONFIGS.slice(
+      0,
+      3,
+    ).map((stage) => stage.id);
+
+    const service = load(legacy);
+
+    expect(service.snapshot.config.version).toBe("local-2.0.0");
+    expect(service.snapshot.cave.buildings[0].level).toBe(6);
+    expect(service.snapshot.expedition.clearedStageIds).toEqual(
+      legacy.snapshot.expedition.clearedStageIds,
+    );
+    expect(service.snapshot.partner).toEqual({ partnerId: null, level: 0, bond: 0 });
+    expect(service.snapshot.sect).toEqual({ sectId: null, level: 0, contribution: 0 });
+    expect(service.snapshot.player.id).toBe(legacy.snapshot.player.id);
+  });
+
+  it("does not discard a valid pre-completion save", () => {
+    const platform = new FakePlatformAdapter();
+    platform.seed(SAVE_KEY, preFeatureCompletionSave());
+    const service = new LocalGameService(platform);
+
+    expect(service.initialize(LATER).created).toBe(false);
   });
 });
 

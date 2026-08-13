@@ -1,10 +1,21 @@
 import {
+  PARTNER_CONFIGS,
+  PARTNER_MAX_LEVEL,
   type BootstrapSnapshot,
   type ChosenAvatarVariant,
   type DebugGrantTarget,
   type EquippedEquipmentSlot,
   type OfflineSettlementSummary,
 } from "@cultivation-diary/shared";
+import {
+  partnerProgressText,
+  selectedPartner,
+  socialBonusText,
+} from "../core/SocialDisplay";
+import {
+  buildLocalRanking,
+  type RankingCategory,
+} from "../core/RankingDisplay";
 import {
   formatLargeNumber,
   interpolateBigNumberStrings,
@@ -40,11 +51,7 @@ import type {
   FeaturePanel,
   MainTab,
 } from "../core/ClientTypes";
-import {
-  canRunLocalMutation,
-  isUpcomingFeaturePanel,
-  shouldShowPartnerUnlockNotice,
-} from "../core/ClientTypes";
+import { canRunLocalMutation, shouldShowPartnerUnlockNotice } from "../core/ClientTypes";
 import { color, COLORS, withAlpha } from "./primitives/Colors";
 import {
   addLabel,
@@ -80,10 +87,9 @@ import {
 } from "./panels/ProfilePanel";
 import { drawTaskPanel } from "./panels/TaskPanel";
 import { drawTechniquePanel } from "./panels/TechniquePanel";
-import {
-  drawUpcomingPanel,
-  UPCOMING_FEATURE_COPY,
-} from "./panels/UpcomingPanel";
+import { drawAlchemyPanel } from "./panels/AlchemyPanel";
+import { drawCraftingPanel } from "./panels/CraftingPanel";
+import { drawSectPanel } from "./panels/SectPanel";
 import { drawCavePanel } from "./panels/CavePanel";
 import {
   Button,
@@ -120,6 +126,12 @@ export interface AppViewActions {
   expandInventory(): void;
   upgradeCaveBuilding(buildingConfigId: string): void;
   challengeExpedition(stageConfigId: string): void;
+  brewAlchemy(recipeId: string): void;
+  craftEquipment(recipeId: string): void;
+  choosePartner(partnerId: string): void;
+  cultivateWithPartner(): void;
+  joinSect(sectId: string): void;
+  donateToSect(): void;
   upgradeTechnique(techniqueConfigId: string): void;
   useInventoryItem(itemConfigId: string): void;
   transferHarvest(entryId: string): void;
@@ -243,6 +255,7 @@ export class AppView {
   private profileAvatarDraft: ChosenAvatarVariant | null = null;
   private profileNameDraft: string | null = null;
   private profileNameSource: string | null = null;
+  private rankingCategory: RankingCategory = "power";
   private pendingPresentation: CultivationPresentationPlan | null = null;
   private activePresentation: CultivationPresentationPlan | null = null;
   private activePresentationTween: Tween<Node> | null = null;
@@ -437,7 +450,7 @@ export class AppView {
           this.drawPartner(state);
           break;
         case "ranking":
-          this.drawRanking();
+          this.drawRanking(state);
           break;
         case "cave":
           this.drawCave(state);
@@ -2003,27 +2016,102 @@ export class AppView {
       return;
     }
 
+    const snapshot = state.bootstrap!;
+    const partner = selectedPartner(snapshot);
     drawBand(
       this.root,
-      "PartnerEmpty",
+      "PartnerPanel",
       -56,
       130,
       566,
-      690,
+      720,
       this.hasMainBackground("partner")
         ? withAlpha(COLORS.inkGreen, 150)
         : COLORS.inkGreen,
     );
-    addLabel(this.root, "小师妹", -56, 245, 500, 58, 35, COLORS.gold, true);
-    addLabel(this.root, "亲密度 0 / 1000", -56, 145, 450, 40, 20, COLORS.text);
-    drawProgress(this.root, -56, 105, 430, 14, 0);
-    addLabel(this.root, "初识", -56, 45, 280, 40, 22, COLORS.jade);
+    if (!partner) {
+      addLabel(this.root, "选择道侣", -56, 410, 500, 50, 30, COLORS.gold, true);
+      addLabel(this.root, "结缘后不可更换，请确认你的修行方向", -56, 355, 500, 34, 17, COLORS.textMuted);
+      PARTNER_CONFIGS.forEach((candidate, index) => {
+        const y = 230 - index * 145;
+        drawBand(this.root, `PartnerCandidate-${candidate.id}`, -56, y, 500, 112, COLORS.panel, COLORS.goldMuted);
+        addLabel(this.root, candidate.displayName, -238, y + 27, 180, 32, 20, COLORS.gold, true);
+        addLabel(this.root, `${candidate.epithet}　${socialBonusText(candidate, 1)}`, -48, y + 27, 270, 30, 15, COLORS.jade);
+        createButton(
+          this.root,
+          "结缘",
+          186,
+          y,
+          88,
+          44,
+          { fill: COLORS.inkGreen, stroke: COLORS.goldMuted, fontSize: 15 },
+          () => this.actions.choosePartner(candidate.id),
+        );
+      });
+      return;
+    }
+    addLabel(this.root, partner.displayName, -56, 370, 500, 54, 32, COLORS.gold, true);
+    addLabel(this.root, partner.epithet, -56, 322, 500, 32, 18, COLORS.text);
+    addLabel(
+      this.root,
+      `亲密等级 Lv.${snapshot.partner.level}　${socialBonusText(partner, snapshot.partner.level)}`,
+      -56,
+      260,
+      500,
+      34,
+      18,
+      COLORS.jade,
+    );
+    addLabel(this.root, partnerProgressText(snapshot), -56, 205, 500, 34, 18, COLORS.textMuted);
+    drawProgress(
+      this.root,
+      -56,
+      160,
+      430,
+      14,
+      snapshot.partner.level >= PARTNER_MAX_LEVEL
+        ? 1
+        : snapshot.partner.bond / ((snapshot.partner.level + 1) * 100),
+    );
+    createButton(
+      this.root,
+      snapshot.partner.level >= PARTNER_MAX_LEVEL ? "已圆满" : "双修",
+      -56,
+      75,
+      170,
+      58,
+      {
+        fill: COLORS.inkGreen,
+        stroke: COLORS.gold,
+        text: COLORS.gold,
+        fontSize: 19,
+        enabled: snapshot.partner.level < PARTNER_MAX_LEVEL,
+      },
+      () => this.actions.cultivateWithPartner(),
+    );
+    addLabel(
+      this.root,
+      `双修丹 ${snapshot.inventory.stacks.find((stack) => stack.itemConfigId === "dual_cultivation_pill")?.quantity ?? "0"}`,
+      -56,
+      15,
+      300,
+      32,
+      16,
+      COLORS.textMuted,
+    );
   }
 
-  private drawRanking(): void {
+  private drawRanking(state: Readonly<AppState>): void {
     const hasBackground = this.hasMainBackground("ranking");
-    const tabs = ["战力", "等级", "财富", "洞府", "伴侣"];
-    tabs.forEach((tab, index) => {
+    const tabEntries: ReadonlyArray<{ label: string; category: RankingCategory }> = [
+      { label: "战力", category: "power" },
+      { label: "等级", category: "level" },
+      { label: "财富", category: "wealth" },
+      { label: "洞府", category: "cave" },
+      { label: "伴侣", category: "partner" },
+    ];
+    const entries = buildLocalRanking(state.bootstrap!, this.rankingCategory);
+    tabEntries.forEach((tab, index) => {
       const x = -280 + index * 112;
       drawBand(
         this.root,
@@ -2033,11 +2121,15 @@ export class AppView {
         102,
         54,
         hasBackground
-          ? withAlpha(index === 0 ? COLORS.inkGreenLight : COLORS.panel, 224)
-          : index === 0 ? COLORS.inkGreenLight : COLORS.panel,
-        index === 0 ? COLORS.gold : undefined,
+          ? withAlpha(tab.category === this.rankingCategory ? COLORS.inkGreenLight : COLORS.panel, 224)
+          : tab.category === this.rankingCategory ? COLORS.inkGreenLight : COLORS.panel,
+        tab.category === this.rankingCategory ? COLORS.gold : undefined,
       );
-      addLabel(this.root, tab, x, 474, 94, 34, 17, index === 0 ? COLORS.gold : COLORS.textMuted);
+      addLabel(this.root, tab.label, x, 474, 94, 34, 17, tab.category === this.rankingCategory ? COLORS.gold : COLORS.textMuted);
+      createButton(this.root, "", x, 474, 102, 54, { fill: withAlpha(COLORS.black, 0), stroke: withAlpha(COLORS.black, 0), fontSize: 1 }, () => {
+        this.rankingCategory = tab.category;
+        if (this.lastState) this.render(this.lastState);
+      });
     });
 
     drawBand(
@@ -2049,11 +2141,12 @@ export class AppView {
       650,
       hasBackground ? withAlpha(COLORS.panel, 208) : COLORS.panel,
     );
-    [1, 2, 3, 4, 5].forEach((rank, index) => {
+    entries.slice(0, 5).forEach((entry, index) => {
+      const rank = index + 1;
       const y = 355 - index * 105;
       addLabel(this.root, String(rank), -285, y, 62, 38, 21, rank <= 3 ? COLORS.gold : COLORS.text);
-      addLabel(this.root, "暂无道友", -110, y, 240, 38, 20, COLORS.textMuted);
-      addLabel(this.root, "--", 180, y, 100, 38, 20, COLORS.textMuted);
+      addLabel(this.root, entry.displayName, -110, y, 240, 38, 20, entry.player ? COLORS.gold : COLORS.text);
+      addLabel(this.root, formatLargeNumber(entry.value), 180, y, 120, 38, 19, entry.player ? COLORS.jade : COLORS.textMuted);
       const line = graphicsNode(this.root, `RankLine${rank}`, -56, y - 48);
       line.strokeColor = color("#2b3c46");
       line.lineWidth = 1;
@@ -2071,8 +2164,10 @@ export class AppView {
       hasBackground ? withAlpha(COLORS.inkGreenLight, 228) : COLORS.inkGreenLight,
       COLORS.goldMuted,
     );
+    const playerRank = entries.findIndex((entry) => entry.player) + 1;
     addLabel(this.root, "我的排名", -220, -275, 180, 40, 20, COLORS.text);
-    addLabel(this.root, "--", 180, -275, 100, 40, 22, COLORS.gold, true);
+    addLabel(this.root, `${playerRank} / ${entries.length}`, 150, -275, 150, 40, 20, COLORS.gold, true);
+    addLabel(this.root, "本地试炼榜 · NPC 标杆固定，玩家数据来自本地存档", 0, -350, 580, 32, 14, COLORS.textMuted);
   }
 
   private drawCave(state: Readonly<AppState>): void {
@@ -2231,7 +2326,6 @@ export class AppView {
           this.actions.feedback();
           this.actions.openFeature(item.feature);
         },
-        isUpcomingFeaturePanel(item.feature),
       );
     });
   }
@@ -2251,16 +2345,17 @@ export class AppView {
     shade.fill();
 
     drawBand(overlay, "FeaturePanelBody", 0, 0, 700, 1060, COLORS.panelStrong, COLORS.goldMuted);
-    const title = isUpcomingFeaturePanel(feature)
-      ? UPCOMING_FEATURE_COPY[feature].title
-      : {
-          profile: "个人档案",
-          techniques: "功法库",
-          equipment: "法宝",
-          inventory: "行囊与挂机收获",
-          tasks: "修行任务",
-          expedition: "历练",
-        }[feature];
+    const title = {
+      profile: "个人档案",
+      techniques: "功法库",
+      equipment: "法宝",
+      inventory: "行囊与挂机收获",
+      tasks: "修行任务",
+      alchemy: "炼丹房",
+      crafting: "炼器室",
+      sect: "宗门",
+      expedition: "历练",
+    }[feature];
     addLabel(overlay, title, 0, 466, 420, 54, 31, COLORS.gold, true);
     createButton(
       overlay,
@@ -2291,9 +2386,11 @@ export class AppView {
     if (feature === "equipment")
       drawEquipmentPanel(overlay, state, this.actions, this.panelPaging);
     if (feature === "tasks") drawTaskPanel(overlay, state);
+    if (feature === "alchemy") drawAlchemyPanel(overlay, state, this.actions);
+    if (feature === "crafting") drawCraftingPanel(overlay, state, this.actions);
+    if (feature === "sect") drawSectPanel(overlay, state, this.actions);
     if (feature === "expedition")
       drawExpeditionPanel(overlay, state, this.actions);
-    if (isUpcomingFeaturePanel(feature)) drawUpcomingPanel(overlay, feature);
 
     if (state.featureMessage) {
       drawBand(overlay, "FeatureMessage", 0, -473, 620, 54, COLORS.inkGreenLight);
@@ -2349,6 +2446,7 @@ export class AppView {
     this.pages.harvestChest = 0;
     this.pages.techniques = 0;
     this.pages.equipment = 0;
+    this.rankingCategory = "power";
   }
 
   private drawOfflineSettlement(settlement: OfflineSettlementSummary): void {
@@ -2710,7 +2808,6 @@ function createBottomFeatureButton(
   y: number,
   iconIndex: number,
   onClick: () => void,
-  upcoming = false,
 ): void {
   const node = createUiNode(parent, `BottomFeature-${text}`);
   node.setPosition(x, y);
@@ -2719,7 +2816,7 @@ function createBottomFeatureButton(
   plate.fillColor = COLORS.panel;
   plate.roundRect(-50, -79, 100, 158, 5);
   plate.fill();
-  plate.strokeColor = upcoming ? withAlpha(COLORS.goldMuted, 110) : COLORS.goldMuted;
+  plate.strokeColor = COLORS.goldMuted;
   plate.lineWidth = 1;
   plate.roundRect(-50, -79, 100, 158, 5);
   plate.stroke();
@@ -2733,7 +2830,7 @@ function createBottomFeatureButton(
   medallion.circle(0, 0, 34);
   medallion.fill();
   const accent = iconIndex % 2 === 0 ? COLORS.gold : COLORS.cyan;
-  medallion.strokeColor = upcoming ? withAlpha(accent, 110) : accent;
+  medallion.strokeColor = accent;
   medallion.lineWidth = 2;
   medallion.circle(0, 0, 34);
   medallion.stroke();
@@ -2746,7 +2843,7 @@ function createBottomFeatureButton(
     92,
     32,
     19,
-    upcoming ? COLORS.textMuted : COLORS.text,
+    COLORS.text,
     true,
     1,
     HorizontalTextAlignment.CENTER,

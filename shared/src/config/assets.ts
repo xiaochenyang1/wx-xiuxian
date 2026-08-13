@@ -114,6 +114,10 @@ export const ITEM_CONFIGS: readonly ItemConfig[] = [
     displayName: "经验丹（大）",
     category: "consumable",
     protectedFromBulkSalvage: false,
+    useEffect: {
+      type: "simulated_online_experience",
+      durationSeconds: 6 * 60 * 60,
+    },
   },
   {
     id: "breakthrough_pill",

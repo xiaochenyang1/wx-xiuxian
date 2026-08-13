@@ -180,6 +180,70 @@ describe("every reachable save round-trips", () => {
     });
   });
 
+  it("survives alchemy and crafting results", () => {
+    const reloaded = assertReloads(
+      "alchemy and crafting",
+      (service) => {
+        service.brewAlchemy("small_experience_pill");
+        service.craftEquipment("forge_weapon");
+      },
+      (save) => {
+        save.snapshot.wallet.spiritStone = "10000";
+        save.snapshot.inventory.stacks = [
+          { itemConfigId: "spiritual_herb", displayName: "灵草", quantity: "20" },
+          { itemConfigId: "spiritual_soil", displayName: "灵土", quantity: "20" },
+          { itemConfigId: "wood", displayName: "木材", quantity: "20" },
+          { itemConfigId: "ore", displayName: "矿石", quantity: "20" },
+        ];
+      },
+    );
+
+    expect(
+      reloaded.snapshot.inventory.stacks.find(
+        (stack) => stack.itemConfigId === "exp_pill_small",
+      )?.quantity,
+    ).toBe("1");
+    expect(
+      reloaded.snapshot.equipment.some(
+        (equipment) => equipment.equipmentConfigId === "ironwood_sword",
+      ),
+    ).toBe(true);
+  });
+
+  it("survives partner and sect progression", () => {
+    const reloaded = assertReloads(
+      "partner and sect",
+      (service) => {
+        service.choosePartner("jun_rulan");
+        service.cultivateWithPartner();
+        service.joinSect("qingyun");
+        service.donateToSect();
+      },
+      (save) => {
+        save.snapshot.progress.level = 11;
+        save.snapshot.progress.experience = "0";
+        save.snapshot.progress.status = "gaining";
+        save.snapshot.inventory.stacks = [
+          { itemConfigId: "dual_cultivation_pill", displayName: "双修丹", quantity: "2" },
+          { itemConfigId: "wood", displayName: "木材", quantity: "10" },
+          { itemConfigId: "stone", displayName: "石材", quantity: "10" },
+          { itemConfigId: "spiritual_herb", displayName: "灵草", quantity: "10" },
+        ];
+      },
+    );
+
+    expect(reloaded.snapshot.partner).toEqual({
+      partnerId: "jun_rulan",
+      level: 1,
+      bond: 100,
+    });
+    expect(reloaded.snapshot.sect).toEqual({
+      sectId: "qingyun",
+      level: 1,
+      contribution: 100,
+    });
+  });
+
   it("survives a mixed equipment enhancement and technique star-up chain", () => {
     const reloaded = assertReloads(
       "asset upgrades",

@@ -100,6 +100,16 @@ export interface BootstrapSnapshot {
   expedition: {
     clearedStageIds: ExpeditionStageId[];
   };
+  partner: {
+    partnerId: string | null;
+    level: number;
+    bond: number;
+  };
+  sect: {
+    sectId: string | null;
+    level: number;
+    contribution: number;
+  };
   newcomerTasks: Array<{
     taskConfigId: string;
     progress: BigNumberString;

@@ -74,6 +74,24 @@ export class GameBootstrap extends Component {
           ),
         challengeExpedition: (stageConfigId) =>
           this.runMutation(() => this.localGame.challengeExpedition(stageConfigId)),
+        brewAlchemy: (recipeId) =>
+          this.runMutation(() => this.localGame.brewAlchemy(recipeId)),
+        craftEquipment: (recipeId) =>
+          this.runMutation(() => this.localGame.craftEquipment(recipeId)),
+        choosePartner: (partnerId) =>
+          this.runMutation(
+            () => this.localGame.choosePartner(partnerId),
+            "power_change",
+          ),
+        cultivateWithPartner: () =>
+          this.runMutation(
+            () => this.localGame.cultivateWithPartner(),
+            "power_change",
+          ),
+        joinSect: (sectId) =>
+          this.runMutation(() => this.localGame.joinSect(sectId), "power_change"),
+        donateToSect: () =>
+          this.runMutation(() => this.localGame.donateToSect(), "power_change"),
         upgradeTechnique: (techniqueConfigId) =>
           this.runMutation(
             () => this.localGame.upgradeTechnique(techniqueConfigId),
