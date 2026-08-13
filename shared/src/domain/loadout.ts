@@ -1,20 +1,15 @@
 import {
+  ASSET_QUALITY_MULTIPLIER_BP,
   ASSET_QUALITY_ORDER,
   getEquipmentConfig,
   getTechniqueConfig,
   type AssetQuality,
 } from "../config/assets";
+import {
+  EQUIPMENT_MAX_ENHANCE_LEVEL,
+  TECHNIQUE_MAX_STAR,
+} from "../config/asset-upgrades";
 import type { BigNumberString } from "../types";
-
-const QUALITY_MULTIPLIER_BP: Readonly<Record<AssetQuality, number>> = {
-  common: 10_000,
-  uncommon: 15_000,
-  rare: 25_000,
-  epic: 40_000,
-  legendary: 70_000,
-  mythic: 120_000,
-  primordial: 200_000,
-};
 
 const TECHNIQUE_STAR_MULTIPLIER_BP = [
   0,
@@ -55,9 +50,11 @@ export function calculateTechniqueContribution(
   const config = getTechniqueConfig(input.techniqueConfigId);
   const starMultiplierBp = TECHNIQUE_STAR_MULTIPLIER_BP[input.star];
   if (starMultiplierBp === undefined) {
-    throw new RangeError(`Technique star must be between 1 and 10: ${input.star}`);
+    throw new RangeError(
+      `Technique star must be between 1 and ${TECHNIQUE_MAX_STAR}: ${input.star}`,
+    );
   }
-  const qualityMultiplierBp = QUALITY_MULTIPLIER_BP[config.quality];
+  const qualityMultiplierBp = ASSET_QUALITY_MULTIPLIER_BP[config.quality];
   return {
     fixedPower: scaleByBasisPoints(
       config.fixedPower,
@@ -85,8 +82,14 @@ export function calculateTechniqueContribution(
 export function calculateEquipmentContribution(
   input: EquippedEquipmentInput,
 ): LoadoutBonuses {
-  if (!Number.isInteger(input.enhanceLevel) || input.enhanceLevel < 0 || input.enhanceLevel > 20) {
-    throw new RangeError(`Equipment enhance level must be between 0 and 20: ${input.enhanceLevel}`);
+  if (
+    !Number.isInteger(input.enhanceLevel) ||
+    input.enhanceLevel < 0 ||
+    input.enhanceLevel > EQUIPMENT_MAX_ENHANCE_LEVEL
+  ) {
+    throw new RangeError(
+      `Equipment enhance level must be between 0 and ${EQUIPMENT_MAX_ENHANCE_LEVEL}: ${input.enhanceLevel}`,
+    );
   }
   if (!(input.quality in ASSET_QUALITY_ORDER)) {
     throw new RangeError(`Unknown equipment quality: ${input.quality}`);
@@ -95,7 +98,7 @@ export function calculateEquipmentContribution(
   const config = getEquipmentConfig(input.equipmentConfigId);
   const fixedPower = scaleByBasisPoints(
     config.basePower,
-    QUALITY_MULTIPLIER_BP[input.quality],
+    ASSET_QUALITY_MULTIPLIER_BP[input.quality],
     10_000 + input.enhanceLevel * 1_000,
   );
   const bonuses = emptyLoadoutBonuses();

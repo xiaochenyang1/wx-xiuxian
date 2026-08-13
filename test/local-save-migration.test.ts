@@ -1,4 +1,8 @@
-import { CAVE_BUILDING_CONFIGS, CAVE_MAX_LEVEL } from "@cultivation-diary/shared";
+import {
+  CAVE_BUILDING_CONFIGS,
+  CAVE_MAX_LEVEL,
+  EXPEDITION_STAGE_CONFIGS,
+} from "@cultivation-diary/shared";
 import { describe, expect, it } from "vitest";
 import { CLIENT_CONFIG } from "../assets/scripts/core/ClientConfig";
 import { LocalGameService } from "../assets/scripts/services/LocalGameService";
@@ -31,7 +35,16 @@ function authenticSaveWithProgress(): MutableSave {
 function legacySave(): MutableSave {
   const save = authenticSaveWithProgress();
   delete save.snapshot.cave;
+  delete save.snapshot.expedition;
   save.snapshot.config.version = "local-1.0.0";
+  return save;
+}
+
+/** Rewind a current save to the cave-only `local-1.1.0` format. */
+function preExpeditionSave(): MutableSave {
+  const save = authenticSaveWithProgress();
+  delete save.snapshot.expedition;
+  save.snapshot.config.version = "local-1.1.0";
   return save;
 }
 
@@ -57,7 +70,7 @@ function corruptCave(mutate: (save: MutableSave) => void): boolean {
   return rejected(save);
 }
 
-describe("local-1.0.0 to local-1.1.0 migration", () => {
+describe("local-1.0.0 migration", () => {
   it("keeps every piece of player progress", () => {
     const legacy = legacySave();
     const service = load(legacy);
@@ -84,16 +97,17 @@ describe("local-1.0.0 to local-1.1.0 migration", () => {
     expect(service.initialize(LATER).created).toBe(false);
   });
 
-  it("backfills five unbuilt buildings and bumps the config version", () => {
+  it("chains through both migrations and backfills every new subsystem", () => {
     const service = load(legacySave());
 
-    expect(service.snapshot.config.version).toBe("local-1.1.0");
+    expect(service.snapshot.config.version).toBe("local-1.2.0");
     expect(service.snapshot.cave.buildings).toEqual(
       CAVE_BUILDING_CONFIGS.map((config) => ({
         buildingConfigId: config.id,
         level: 0,
       })),
     );
+    expect(service.snapshot.expedition.clearedStageIds).toEqual([]);
   });
 
   it("round-trips cave levels without drift", () => {
@@ -105,6 +119,45 @@ describe("local-1.0.0 to local-1.1.0 migration", () => {
 
     expect(service.snapshot.cave.buildings[0]!.level).toBe(4);
     expect(service.snapshot.cave.buildings[3]!.level).toBe(CAVE_MAX_LEVEL);
+  });
+});
+
+describe("local-1.1.0 to local-1.2.0 migration", () => {
+  it("keeps cave progress while adding an empty expedition record", () => {
+    const legacy = preExpeditionSave();
+    legacy.snapshot.cave.buildings[0].level = 4;
+    legacy.snapshot.cave.buildings[3].level = CAVE_MAX_LEVEL;
+
+    const service = load(legacy);
+
+    expect(service.snapshot.config.version).toBe("local-1.2.0");
+    expect(service.snapshot.cave.buildings[0].level).toBe(4);
+    expect(service.snapshot.cave.buildings[3].level).toBe(CAVE_MAX_LEVEL);
+    expect(service.snapshot.expedition.clearedStageIds).toEqual([]);
+    expect(service.snapshot.player.id).toBe(legacy.snapshot.player.id);
+    expect(service.snapshot.account.id).toBe(legacy.snapshot.account.id);
+  });
+
+  it("does not discard a valid cave-era save", () => {
+    const platform = new FakePlatformAdapter();
+    platform.seed(SAVE_KEY, preExpeditionSave());
+    const service = new LocalGameService(platform);
+
+    expect(service.initialize(LATER).created).toBe(false);
+  });
+
+  it("round-trips every valid cleared-stage prefix", () => {
+    for (let length = 0; length <= EXPEDITION_STAGE_CONFIGS.length; length += 1) {
+      const save = authenticSaveWithProgress();
+      save.snapshot.expedition.clearedStageIds = EXPEDITION_STAGE_CONFIGS.slice(
+        0,
+        length,
+      ).map((stage) => stage.id);
+
+      expect(load(save).snapshot.expedition.clearedStageIds).toEqual(
+        save.snapshot.expedition.clearedStageIds,
+      );
+    }
   });
 });
 

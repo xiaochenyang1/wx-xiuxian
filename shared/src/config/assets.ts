@@ -76,6 +76,18 @@ export const ASSET_QUALITY_ORDER: Readonly<Record<AssetQuality, number>> = {
   primordial: 6,
 };
 
+export const ASSET_QUALITY_MULTIPLIER_BP: Readonly<
+  Record<AssetQuality, number>
+> = {
+  common: 10_000,
+  uncommon: 15_000,
+  rare: 25_000,
+  epic: 40_000,
+  legendary: 70_000,
+  mythic: 120_000,
+  primordial: 200_000,
+};
+
 export const ASSET_QUALITY_DISPLAY_NAMES: Readonly<Record<AssetQuality, string>> = {
   common: "普通",
   uncommon: "优秀",
@@ -330,5 +342,5 @@ export function getEquipmentConfig(id: string): EquipmentConfig {
 }
 
 export function isAssetQuality(value: string): value is AssetQuality {
-  return value in ASSET_QUALITY_ORDER;
+  return Object.prototype.hasOwnProperty.call(ASSET_QUALITY_ORDER, value);
 }

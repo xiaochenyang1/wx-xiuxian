@@ -1,4 +1,5 @@
 import type { RealmId, RealmStage } from "../config/realms";
+import type { ExpeditionStageId } from "../config/expedition";
 import type { ProgressionStatus } from "../domain/progression";
 import type { BigNumberString } from "../types";
 import type { OfflineSettlementSummary } from "./offline";
@@ -95,6 +96,9 @@ export interface BootstrapSnapshot {
       buildingConfigId: string;
       level: number;
     }>;
+  };
+  expedition: {
+    clearedStageIds: ExpeditionStageId[];
   };
   newcomerTasks: Array<{
     taskConfigId: string;

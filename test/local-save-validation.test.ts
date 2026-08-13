@@ -1,4 +1,4 @@
-import { MAX_LEVEL } from "@cultivation-diary/shared";
+import { EXPEDITION_STAGE_CONFIGS, MAX_LEVEL } from "@cultivation-diary/shared";
 import { describe, expect, it } from "vitest";
 import { CLIENT_CONFIG } from "../assets/scripts/core/ClientConfig";
 import { LocalGameService } from "../assets/scripts/services/LocalGameService";
@@ -58,6 +58,64 @@ describe("save validation accepts legitimate data", () => {
         save.snapshot.player.avatarVariant = "female";
       }),
     ).toBe(false);
+  });
+
+  it("accepts every valid expedition prefix", () => {
+    for (let length = 0; length <= EXPEDITION_STAGE_CONFIGS.length; length += 1) {
+      expect(
+        corrupt((save) => {
+          save.snapshot.expedition.clearedStageIds = EXPEDITION_STAGE_CONFIGS.slice(
+            0,
+            length,
+          ).map((stage) => stage.id);
+        }),
+      ).toBe(false);
+    }
+  });
+});
+
+describe("expedition validation", () => {
+  it("rejects a missing or malformed expedition record", () => {
+    expect(corrupt((save) => delete save.snapshot.expedition)).toBe(true);
+    expect(corrupt((save) => (save.snapshot.expedition = null))).toBe(true);
+    expect(
+      corrupt((save) => (save.snapshot.expedition.clearedStageIds = {})),
+    ).toBe(true);
+  });
+
+  it("rejects unknown, skipped, duplicated, or reordered stages", () => {
+    const [first, second, third] = EXPEDITION_STAGE_CONFIGS;
+    expect(
+      corrupt((save) => {
+        save.snapshot.expedition.clearedStageIds = ["unknown_stage"];
+      }),
+    ).toBe(true);
+    expect(
+      corrupt((save) => {
+        save.snapshot.expedition.clearedStageIds = [second!.id];
+      }),
+    ).toBe(true);
+    expect(
+      corrupt((save) => {
+        save.snapshot.expedition.clearedStageIds = [first!.id, first!.id];
+      }),
+    ).toBe(true);
+    expect(
+      corrupt((save) => {
+        save.snapshot.expedition.clearedStageIds = [first!.id, third!.id];
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects more cleared stages than the configured campaign contains", () => {
+    expect(
+      corrupt((save) => {
+        save.snapshot.expedition.clearedStageIds = [
+          ...EXPEDITION_STAGE_CONFIGS.map((stage) => stage.id),
+          EXPEDITION_STAGE_CONFIGS[0]!.id,
+        ];
+      }),
+    ).toBe(true);
   });
 });
 

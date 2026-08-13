@@ -70,6 +70,7 @@ import {
   drawTribulationLightning,
 } from "./primitives/Scenery";
 import { drawEquipmentPanel } from "./panels/EquipmentPanel";
+import { drawExpeditionPanel } from "./panels/ExpeditionPanel";
 import { drawInventoryPanel } from "./panels/InventoryPanel";
 import {
   drawProfilePanel,
@@ -116,6 +117,8 @@ export interface AppViewActions {
   markPartnerUnlockNoticeSeen(): void;
   expandInventory(): void;
   upgradeCaveBuilding(buildingConfigId: string): void;
+  challengeExpedition(stageConfigId: string): void;
+  upgradeTechnique(techniqueConfigId: string): void;
   useInventoryItem(itemConfigId: string): void;
   transferHarvest(entryId: string): void;
   salvageHarvest(entryId: string): void;
@@ -126,6 +129,7 @@ export interface AppViewActions {
     equippedSlot: EquippedEquipmentSlot,
   ): void;
   unequipEquipment(equipmentInstanceId: string): void;
+  enhanceEquipment(equipmentInstanceId: string): void;
   dismissOfflineSettlement(): void;
   simulateOffline(seconds: number, dropSeed?: number): void;
   grantDebug(target: DebugGrantTarget): void;
@@ -2315,6 +2319,7 @@ export class AppView {
           equipment: "法宝",
           inventory: "行囊与挂机收获",
           tasks: "修行任务",
+          expedition: "历练",
         }[feature];
     addLabel(overlay, title, 0, 466, 420, 54, 31, COLORS.gold, true);
     createButton(
@@ -2346,6 +2351,8 @@ export class AppView {
     if (feature === "equipment")
       drawEquipmentPanel(overlay, state, this.actions, this.panelPaging);
     if (feature === "tasks") drawTaskPanel(overlay, state);
+    if (feature === "expedition")
+      drawExpeditionPanel(overlay, state, this.actions);
     if (isUpcomingFeaturePanel(feature)) drawUpcomingPanel(overlay, feature);
 
     if (state.featureMessage) {

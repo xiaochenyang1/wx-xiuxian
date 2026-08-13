@@ -25,10 +25,10 @@ const BOTTOM_RAIL: ReadonlyArray<{
 
 describe("bottom feature rail wiring", () => {
   it("never routes a label to an unrelated implemented panel", () => {
-    // The four systems that do not exist yet must not borrow another panel.
+    // Systems that do not exist yet must not borrow another panel.
     const borrowed = BOTTOM_RAIL.filter(
       (entry) =>
-        ["炼丹", "炼器", "宗门", "历练"].includes(entry.label) &&
+        ["炼丹", "炼器", "宗门"].includes(entry.label) &&
         !isUpcomingFeaturePanel(entry.feature),
     );
     expect(borrowed).toEqual([]);
@@ -42,7 +42,6 @@ describe("bottom feature rail wiring", () => {
       "炼丹",
       "炼器",
       "宗门",
-      "历练",
     ]);
     expect(new Set(upcoming.map((entry) => entry.feature)).size).toBe(
       upcoming.length,
@@ -54,16 +53,17 @@ describe("bottom feature rail wiring", () => {
     expect(pet?.feature).toBe("equipment");
     expect(isUpcomingFeaturePanel(pet!.feature)).toBe(false);
   });
+
+  it("routes 历练 to its implemented expedition panel", () => {
+    const expedition = BOTTOM_RAIL.find((entry) => entry.label === "历练");
+    expect(expedition?.feature).toBe("expedition");
+    expect(isUpcomingFeaturePanel(expedition!.feature)).toBe(false);
+  });
 });
 
 describe("upcoming feature classification", () => {
-  it("classifies exactly the four unbuilt systems", () => {
-    const upcoming: UpcomingFeaturePanel[] = [
-      "alchemy",
-      "crafting",
-      "sect",
-      "expedition",
-    ];
+  it("classifies exactly the three unbuilt systems", () => {
+    const upcoming: UpcomingFeaturePanel[] = ["alchemy", "crafting", "sect"];
     for (const feature of upcoming) {
       expect(isUpcomingFeaturePanel(feature)).toBe(true);
     }
@@ -76,6 +76,7 @@ describe("upcoming feature classification", () => {
       "equipment",
       "inventory",
       "tasks",
+      "expedition",
     ];
     for (const feature of implemented) {
       expect(isUpcomingFeaturePanel(feature)).toBe(false);

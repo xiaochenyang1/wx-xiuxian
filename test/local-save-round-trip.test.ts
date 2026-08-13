@@ -47,6 +47,7 @@ describe("local save round-trip", () => {
     expect(after.techniques).toEqual(before.techniques);
     expect(after.equipment).toEqual(before.equipment);
     expect(after.harvestChest.entries).toEqual(before.harvestChest.entries);
+    expect(after.expedition).toEqual(before.expedition);
   });
 
   it("creates a new save when storage holds unparseable text", () => {

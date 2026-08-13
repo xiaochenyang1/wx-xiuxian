@@ -2,24 +2,32 @@ import {
   BASIS_POINTS,
   CAVE_BUILDING_CONFIGS,
   CAVE_MAX_LEVEL,
+  EQUIPMENT_MAX_ENHANCE_LEVEL,
   EQUIPMENT_CONFIGS,
+  EXPEDITION_STAGE_CONFIGS,
   MAX_LEVEL,
   NEWCOMER_REACH_LEVEL_8_TASK_ID,
   NEWCOMER_TASK_CONFIGS,
+  TECHNIQUE_MAX_STAR,
   TECHNIQUE_CONFIGS,
   applyWholeExperience,
   addLoadoutBonuses,
   calculateCaveBonuses,
+  calculateEquipmentContribution,
   calculateLoadoutBonuses,
   calculateOnlineExperiencePerSecond,
   calculateSpiritStonePerMinute,
+  calculateTechniqueContribution,
   calculateTotalPower,
   caveUpgradeCost,
   completeBreakthrough,
   createEmptyCaveBuildings,
   decimal,
+  equipmentEnhanceCost,
+  evaluateExpeditionStage,
   getCaveBuildingConfig,
   getEquipmentConfig,
+  getExpeditionStageConfig,
   getItemConfig,
   getRealmConfigForLevel,
   getRealmStage,
@@ -29,6 +37,7 @@ import {
   requiredExperienceForLevel,
   settleCultivation,
   simulateOnlineExperience,
+  techniqueStarUpgradeCost,
   type AssetQuality,
   type BootstrapSnapshot,
   type ChosenAvatarVariant,
@@ -41,7 +50,8 @@ import { CLIENT_CONFIG } from "../core/ClientConfig";
 import type { PlatformAdapter } from "../platform/PlatformAdapter";
 
 const LOCAL_SAVE_SCHEMA_VERSION = 1 as const;
-const GAME_CONFIG_VERSION = "local-1.1.0";
+const GAME_CONFIG_VERSION = "local-1.2.0";
+const GAME_CONFIG_VERSION_PRE_EXPEDITION = "local-1.1.0";
 const GAME_CONFIG_VERSION_PRE_CAVE = "local-1.0.0";
 const DROP_CONFIG_VERSION = "local-idle-drop-v1";
 const OFFLINE_NOTICE_MIN_SECONDS = 60;
@@ -349,6 +359,83 @@ export class LocalGameService {
     });
   }
 
+  challengeExpedition(stageConfigId: string): LocalMutationResult {
+    return this.mutate((snapshot) => {
+      let config: ReturnType<typeof getExpeditionStageConfig>;
+      try {
+        config = getExpeditionStageConfig(stageConfigId);
+      } catch {
+        throw new LocalGameError("未知的历练关卡");
+      }
+      const evaluation = evaluateExpeditionStage(
+        config.id,
+        snapshot.expedition.clearedStageIds,
+        snapshot.progress.totalPower,
+      );
+      if (evaluation.status === "cleared") {
+        throw new LocalGameError("该关卡已经完成，首通奖励不可重复领取");
+      }
+      if (evaluation.status === "locked") {
+        const previous = EXPEDITION_STAGE_CONFIGS[
+          Math.max(0, snapshot.expedition.clearedStageIds.length)
+        ];
+        throw new LocalGameError(
+          previous ? `需先完成${previous.displayName}` : "前置关卡尚未完成",
+        );
+      }
+      if (evaluation.status === "underpowered") {
+        throw new LocalGameError(`战力不足，还需 ${evaluation.powerDeficit}`);
+      }
+
+      const occupiedSlots =
+        snapshot.inventory.stacks.length +
+        snapshot.equipment.filter((item) => item.location !== "harvest").length;
+      const rewardItemIds = new Set(
+        config.itemRewards.map((reward) => reward.itemConfigId),
+      );
+      const newStackCount = [...rewardItemIds].filter(
+        (itemConfigId) =>
+          !snapshot.inventory.stacks.some(
+            (stack) => stack.itemConfigId === itemConfigId,
+          ),
+      ).length;
+      if (occupiedSlots + newStackCount > snapshot.inventory.bagCapacity) {
+        throw new LocalGameError("行囊空间不足，无法领取历练首通奖励");
+      }
+
+      let inventory = snapshot.inventory;
+      for (const reward of config.itemRewards) {
+        inventory = addStack(inventory, reward.itemConfigId, reward.quantity);
+      }
+      const spiritStone = decimal(snapshot.wallet.spiritStone).plus(
+        config.spiritStoneReward,
+      );
+      return {
+        snapshot: {
+          ...snapshot,
+          inventory,
+          expedition: {
+            clearedStageIds: [
+              ...snapshot.expedition.clearedStageIds,
+              config.id,
+            ],
+          },
+          wallet: {
+            ...snapshot.wallet,
+            spiritStone: spiritStone.toFixed(0),
+            lifetimeSpiritStoneEarned: decimal(
+              snapshot.wallet.lifetimeSpiritStoneEarned,
+            )
+              .plus(config.spiritStoneReward)
+              .toFixed(0),
+          },
+        },
+        events: [],
+        message: `首通${config.displayName}，获得 ${config.spiritStoneReward} 灵石和历练物资`,
+      };
+    });
+  }
+
   useInventoryItem(itemConfigId: string): LocalMutationResult {
     return this.mutate((snapshot) => {
       const config = getItemConfig(itemConfigId);
@@ -415,7 +502,7 @@ export class LocalGameService {
               ? { ...item, duplicateCount: item.duplicateCount + 1 }
               : item,
           );
-          message = `${entry.displayName} 已转化为功法残页`;
+          message = `${entry.displayName} 同名副本 +1`;
         } else if (entry.techniqueConfigId) {
           techniques = [
             ...techniques,
@@ -473,6 +560,39 @@ export class LocalGameService {
     });
   }
 
+  upgradeTechnique(techniqueConfigId: string): LocalMutationResult {
+    return this.mutate((snapshot) => {
+      const target = snapshot.techniques.find(
+        (item) => item.techniqueConfigId === techniqueConfigId,
+      );
+      if (!target) throw new LocalGameError("尚未收录该功法");
+      if (target.star >= TECHNIQUE_MAX_STAR) {
+        throw new LocalGameError(`${target.displayName}已达到最高星级`);
+      }
+
+      const cost = techniqueStarUpgradeCost(target.star);
+      if (target.duplicateCount < cost.duplicateCount) {
+        throw new LocalGameError(
+          `同名副本不足，还需 ${cost.duplicateCount - target.duplicateCount} 本`,
+        );
+      }
+      const techniques = snapshot.techniques.map((item) =>
+        item.techniqueConfigId === techniqueConfigId
+          ? {
+              ...item,
+              star: cost.targetStar,
+              duplicateCount: item.duplicateCount - cost.duplicateCount,
+            }
+          : item,
+      );
+      return {
+        snapshot: refreshSnapshot({ ...snapshot, techniques }),
+        events: [],
+        message: `消耗 ${cost.duplicateCount} 本同名副本，${target.displayName}升至 ${cost.targetStar} 星`,
+      };
+    });
+  }
+
   equipTechnique(techniqueConfigId: string): LocalMutationResult {
     return this.mutate((snapshot) => {
       const target = snapshot.techniques.find(
@@ -513,6 +633,63 @@ export class LocalGameService {
         }),
         events: [],
         message: `已卸下 ${target.displayName}`,
+      };
+    });
+  }
+
+  enhanceEquipment(equipmentInstanceId: string): LocalMutationResult {
+    return this.mutate((snapshot) => {
+      const target = snapshot.equipment.find(
+        (item) => item.id === equipmentInstanceId,
+      );
+      if (!target || target.location === "harvest") {
+        throw new LocalGameError("该法宝不在行囊中");
+      }
+      if (!isAssetQuality(target.quality)) {
+        throw new LocalGameError("法宝品质数据无效");
+      }
+      if (target.enhanceLevel >= EQUIPMENT_MAX_ENHANCE_LEVEL) {
+        throw new LocalGameError(`${target.displayName}已强化至上限`);
+      }
+
+      const cost = equipmentEnhanceCost(target.quality, target.enhanceLevel);
+      const spiritStone = decimal(snapshot.wallet.spiritStone);
+      if (spiritStone.lessThan(cost.spiritStone)) {
+        throw new LocalGameError(
+          `灵石不足，还需 ${decimal(cost.spiritStone).minus(spiritStone).toFixed(0)} 灵石`,
+        );
+      }
+      const ownedEnhanceStone = decimal(
+        stackQuantity(snapshot, "enhance_stone"),
+      );
+      if (ownedEnhanceStone.lessThan(cost.enhanceStone)) {
+        throw new LocalGameError(
+          `强化石不足，还需 ${decimal(cost.enhanceStone).minus(ownedEnhanceStone).toFixed(0)} 枚`,
+        );
+      }
+
+      const inventory = setStackQuantity(
+        snapshot.inventory,
+        "enhance_stone",
+        ownedEnhanceStone.minus(cost.enhanceStone).toFixed(0),
+      );
+      const equipment = snapshot.equipment.map((item) =>
+        item.id === equipmentInstanceId
+          ? { ...item, enhanceLevel: cost.targetLevel }
+          : item,
+      );
+      return {
+        snapshot: refreshSnapshot({
+          ...snapshot,
+          equipment,
+          inventory,
+          wallet: {
+            ...snapshot.wallet,
+            spiritStone: spiritStone.minus(cost.spiritStone).toFixed(0),
+          },
+        }),
+        events: [],
+        message: `消耗 ${cost.spiritStone} 灵石和 ${cost.enhanceStone} 枚强化石，${target.displayName}强化至 +${cost.targetLevel}`,
       };
     });
   }
@@ -666,17 +843,24 @@ export class LocalGameService {
   ): LocalMutationResult {
     this.settleTo(new Date(), BASIS_POINTS, false);
     const previous = this.snapshot;
-    const result = operation(previous);
-    const now = new Date();
-    this.setSnapshot(refreshSnapshot(result.snapshot), now);
-    this.persist();
-    return {
-      previous,
-      snapshot: this.snapshot,
-      events: result.events,
-      sourceId: createLocalId(),
-      ...(result.message ? { message: result.message } : {}),
-    };
+    try {
+      const result = operation(previous);
+      const now = new Date();
+      this.setSnapshot(refreshSnapshot(result.snapshot), now);
+      this.persist();
+      return {
+        previous,
+        snapshot: this.snapshot,
+        events: result.events,
+        sourceId: createLocalId(),
+        ...(result.message ? { message: result.message } : {}),
+      };
+    } catch (error) {
+      // The idle settlement precedes every action and remains valid even when
+      // the requested mutation is rejected.
+      this.persist();
+      throw error;
+    }
   }
 
   private settleTo(
@@ -856,6 +1040,7 @@ function createInitialSave(now: Date): LocalGameSave {
     equipment: [],
     harvestChest: { pendingCount: 0, entries: [] },
     cave: { buildings: createEmptyCaveBuildings() },
+    expedition: { clearedStageIds: [] },
     newcomerTasks: NEWCOMER_TASK_CONFIGS.map((task) => ({
       taskConfigId: task.id,
       progress: "1",
@@ -883,11 +1068,34 @@ function createInitialSave(now: Date): LocalGameSave {
 }
 
 function refreshSnapshot(snapshot: BootstrapSnapshot): BootstrapSnapshot {
+  const techniques = snapshot.techniques.map((item) => {
+    const contribution = calculateTechniqueContribution({
+      techniqueConfigId: item.techniqueConfigId,
+      star: item.star,
+    });
+    return {
+      ...item,
+      fixedPower: contribution.fixedPower,
+      experienceBonusBp: contribution.experienceBonusBp,
+      spiritStoneBonusBp: contribution.spiritStoneBonusBp,
+      dropBonusBp: contribution.dropBonusBp,
+    };
+  });
+  const equipment = snapshot.equipment.map((item) => {
+    if (!isAssetQuality(item.quality)) return item;
+    const contribution = calculateEquipmentContribution({
+      equipmentConfigId: item.equipmentConfigId,
+      quality: item.quality,
+      enhanceLevel: item.enhanceLevel,
+      rolledAffixes: item.rolledAffixes,
+    });
+    return { ...item, fixedPower: contribution.fixedPower };
+  });
   const loadout = calculateLoadoutBonuses({
-    techniques: snapshot.techniques
+    techniques: techniques
       .filter((item) => item.equippedSlot !== null)
       .map((item) => ({ techniqueConfigId: item.techniqueConfigId, star: item.star })),
-    equipment: snapshot.equipment
+    equipment: equipment
       .filter((item) => item.equippedSlot !== null && isAssetQuality(item.quality))
       .map((item) => ({
         equipmentConfigId: item.equipmentConfigId,
@@ -905,6 +1113,8 @@ function refreshSnapshot(snapshot: BootstrapSnapshot): BootstrapSnapshot {
   const unlocked = level >= 11;
   return {
     ...snapshot,
+    techniques,
+    equipment,
     progress: {
       ...snapshot.progress,
       realmId: realm.id,
@@ -1247,22 +1457,31 @@ function equipmentFitsSlot(slot: string, equippedSlot: EquippedEquipmentSlot): b
     : slot === equippedSlot;
 }
 
-/**
- * Only `local-1.0.0` is migrated, and only by adding the cave field it predates.
- * Anything else is returned untouched so that a genuinely corrupt save still
- * fails validation instead of being silently repaired.
- */
 function migrateSnapshot(snapshot: unknown): unknown {
   if (!isRecord(snapshot)) return snapshot;
-  const config = snapshot.config;
-  if (!isRecord(config) || config.version !== GAME_CONFIG_VERSION_PRE_CAVE) {
-    return snapshot;
+  let migrated = snapshot;
+  let config = migrated.config;
+  if (!isRecord(config)) return snapshot;
+
+  if (config.version === GAME_CONFIG_VERSION_PRE_CAVE) {
+    migrated = {
+      ...migrated,
+      cave: { buildings: createEmptyCaveBuildings() },
+      config: { ...config, version: GAME_CONFIG_VERSION_PRE_EXPEDITION },
+    };
+    config = migrated.config;
   }
-  return {
-    ...snapshot,
-    cave: { buildings: createEmptyCaveBuildings() },
-    config: { ...config, version: GAME_CONFIG_VERSION },
-  };
+  if (
+    isRecord(config) &&
+    config.version === GAME_CONFIG_VERSION_PRE_EXPEDITION
+  ) {
+    migrated = {
+      ...migrated,
+      expedition: { clearedStageIds: [] },
+      config: { ...config, version: GAME_CONFIG_VERSION },
+    };
+  }
+  return migrated;
 }
 
 function parseLocalGameSave(value: unknown): LocalGameSave | null {
@@ -1326,6 +1545,7 @@ function isBootstrapSnapshot(value: unknown): value is BootstrapSnapshot {
     isEquipmentList(value.equipment) &&
     isHarvestChest(chest) &&
     isCaveSnapshot(value.cave) &&
+    isExpeditionSnapshot(value.expedition) &&
     isNewcomerTaskList(value.newcomerTasks) &&
     isRecord(value.unlocks) &&
     typeof value.unlocks.partner === "boolean" &&
@@ -1342,6 +1562,16 @@ function isBootstrapSnapshot(value: unknown): value is BootstrapSnapshot {
     config.maxLevel === MAX_LEVEL &&
     isOfflineSettlement(value.offlineSettlement) &&
     hasConsistentInventory(value)
+  );
+}
+
+function isExpeditionSnapshot(value: unknown): boolean {
+  if (!isRecord(value) || !Array.isArray(value.clearedStageIds)) return false;
+  if (value.clearedStageIds.length > EXPEDITION_STAGE_CONFIGS.length) return false;
+  return value.clearedStageIds.every(
+    (stageId, index) =>
+      typeof stageId === "string" &&
+      stageId === EXPEDITION_STAGE_CONFIGS[index]?.id,
   );
 }
 
@@ -1453,7 +1683,7 @@ function isTechniqueList(value: unknown): boolean {
       technique.displayName !== config.displayName ||
       technique.quality !== config.quality ||
       technique.slot !== config.slot ||
-      !isIntegerBetween(technique.star, 1, 10) ||
+      !isIntegerBetween(technique.star, 1, TECHNIQUE_MAX_STAR) ||
       !isIntegerBetween(technique.duplicateCount, 0, 1_000_000_000) ||
       (equippedSlot !== null && equippedSlot !== config.slot) ||
       !isDecimalString(technique.fixedPower) ||
@@ -1497,7 +1727,11 @@ function isEquipmentList(value: unknown): boolean {
       !isAssetQualityValue(equipment.quality) ||
       equipment.slot !== config.slot ||
       !isDecimalString(equipment.fixedPower) ||
-      !isIntegerBetween(equipment.enhanceLevel, 0, 20) ||
+      !isIntegerBetween(
+        equipment.enhanceLevel,
+        0,
+        EQUIPMENT_MAX_ENHANCE_LEVEL,
+      ) ||
       !isRolledAffixes(equipment.rolledAffixes) ||
       (location !== "bag" && location !== "equipped" && location !== "harvest") ||
       !isEquipmentSlotOrNull(equippedSlot) ||

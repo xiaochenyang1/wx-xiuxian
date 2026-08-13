@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "productVersion": "0.17.2",
-  "releaseId": "0.17.2-r1",
+  "productVersion": "0.18.0",
+  "releaseId": "0.18.0-r1",
   "cocosCreatorVersion": "3.8.8",
   "platform": "wechatgame",
   "launchScene": "db://assets/scene.scene",

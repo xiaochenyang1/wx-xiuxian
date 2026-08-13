@@ -1,6 +1,8 @@
 export * from "./config/realms";
 export * from "./config/assets";
+export * from "./config/asset-upgrades";
 export * from "./config/cave";
+export * from "./config/expedition";
 export * from "./config/newcomer-tasks";
 export * from "./contracts/bootstrap";
 export * from "./contracts/inventory";
@@ -9,6 +11,7 @@ export * from "./contracts/player-profile";
 export * from "./decimal";
 export * from "./domain/cave";
 export * from "./domain/economy";
+export * from "./domain/expedition";
 export * from "./domain/cultivation-settlement";
 export * from "./domain/number-format";
 export * from "./domain/loadout";

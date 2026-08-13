@@ -7,7 +7,8 @@ export type ImplementedFeaturePanel =
   | "techniques"
   | "equipment"
   | "inventory"
-  | "tasks";
+  | "tasks"
+  | "expedition";
 
 /**
  * 入口已在界面上出现、但功能尚未实现的面板。点击后展示明确的未开放说明，
@@ -16,13 +17,12 @@ export type ImplementedFeaturePanel =
 export type UpcomingFeaturePanel =
   | "alchemy"
   | "crafting"
-  | "sect"
-  | "expedition";
+  | "sect";
 
 export type FeaturePanel = ImplementedFeaturePanel | UpcomingFeaturePanel;
 
 const UPCOMING_FEATURE_PANELS: ReadonlySet<string> = new Set<UpcomingFeaturePanel>(
-  ["alchemy", "crafting", "sect", "expedition"],
+  ["alchemy", "crafting", "sect"],
 );
 
 export function isUpcomingFeaturePanel(

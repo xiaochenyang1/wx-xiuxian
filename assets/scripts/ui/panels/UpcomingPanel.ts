@@ -19,18 +19,13 @@ export const UPCOMING_FEATURE_COPY: Readonly<
   },
   crafting: {
     title: "炼器室",
-    summary: "消耗材料与强化石打造法宝",
-    detail: "当前版本法宝只能通过挂机掉落获得，强化石暂无用途。",
+    summary: "消耗材料定向打造法宝",
+    detail: "法宝强化已经开放，定向炼制与配方系统仍未开放。",
   },
   sect: {
     title: "宗门",
     summary: "加入宗门、领取宗门任务与贡献",
     detail: "宗门需要多人数据支撑，当前单机版本尚未开放。",
-  },
-  expedition: {
-    title: "历练",
-    summary: "派遣角色外出历练换取资源",
-    detail: "当前版本的资源产出集中在修炼挂机与掉落。",
   },
 };
 

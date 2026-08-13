@@ -72,6 +72,13 @@ export class GameBootstrap extends Component {
             () => this.localGame.upgradeCaveBuilding(buildingConfigId),
             "power_change",
           ),
+        challengeExpedition: (stageConfigId) =>
+          this.runMutation(() => this.localGame.challengeExpedition(stageConfigId)),
+        upgradeTechnique: (techniqueConfigId) =>
+          this.runMutation(
+            () => this.localGame.upgradeTechnique(techniqueConfigId),
+            "power_change",
+          ),
         useInventoryItem: (itemConfigId) =>
           this.runMutation(() => this.localGame.useInventoryItem(itemConfigId)),
         transferHarvest: (entryId) =>
@@ -93,6 +100,11 @@ export class GameBootstrap extends Component {
         unequipEquipment: (equipmentInstanceId) =>
           this.runMutation(
             () => this.localGame.unequipEquipment(equipmentInstanceId),
+            "power_change",
+          ),
+        enhanceEquipment: (equipmentInstanceId) =>
+          this.runMutation(
+            () => this.localGame.enhanceEquipment(equipmentInstanceId),
             "power_change",
           ),
         dismissOfflineSettlement: () => this.dismissOfflineSettlement(),
@@ -260,6 +272,11 @@ export class GameBootstrap extends Component {
       );
       if (result.message) this.store.setFeatureMessage(result.message);
     } catch (error) {
+      this.store.replaceSnapshot(
+        this.localGame.snapshot,
+        this.localGame.savedAt,
+        this.localGame.persistenceAvailable ? "saved" : "volatile",
+      );
       this.store.setFeatureMessage(localErrorMessage(error, "本地操作未完成"));
     } finally {
       this.mutationInFlight = false;
