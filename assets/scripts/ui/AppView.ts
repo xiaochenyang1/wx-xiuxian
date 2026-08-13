@@ -14,6 +14,7 @@ import {
 import type {
   MainBackgroundArt,
   MainBackgroundKey,
+  SupplementalArt,
 } from "../core/AppArt";
 import {
   mergeCultivationPresentationPlans,
@@ -94,6 +95,7 @@ import {
   Label,
   Node,
   Sprite,
+  SpriteFrame,
   tween,
   type Tween,
   UIOpacity,
@@ -206,6 +208,7 @@ export class AppView {
   private readonly safeAreaLayout: DesignSafeAreaLayout;
   private readonly chromeGeometry: AppChromeGeometry;
   private mainBackgroundArt: MainBackgroundArt = {};
+  private supplementalArt: SupplementalArt = {};
   private destroyed = false;
   private mainPageRoot: Node | null = null;
   private idleLabel: Label | null = null;
@@ -497,6 +500,12 @@ export class AppView {
   setMainBackgroundArt(art: MainBackgroundArt): void {
     if (this.destroyed || this.mainBackgroundArt === art) return;
     this.mainBackgroundArt = art;
+    if (this.lastState) this.render(this.lastState);
+  }
+
+  setSupplementalArt(art: SupplementalArt): void {
+    if (this.destroyed || this.supplementalArt === art) return;
+    this.supplementalArt = art;
     if (this.lastState) this.render(this.lastState);
   }
 
@@ -1327,13 +1336,25 @@ export class AppView {
     avatarFrame.lineWidth = 3;
     avatarFrame.circle(0, 7, 52);
     avatarFrame.stroke();
-    drawAvatarPortrait(
-      avatarButton,
-      bootstrap.player.avatarVariant,
-      0,
-      7,
-      1.48,
-    );
+    if (this.supplementalArt.playerAvatar) {
+      drawContainedSprite(
+        avatarButton,
+        "PlayerAvatarArt",
+        this.supplementalArt.playerAvatar,
+        0,
+        7,
+        88,
+        88,
+      );
+    } else {
+      drawAvatarPortrait(
+        avatarButton,
+        bootstrap.player.avatarVariant,
+        0,
+        7,
+        1.48,
+      );
+    }
     const avatarClick = avatarButton.addComponent(Button);
     avatarClick.transition = Button.Transition.SCALE;
     avatarClick.zoomScale = 0.95;
@@ -1485,6 +1506,17 @@ export class AppView {
     ).length;
     const pendingHarvest = data.harvestChest.pendingCount;
     if (!hasBackground) this.drawCultivationScene();
+    if (hasBackground && this.supplementalArt.cultivator) {
+      drawContainedSprite(
+        this.root,
+        "CultivatorArt",
+        this.supplementalArt.cultivator,
+        0,
+        42,
+        520,
+        730,
+      );
+    }
     drawOrnatePanel(this.root, "RealmBanner", 0, 452, 408, 78);
     addLabel(
       this.root,
@@ -2547,6 +2579,35 @@ function presentationKindName(kind: CultivationPresentationPlan["kind"]): string
   if (kind === "level_up") return "升级";
   if (kind === "breakthrough") return "突破";
   return "战力";
+}
+
+function drawContainedSprite(
+  parent: Node,
+  name: string,
+  spriteFrame: SpriteFrame,
+  x: number,
+  y: number,
+  maxWidth: number,
+  maxHeight: number,
+): Node {
+  const originalSize = spriteFrame.originalSize;
+  const scale = Math.min(
+    maxWidth / Math.max(1, originalSize.width),
+    maxHeight / Math.max(1, originalSize.height),
+  );
+  const node = createUiNode(parent, name);
+  node.setPosition(x, y);
+  setSize(
+    node,
+    Math.max(1, Math.round(originalSize.width * scale)),
+    Math.max(1, Math.round(originalSize.height * scale)),
+  );
+  const sprite = node.addComponent(Sprite);
+  sprite.sizeMode = Sprite.SizeMode.CUSTOM;
+  sprite.type = Sprite.Type.SIMPLE;
+  sprite.trim = false;
+  sprite.spriteFrame = spriteFrame;
+  return node;
 }
 
 function createFeatureButton(

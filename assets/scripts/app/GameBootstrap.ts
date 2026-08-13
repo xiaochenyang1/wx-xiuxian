@@ -7,7 +7,7 @@ import type {
   EquippedEquipmentSlot,
   ProgressionEvent,
 } from "@cultivation-diary/shared";
-import { loadMainBackgroundArt } from "../core/AppArt";
+import { loadMainBackgroundArt, loadSupplementalArt } from "../core/AppArt";
 import { CLIENT_CONFIG } from "../core/ClientConfig";
 import {
   planCultivationPresentation,
@@ -126,6 +126,10 @@ export class GameBootstrap extends Component {
       .catch((error: unknown) => {
         if (DEBUG) console.warn("Main background art unavailable", error);
       });
+
+    void loadSupplementalArt().then((art) => {
+      if (!this.destroyed && this.appView === appView) appView.setSupplementalArt(art);
+    });
 
     this.schedule(
       (deltaSeconds: number) => this.appView?.updateIdleAnimation(deltaSeconds),
