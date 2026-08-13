@@ -1,6 +1,7 @@
 import { formatLargeNumber } from "../../core/ClientNumber";
 import type { AppState } from "../../core/ClientTypes";
 import { canRunLocalMutation } from "../../core/ClientTypes";
+import { isDirectlyUsableInventoryItem } from "../../core/InventoryDisplay";
 import type { AppViewActions, PanelPaging } from "../AppView";
 import { COLORS } from "../primitives/Colors";
 import {
@@ -115,7 +116,7 @@ export function drawInventoryPanel(
       .slice(stackWindow.start, stackWindow.end)
       .forEach((stack, index) => {
         const y = 258 - index * 54;
-        const directlyUsable = stack.itemConfigId === "exp_pill_small";
+        const directlyUsable = isDirectlyUsableInventoryItem(stack.itemConfigId);
         drawBand(overlay, `Stack-${stack.itemConfigId}`, 0, y, 600, 46, COLORS.panel);
         addLabel(
           overlay,

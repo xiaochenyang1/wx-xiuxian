@@ -13,7 +13,9 @@ import {
   NEWCOMER_REACH_LEVEL_8_TASK_ID,
   NEWCOMER_TASK_CONFIGS,
   TECHNIQUE_MAX_STAR,
+  TECHNIQUE_PAGES_PER_DUPLICATE,
   TECHNIQUE_CONFIGS,
+  TREASURE_HUNT_TOTAL_WEIGHT,
   applyWholeExperience,
   addLoadoutBonuses,
   calculatePartnerBonuses,
@@ -46,6 +48,7 @@ import {
   getSectConfig,
   isAssetQuality,
   partnerBondRequirement,
+  pickTreasureHuntReward,
   requiredExperienceForLevel,
   settleCultivation,
   sectContributionRequirement,
@@ -63,7 +66,8 @@ import { CLIENT_CONFIG } from "../core/ClientConfig";
 import type { PlatformAdapter } from "../platform/PlatformAdapter";
 
 const LOCAL_SAVE_SCHEMA_VERSION = 1 as const;
-const GAME_CONFIG_VERSION = "local-2.0.0";
+const GAME_CONFIG_VERSION = "local-2.1.0";
+const GAME_CONFIG_VERSION_PRE_ITEM_COMPLETION = "local-2.0.0";
 const GAME_CONFIG_VERSION_PRE_FEATURE_COMPLETION = "local-1.2.0";
 const GAME_CONFIG_VERSION_PRE_EXPEDITION = "local-1.1.0";
 const GAME_CONFIG_VERSION_PRE_CAVE = "local-1.0.0";
@@ -446,6 +450,58 @@ export class LocalGameService {
         },
         events: [],
         message: `首通${config.displayName}，获得 ${config.spiritStoneReward} 灵石和历练物资`,
+      };
+    });
+  }
+
+  huntTreasure(): LocalMutationResult {
+    return this.mutate((snapshot) => {
+      const tokens = decimal(stackQuantity(snapshot, "treasure_token"));
+      if (tokens.lessThan(1)) throw new LocalGameError("寻宝令不足");
+
+      let inventory = setStackQuantity(
+        snapshot.inventory,
+        "treasure_token",
+        tokens.minus(1).toFixed(0),
+      );
+      const reward = pickTreasureHuntReward(
+        randomInteger(TREASURE_HUNT_TOTAL_WEIGHT),
+      );
+      if (reward.kind === "spirit_stone") {
+        return {
+          snapshot: {
+            ...snapshot,
+            inventory,
+            wallet: {
+              ...snapshot.wallet,
+              spiritStone: decimal(snapshot.wallet.spiritStone)
+                .plus(reward.amount)
+                .toFixed(0),
+              lifetimeSpiritStoneEarned: decimal(
+                snapshot.wallet.lifetimeSpiritStoneEarned,
+              )
+                .plus(reward.amount)
+                .toFixed(0),
+            },
+          },
+          events: [],
+          message: `寻得 ${reward.amount} 灵石`,
+        };
+      }
+
+      const itemConfigId =
+        reward.kind === "random_material"
+          ? ["wood", "stone", "spiritual_soil", "spiritual_herb", "ore"][
+              randomInteger(5)
+            ]!
+          : reward.itemConfigId;
+      const quantity = reward.quantity;
+      ensureStackOutputCapacity({ ...snapshot, inventory }, itemConfigId);
+      inventory = addStack(inventory, itemConfigId, quantity);
+      return {
+        snapshot: { ...snapshot, inventory },
+        events: [],
+        message: `寻得 ${getItemConfig(itemConfigId).displayName} x${quantity}`,
       };
     });
   }
@@ -855,24 +911,42 @@ export class LocalGameService {
       }
 
       const cost = techniqueStarUpgradeCost(target.star);
-      if (target.duplicateCount < cost.duplicateCount) {
+      const duplicateCount = Math.min(
+        target.duplicateCount,
+        cost.duplicateCount,
+      );
+      const missingDuplicates = cost.duplicateCount - duplicateCount;
+      const requiredPages = missingDuplicates * TECHNIQUE_PAGES_PER_DUPLICATE;
+      const ownedPages = decimal(stackQuantity(snapshot, "technique_page"));
+      if (ownedPages.lessThan(requiredPages)) {
         throw new LocalGameError(
-          `同名副本不足，还需 ${cost.duplicateCount - target.duplicateCount} 本`,
+          `同名副本不足，可用功法残页补足，还需 ${decimal(requiredPages).minus(ownedPages).toFixed(0)} 张`,
         );
       }
+      const inventory =
+        requiredPages > 0
+          ? setStackQuantity(
+              snapshot.inventory,
+              "technique_page",
+              ownedPages.minus(requiredPages).toFixed(0),
+            )
+          : snapshot.inventory;
       const techniques = snapshot.techniques.map((item) =>
         item.techniqueConfigId === techniqueConfigId
           ? {
               ...item,
               star: cost.targetStar,
-              duplicateCount: item.duplicateCount - cost.duplicateCount,
+              duplicateCount: item.duplicateCount - duplicateCount,
             }
           : item,
       );
       return {
-        snapshot: refreshSnapshot({ ...snapshot, techniques }),
+        snapshot: refreshSnapshot({ ...snapshot, inventory, techniques }),
         events: [],
-        message: `消耗 ${cost.duplicateCount} 本同名副本，${target.displayName}升至 ${cost.targetStar} 星`,
+        message:
+          requiredPages > 0
+            ? `消耗 ${duplicateCount} 本同名副本和 ${requiredPages} 张残页，${target.displayName}升至 ${cost.targetStar} 星`
+            : `消耗 ${duplicateCount} 本同名副本，${target.displayName}升至 ${cost.targetStar} 星`,
       };
     });
   }
@@ -1482,11 +1556,24 @@ function applyIdleDrops(
   const stackRewards = new Map<string, number>();
 
   for (let attempt = 0; attempt < attempts; attempt += 1) {
-    if (roll(350_000, randomInt)) {
+    const stackItemRoll = randomInt(1_000_000);
+    if (stackItemRoll < 350_000) {
       const itemId = materialIds[randomInt(materialIds.length)]!;
       stackRewards.set(
         itemId,
         (stackRewards.get(itemId) ?? 0) + 1 + randomInt(3),
+      );
+    }
+    if (stackItemRoll >= 350_000 && stackItemRoll < 355_000) {
+      stackRewards.set(
+        "technique_page",
+        (stackRewards.get("technique_page") ?? 0) + 1,
+      );
+    }
+    if (stackItemRoll >= 355_000 && stackItemRoll < 356_000) {
+      stackRewards.set(
+        "treasure_token",
+        (stackRewards.get("treasure_token") ?? 0) + 1,
       );
     }
     if (roll(10_000, randomInt)) {
@@ -1882,6 +1969,29 @@ function migrateSnapshot(snapshot: unknown): unknown {
       ...migrated,
       partner: { partnerId: null, level: 0, bond: 0 },
       sect: { sectId: null, level: 0, contribution: 0 },
+      config: { ...config, version: GAME_CONFIG_VERSION_PRE_ITEM_COMPLETION },
+    };
+    config = migrated.config;
+  }
+  if (
+    isRecord(config) &&
+    config.version === GAME_CONFIG_VERSION_PRE_ITEM_COMPLETION
+  ) {
+    const inventory = isRecord(migrated.inventory) ? migrated.inventory : null;
+    migrated = {
+      ...migrated,
+      ...(inventory && Array.isArray(inventory.stacks)
+        ? {
+            inventory: {
+              ...inventory,
+              stacks: inventory.stacks.filter(
+                (stack) =>
+                  !isRecord(stack) ||
+                  stack.itemConfigId !== "protection_talisman",
+              ),
+            },
+          }
+        : {}),
       config: { ...config, version: GAME_CONFIG_VERSION },
     };
   }

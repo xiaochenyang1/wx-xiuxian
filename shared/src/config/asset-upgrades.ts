@@ -6,6 +6,7 @@ import {
 
 export const EQUIPMENT_MAX_ENHANCE_LEVEL = 20;
 export const TECHNIQUE_MAX_STAR = 10;
+export const TECHNIQUE_PAGES_PER_DUPLICATE = 5;
 
 const TECHNIQUE_DUPLICATE_COST_BY_TARGET_STAR = [
   0,

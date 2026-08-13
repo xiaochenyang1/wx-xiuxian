@@ -41,7 +41,6 @@ export interface ItemConfig {
   id: string;
   displayName: string;
   category: ItemCategory;
-  protectedFromBulkSalvage: boolean;
   useEffect?: ItemUseEffect;
 }
 
@@ -103,7 +102,6 @@ export const ITEM_CONFIGS: readonly ItemConfig[] = [
     id: "exp_pill_small",
     displayName: "经验丹（小）",
     category: "consumable",
-    protectedFromBulkSalvage: false,
     useEffect: {
       type: "simulated_online_experience",
       durationSeconds: 60 * 60,
@@ -113,7 +111,6 @@ export const ITEM_CONFIGS: readonly ItemConfig[] = [
     id: "exp_pill_large",
     displayName: "经验丹（大）",
     category: "consumable",
-    protectedFromBulkSalvage: false,
     useEffect: {
       type: "simulated_online_experience",
       durationSeconds: 6 * 60 * 60,
@@ -123,73 +120,56 @@ export const ITEM_CONFIGS: readonly ItemConfig[] = [
     id: "breakthrough_pill",
     displayName: "突破丹",
     category: "consumable",
-    protectedFromBulkSalvage: true,
   },
   {
     id: "enhance_stone",
     displayName: "强化石",
     category: "material",
-    protectedFromBulkSalvage: false,
   },
   {
     id: "treasure_token",
     displayName: "寻宝令",
     category: "token",
-    protectedFromBulkSalvage: true,
   },
   {
     id: "technique_page",
     displayName: "功法残页",
     category: "material",
-    protectedFromBulkSalvage: false,
-  },
-  {
-    id: "protection_talisman",
-    displayName: "保护符",
-    category: "consumable",
-    protectedFromBulkSalvage: true,
   },
   {
     id: "rename_card",
     displayName: "改名卡",
     category: "special",
-    protectedFromBulkSalvage: true,
   },
   {
     id: "dual_cultivation_pill",
     displayName: "双修丹",
     category: "consumable",
-    protectedFromBulkSalvage: false,
   },
   {
     id: "wood",
     displayName: "木材",
     category: "material",
-    protectedFromBulkSalvage: false,
   },
   {
     id: "stone",
     displayName: "石材",
     category: "material",
-    protectedFromBulkSalvage: false,
   },
   {
     id: "spiritual_soil",
     displayName: "灵土",
     category: "material",
-    protectedFromBulkSalvage: false,
   },
   {
     id: "spiritual_herb",
     displayName: "灵草",
     category: "material",
-    protectedFromBulkSalvage: false,
   },
   {
     id: "ore",
     displayName: "矿石",
     category: "material",
-    protectedFromBulkSalvage: false,
   },
 ];
 

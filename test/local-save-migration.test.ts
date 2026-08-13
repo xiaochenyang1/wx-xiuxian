@@ -109,7 +109,7 @@ describe("local-1.0.0 migration", () => {
   it("chains through both migrations and backfills every new subsystem", () => {
     const service = load(legacySave());
 
-    expect(service.snapshot.config.version).toBe("local-2.0.0");
+    expect(service.snapshot.config.version).toBe("local-2.1.0");
     expect(service.snapshot.cave.buildings).toEqual(
       CAVE_BUILDING_CONFIGS.map((config) => ({
         buildingConfigId: config.id,
@@ -141,7 +141,7 @@ describe("local-1.1.0 migration", () => {
 
     const service = load(legacy);
 
-    expect(service.snapshot.config.version).toBe("local-2.0.0");
+    expect(service.snapshot.config.version).toBe("local-2.1.0");
     expect(service.snapshot.cave.buildings[0].level).toBe(4);
     expect(service.snapshot.cave.buildings[3].level).toBe(CAVE_MAX_LEVEL);
     expect(service.snapshot.expedition.clearedStageIds).toEqual([]);
@@ -183,7 +183,7 @@ describe("local-1.2.0 to local-2.0.0 migration", () => {
 
     const service = load(legacy);
 
-    expect(service.snapshot.config.version).toBe("local-2.0.0");
+    expect(service.snapshot.config.version).toBe("local-2.1.0");
     expect(service.snapshot.cave.buildings[0].level).toBe(6);
     expect(service.snapshot.expedition.clearedStageIds).toEqual(
       legacy.snapshot.expedition.clearedStageIds,
@@ -199,6 +199,39 @@ describe("local-1.2.0 to local-2.0.0 migration", () => {
     const service = new LocalGameService(platform);
 
     expect(service.initialize(LATER).created).toBe(false);
+  });
+});
+
+describe("local-2.0.0 to local-2.1.0 migration", () => {
+  it("removes the obsolete protection talisman without losing other items", () => {
+    const legacy = authenticSaveWithProgress();
+    legacy.snapshot.config.version = "local-2.0.0";
+    legacy.snapshot.inventory.stacks.push(
+      {
+        itemConfigId: "protection_talisman",
+        displayName: "保护符",
+        quantity: "2",
+      },
+      {
+        itemConfigId: "rename_card",
+        displayName: "改名卡",
+        quantity: "1",
+      },
+    );
+
+    const service = load(legacy);
+
+    expect(service.snapshot.config.version).toBe("local-2.1.0");
+    expect(
+      service.snapshot.inventory.stacks.some(
+        (stack) => stack.itemConfigId === "protection_talisman",
+      ),
+    ).toBe(false);
+    expect(
+      service.snapshot.inventory.stacks.find(
+        (stack) => stack.itemConfigId === "rename_card",
+      )?.quantity,
+    ).toBe("1");
   });
 });
 

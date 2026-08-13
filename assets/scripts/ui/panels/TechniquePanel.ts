@@ -41,7 +41,7 @@ export function drawTechniquePanel(
   const techniqueWindow = paging.window("techniques", techniques.length, 8);
   addLabel(
     overlay,
-    `功法 ${techniques.length} 本 · 装备战力 +${formatLargeNumber(state.bootstrap!.progress.loadoutFixedPower)} · 修炼 +${formatBasisPoints(state.bootstrap!.progress.experienceBonusBp)}`,
+    `功法 ${techniques.length} 本 · 残页 ${formatLargeNumber(state.bootstrap!.inventory.stacks.find((stack) => stack.itemConfigId === "technique_page")?.quantity ?? "0")} · 装备战力 +${formatLargeNumber(state.bootstrap!.progress.loadoutFixedPower)}`,
     0,
     393,
     590,
@@ -88,7 +88,7 @@ export function drawTechniquePanel(
   }
   techniques.slice(techniqueWindow.start, techniqueWindow.end).forEach((technique, index) => {
     const y = 222 - index * 75;
-    const upgrade = getTechniqueUpgradeDisplay(technique);
+    const upgrade = getTechniqueUpgradeDisplay(state.bootstrap!, technique);
     drawBand(overlay, `Technique-${technique.techniqueConfigId}`, 0, y, 600, 62, COLORS.panel);
     addLabel(
       overlay,

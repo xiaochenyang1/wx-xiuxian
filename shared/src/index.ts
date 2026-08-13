@@ -8,6 +8,7 @@ export * from "./config/expedition";
 export * from "./config/newcomer-tasks";
 export * from "./config/partner";
 export * from "./config/sect";
+export * from "./config/treasure";
 export * from "./contracts/bootstrap";
 export * from "./contracts/inventory";
 export * from "./contracts/offline";

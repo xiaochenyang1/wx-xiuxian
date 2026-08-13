@@ -126,6 +126,7 @@ export interface AppViewActions {
   expandInventory(): void;
   upgradeCaveBuilding(buildingConfigId: string): void;
   challengeExpedition(stageConfigId: string): void;
+  huntTreasure(): void;
   brewAlchemy(recipeId: string): void;
   craftEquipment(recipeId: string): void;
   choosePartner(partnerId: string): void;
@@ -1451,18 +1452,10 @@ export class AppView {
     drawCurrencyChip(
       this.root,
       right - 72,
-      headerCenterY + 38,
+      headerCenterY + 7,
       "灵石",
       formatLargeNumber(bootstrap.wallet.spiritStone),
       COLORS.goldBright,
-    );
-    drawCurrencyChip(
-      this.root,
-      right - 72,
-      headerCenterY - 25,
-      "仙玉",
-      formatLargeNumber(bootstrap.wallet.immortalJade),
-      COLORS.cyan,
     );
 
     const divider = graphicsNode(

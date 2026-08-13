@@ -9,6 +9,7 @@ import type { AppViewActions } from "../AppView";
 import { COLORS } from "../primitives/Colors";
 import { addLabel, createButton, drawBand } from "../primitives/Draw";
 import { HorizontalTextAlignment, Node } from "cc";
+import { formatLargeNumber } from "../../core/ClientNumber";
 
 export function drawExpeditionPanel(
   overlay: Node,
@@ -20,12 +21,31 @@ export function drawExpeditionPanel(
   addLabel(
     overlay,
     getExpeditionSummary(snapshot),
-    0,
+    -75,
     397,
-    590,
+    430,
     38,
     19,
     COLORS.jade,
+  );
+  const treasureTokens =
+    snapshot.inventory.stacks.find(
+      (stack) => stack.itemConfigId === "treasure_token",
+    )?.quantity ?? "0";
+  createButton(
+    overlay,
+    `寻宝 ${formatLargeNumber(treasureTokens)}`,
+    232,
+    397,
+    130,
+    44,
+    {
+      fill: COLORS.inkGreenLight,
+      stroke: COLORS.gold,
+      fontSize: 15,
+      enabled: mutationsEnabled,
+    },
+    () => actions.huntTreasure(),
   );
 
   EXPEDITION_STAGE_CONFIGS.forEach((config, index) => {

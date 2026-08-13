@@ -1,6 +1,7 @@
 import {
   EQUIPMENT_MAX_ENHANCE_LEVEL,
   TECHNIQUE_MAX_STAR,
+  TECHNIQUE_PAGES_PER_DUPLICATE,
   decimal,
   equipmentEnhanceCost,
   isAssetQuality,
@@ -57,6 +58,7 @@ export function getEquipmentEnhanceDisplay(
 }
 
 export function getTechniqueUpgradeDisplay(
+  snapshot: BootstrapSnapshot,
   technique: BootstrapSnapshot["techniques"][number],
 ): AssetUpgradeDisplay {
   if (technique.star >= TECHNIQUE_MAX_STAR) {
@@ -70,10 +72,23 @@ export function getTechniqueUpgradeDisplay(
   }
 
   const cost = techniqueStarUpgradeCost(technique.star);
+  const duplicateCount = Math.min(
+    technique.duplicateCount,
+    cost.duplicateCount,
+  );
+  const requiredPages =
+    (cost.duplicateCount - duplicateCount) * TECHNIQUE_PAGES_PER_DUPLICATE;
+  const ownedPages =
+    snapshot.inventory.stacks.find(
+      (stack) => stack.itemConfigId === "technique_page",
+    )?.quantity ?? "0";
   return {
     maxed: false,
-    affordable: technique.duplicateCount >= cost.duplicateCount,
-    costText: `副本 ${formatLargeNumber(String(technique.duplicateCount))}/${cost.duplicateCount}`,
+    affordable: decimal(ownedPages).greaterThanOrEqualTo(requiredPages),
+    costText:
+      requiredPages > 0
+        ? `副本 ${duplicateCount}/${cost.duplicateCount}\n残页 ${formatLargeNumber(ownedPages)}/${requiredPages}`
+        : `副本 ${duplicateCount}/${cost.duplicateCount}`,
     actionText: "升星",
     actionEnabled: true,
   };

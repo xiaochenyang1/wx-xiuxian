@@ -30,6 +30,8 @@ export const EXPEDITION_STAGE_CONFIGS: readonly ExpeditionStageConfig[] = [
     itemRewards: [
       { itemConfigId: "wood", quantity: 5 },
       { itemConfigId: "stone", quantity: 5 },
+      { itemConfigId: "treasure_token", quantity: 1 },
+      { itemConfigId: "rename_card", quantity: 1 },
     ],
   },
   {
@@ -40,6 +42,8 @@ export const EXPEDITION_STAGE_CONFIGS: readonly ExpeditionStageConfig[] = [
     itemRewards: [
       { itemConfigId: "spiritual_soil", quantity: 5 },
       { itemConfigId: "spiritual_herb", quantity: 5 },
+      { itemConfigId: "technique_page", quantity: 5 },
+      { itemConfigId: "treasure_token", quantity: 1 },
     ],
   },
   {
@@ -50,6 +54,7 @@ export const EXPEDITION_STAGE_CONFIGS: readonly ExpeditionStageConfig[] = [
     itemRewards: [
       { itemConfigId: "ore", quantity: 10 },
       { itemConfigId: "enhance_stone", quantity: 2 },
+      { itemConfigId: "treasure_token", quantity: 2 },
     ],
   },
   {
@@ -61,6 +66,8 @@ export const EXPEDITION_STAGE_CONFIGS: readonly ExpeditionStageConfig[] = [
       { itemConfigId: "wood", quantity: 10 },
       { itemConfigId: "stone", quantity: 10 },
       { itemConfigId: "ore", quantity: 10 },
+      { itemConfigId: "technique_page", quantity: 10 },
+      { itemConfigId: "treasure_token", quantity: 2 },
     ],
   },
   {
@@ -72,6 +79,7 @@ export const EXPEDITION_STAGE_CONFIGS: readonly ExpeditionStageConfig[] = [
       { itemConfigId: "spiritual_soil", quantity: 15 },
       { itemConfigId: "spiritual_herb", quantity: 15 },
       { itemConfigId: "enhance_stone", quantity: 5 },
+      { itemConfigId: "treasure_token", quantity: 3 },
     ],
   },
   {
@@ -86,6 +94,8 @@ export const EXPEDITION_STAGE_CONFIGS: readonly ExpeditionStageConfig[] = [
       { itemConfigId: "spiritual_herb", quantity: 20 },
       { itemConfigId: "ore", quantity: 20 },
       { itemConfigId: "enhance_stone", quantity: 8 },
+      { itemConfigId: "technique_page", quantity: 20 },
+      { itemConfigId: "treasure_token", quantity: 5 },
     ],
   },
 ];

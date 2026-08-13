@@ -140,7 +140,9 @@ describe("equipment enhancement display", () => {
 
 describe("technique star-up display", () => {
   it("shows an affordable same-name duplicate quote", () => {
-    expect(getTechniqueUpgradeDisplay(technique(3, 2))).toEqual({
+    expect(
+      getTechniqueUpgradeDisplay(snapshotWithBalances(0, 0), technique(3, 2)),
+    ).toEqual({
       maxed: false,
       affordable: true,
       costText: "副本 2/2",
@@ -150,20 +152,47 @@ describe("technique star-up display", () => {
   });
 
   it("keeps an unaffordable star-up actionable", () => {
-    const display = getTechniqueUpgradeDisplay(technique(8, 6));
+    const display = getTechniqueUpgradeDisplay(
+      snapshotWithBalances(0, 0),
+      technique(8, 6),
+    );
 
     expect(display.affordable).toBe(false);
     expect(display.actionEnabled).toBe(true);
-    expect(display.costText).toBe("副本 6/7");
+    expect(display.costText).toBe("副本 6/7\n残页 0/5");
   });
 
   it("disables star-up at ten stars", () => {
-    expect(getTechniqueUpgradeDisplay(technique(10, 999))).toEqual({
+    expect(
+      getTechniqueUpgradeDisplay(
+        snapshotWithBalances(0, 0),
+        technique(10, 999),
+      ),
+    ).toEqual({
       maxed: true,
       affordable: false,
       costText: "已满星",
       actionText: "满星",
       actionEnabled: false,
+    });
+  });
+
+  it("quotes technique pages as a substitute for missing copies", () => {
+    const snapshot = snapshotWithBalances(0, 0);
+    snapshot.inventory.stacks = [
+      {
+        itemConfigId: "technique_page",
+        displayName: "功法残页",
+        quantity: "5",
+      },
+    ];
+
+    expect(getTechniqueUpgradeDisplay(snapshot, technique(1, 0))).toEqual({
+      maxed: false,
+      affordable: true,
+      costText: "副本 0/1\n残页 5/5",
+      actionText: "升星",
+      actionEnabled: true,
     });
   });
 });

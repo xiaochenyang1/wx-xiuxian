@@ -36,7 +36,7 @@ describe("expedition stage display", () => {
     expect(display).toEqual({
       status: "ready",
       requirementText: "战力 100",
-      rewardText: "灵石 300 · 木材x5 · 石材x5",
+      rewardText: "灵石 300 · 木材x5 · 石材x5 · 寻宝令x1 · 改名卡x1",
       statusText: "可以挑战",
       actionText: "挑战",
       actionEnabled: true,
@@ -94,7 +94,7 @@ describe("expedition stage display", () => {
 
     expect(display.requirementText).toBe("战力 6,500");
     expect(display.rewardText).toBe(
-      "灵石 1.2万 · 木材x20 · 石材x20 · 灵土x20 · 灵草x20 · 矿石x20 · 强化石x8",
+      "灵石 1.2万 · 木材x20 · 石材x20 · 灵土x20 · 灵草x20 · 矿石x20 · 强化石x8 · 功法残页x20 · 寻宝令x5",
     );
   });
 });

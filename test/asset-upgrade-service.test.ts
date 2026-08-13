@@ -266,10 +266,27 @@ describe("technique star-up service", () => {
     const { service } = serviceWithAssets({ star: 3, duplicateCount: 1 });
 
     expect(() => service.upgradeTechnique(TECHNIQUE_ID)).toThrow(
-      "同名副本不足，还需 1 本",
+      "同名副本不足，可用功法残页补足，还需 5 张",
     );
     expect(techniqueOf(service).star).toBe(3);
     expect(techniqueOf(service).duplicateCount).toBe(1);
+  });
+
+  it("uses technique pages only for the missing same-name copies", () => {
+    const { service } = serviceWithAssets({ star: 3, duplicateCount: 1 });
+    const save = service.snapshot as unknown as MutableSave;
+    save.inventory.stacks.push({
+      itemConfigId: "technique_page",
+      displayName: "功法残页",
+      quantity: "5",
+    });
+
+    const result = service.upgradeTechnique(TECHNIQUE_ID);
+
+    expect(techniqueOf(service).star).toBe(4);
+    expect(techniqueOf(service).duplicateCount).toBe(0);
+    expect(stackQuantity(service, "technique_page")).toBe("0");
+    expect(result.message).toContain("1 本同名副本和 5 张残页");
   });
 
   it("rejects a maxed or unknown technique", () => {
