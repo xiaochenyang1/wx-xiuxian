@@ -394,19 +394,14 @@ export class AppView {
       return;
     }
 
-    const usesCultivationReferenceSkin =
-      state.selectedTab === "cultivation" &&
-      this.hasMainBackground("cultivation");
     this.drawMainPage(state);
-    if (!usesCultivationReferenceSkin) {
-      this.drawHeader(state);
-      this.drawNavigation(state.selectedTab);
-      this.drawBottomFeatureRail(
-        this.contentRoot,
-        this.chromeGeometry.centerX,
-        this.chromeGeometry.navigationCenterY,
-      );
-    }
+    this.drawHeader(state);
+    this.drawNavigation(state.selectedTab);
+    this.drawBottomFeatureRail(
+      this.contentRoot,
+      this.chromeGeometry.centerX,
+      this.chromeGeometry.navigationCenterY,
+    );
     this.drawSyncStatus(state);
     if (state.activeFeature) {
       this.drawFeaturePanel(state, state.activeFeature);
@@ -423,20 +418,10 @@ export class AppView {
 
   private drawMainPage(state: Readonly<AppState>): void {
     const pageRoot = createUiNode(this.contentRoot, "MainPageRoot");
-    const usesCultivationReferenceSkin =
-      state.selectedTab === "cultivation" &&
-      this.hasMainBackground("cultivation");
     pageRoot.setPosition(
       this.chromeGeometry.centerX,
-      usesCultivationReferenceSkin ? 0 : this.chromeGeometry.bodyOffsetY,
+      this.chromeGeometry.bodyOffsetY,
     );
-    if (usesCultivationReferenceSkin) {
-      pageRoot.setScale(
-        1,
-        this.safeAreaLayout.viewportHeight / DESIGN_VIEWPORT_HEIGHT,
-        1,
-      );
-    }
     setSize(pageRoot, DESIGN_VIEWPORT_WIDTH, DESIGN_VIEWPORT_HEIGHT);
     this.mainPageRoot = pageRoot;
     try {
@@ -1488,10 +1473,7 @@ export class AppView {
 
   private drawCultivation(state: Readonly<AppState>): void {
     const data = state.bootstrap!;
-    if (this.hasMainBackground("cultivation")) {
-      this.drawCultivationReferenceHotspots(state);
-      return;
-    }
+    const hasBackground = this.hasMainBackground("cultivation");
     const mutationsEnabled = canRunLocalMutation(state);
     const projection = this.resolveCultivationProjection(state);
     const progressDisplay = getCultivationProgressDisplay(
@@ -1502,7 +1484,7 @@ export class AppView {
       (task) => task.completedAt === null,
     ).length;
     const pendingHarvest = data.harvestChest.pendingCount;
-    this.drawCultivationScene();
+    if (!hasBackground) this.drawCultivationScene();
     drawOrnatePanel(this.root, "RealmBanner", 0, 452, 408, 78);
     addLabel(
       this.root,
@@ -1549,6 +1531,10 @@ export class AppView {
       { label: "收获", x: 322, y: 150, icon: 5, badge: pendingHarvest, feature: "inventory" },
     ];
     for (const action of sideActions) {
+      // The right-side main navigation occupies this space when a full-screen
+      // background is present. All three features remain reachable from the
+      // two bottom rails, so keep only the unobstructed left-side shortcuts.
+      if (hasBackground && action.x > 0) continue;
       createSideFeatureButton(
         this.root,
         action.label,
@@ -1750,84 +1736,6 @@ export class AppView {
         this.actions.openFeature(item.feature);
       });
     });
-  }
-
-  private drawCultivationReferenceHotspots(
-    state: Readonly<AppState>,
-  ): void {
-    const openFeature = (feature: FeaturePanel): void => {
-      this.actions.feedback();
-      this.actions.openFeature(feature);
-    };
-
-    createHotspot(this.root, "ReferenceAvatar", -300, 591, 120, 150, () =>
-      openFeature("profile"),
-    );
-    createHotspot(this.root, "ReferencePower", 40, 572, 330, 76, () =>
-      openFeature("profile"),
-    );
-    createHotspot(this.root, "ReferenceBoost", 319, 573, 82, 92, () =>
-      openFeature("techniques"),
-    );
-
-    drawBand(
-      this.root,
-      "ReferenceRightRailMask",
-      319,
-      268,
-      112,
-      440,
-      COLORS.panelStrong,
-      COLORS.goldMuted,
-    );
-    drawBand(
-      this.root,
-      "ReferenceBottomNavigationMask",
-      0,
-      -520,
-      DESIGN_VIEWPORT_WIDTH,
-      294,
-      COLORS.panelStrong,
-      COLORS.goldMuted,
-    );
-
-    const sideHotspots: ReadonlyArray<{
-      readonly name: string;
-      readonly x: number;
-      readonly y: number;
-      readonly feature: FeaturePanel;
-    }> = [
-      { name: "Journey", x: -315, y: 431, feature: "profile" },
-      { name: "Tasks", x: -315, y: 329, feature: "tasks" },
-      { name: "Achievements", x: -315, y: 226, feature: "profile" },
-      { name: "Mail", x: -315, y: 123, feature: "tasks" },
-    ];
-    for (const hotspot of sideHotspots) {
-      createHotspot(
-        this.root,
-        `Reference${hotspot.name}`,
-        hotspot.x,
-        hotspot.y,
-        98,
-        98,
-        () => openFeature(hotspot.feature),
-      );
-    }
-
-    createHotspot(this.root, "ReferenceAutoCultivation", -306, -302, 126, 130, () =>
-      openFeature("profile"),
-    );
-    createHotspot(this.root, "ReferenceOnlineReward", 306, -302, 126, 130, () =>
-      openFeature("inventory"),
-    );
-    createHotspot(this.root, "ReferenceBreakthrough", 0, -307, 282, 88, () => {
-      if (!canRunLocalMutation(state)) return;
-      this.actions.feedback();
-      this.actions.breakthrough();
-    });
-
-    this.drawRightNavigation(this.root, state.selectedTab, 319, 430);
-    this.drawBottomFeatureRail(this.root, 0, -580);
   }
 
   private updateCultivationProjectionAnchor(
@@ -2688,24 +2596,6 @@ function createFeatureButton(
     HorizontalTextAlignment.CENTER,
     "fixed",
   );
-}
-
-function createHotspot(
-  parent: Node,
-  name: string,
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-  onClick: () => void,
-): Node {
-  const node = createUiNode(parent, name);
-  node.setPosition(x, y);
-  setSize(node, width, height);
-  const button = node.addComponent(Button);
-  button.transition = Button.Transition.NONE;
-  node.on(Button.EventType.CLICK, onClick);
-  return node;
 }
 
 function createMainTabButton(

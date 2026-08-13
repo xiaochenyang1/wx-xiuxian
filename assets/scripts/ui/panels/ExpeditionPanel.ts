@@ -68,9 +68,9 @@ export function drawExpeditionPanel(
     addLabel(
       overlay,
       display.rewardText,
-      -194,
+      -94,
       y - 16,
-      420,
+      400,
       42,
       13,
       COLORS.textMuted,
