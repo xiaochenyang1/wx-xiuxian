@@ -89,6 +89,9 @@ const BAG_MAX_CAPACITY = 200;
 const BAG_EXPANSION_SIZE = 10;
 const BAG_EXPANSION_BASE_COST = 5_000;
 const DROP_CLOCK_MAX_REMAINDER = 60_000_000;
+const LOCAL_BACKUP_PREFIX = "XIUXIAN_SAVE_V1:";
+const LOCAL_BACKUP_CHECKSUM_LENGTH = 8;
+const LOCAL_BACKUP_MAX_LENGTH = 1_000_000;
 
 interface LocalGameSave {
   readonly schemaVersion: typeof LOCAL_SAVE_SCHEMA_VERSION;
@@ -114,6 +117,10 @@ export interface LocalLoadResult {
   readonly events: readonly ProgressionEvent[];
   readonly sourceId: string;
   readonly created: boolean;
+}
+
+export interface LocalBackupExportResult extends LocalLoadResult {
+  readonly backupCode: string;
 }
 
 export class LocalGameError extends Error {
@@ -1335,9 +1342,61 @@ export class LocalGameService {
     };
   }
 
+  exportBackup(now = new Date()): LocalBackupExportResult {
+    const checkpoint = this.checkpoint(now);
+    const payload = JSON.stringify(this.requireSave());
+    return {
+      ...checkpoint,
+      backupCode: `${LOCAL_BACKUP_PREFIX}${backupChecksum(payload)}:${payload}`,
+    };
+  }
+
+  importBackup(backupCode: string, now = new Date()): LocalLoadResult {
+    const imported = parseLocalBackupCode(backupCode);
+    this.checkpoint(now);
+    const current = this.requireSave();
+    if (
+      !this.platform.save(
+        CLIENT_CONFIG.localImportRecoveryStorageKey,
+        current,
+      )
+    ) {
+      throw new LocalGameError("无法创建当前进度的回退备份，导入已取消");
+    }
+    return this.activateImportedSave(imported, current, now, "导入存档写入失败");
+  }
+
+  hasImportRecovery(): boolean {
+    return (
+      parseLocalGameSave(
+        this.platform.load<unknown>(
+          CLIENT_CONFIG.localImportRecoveryStorageKey,
+        ),
+      ) !== null
+    );
+  }
+
+  restoreImportRecovery(now = new Date()): LocalLoadResult {
+    const recovery = parseLocalGameSave(
+      this.platform.load<unknown>(CLIENT_CONFIG.localImportRecoveryStorageKey),
+    );
+    if (!recovery) throw new LocalGameError("没有可恢复的导入前存档");
+    this.checkpoint(now);
+    const current = this.requireSave();
+    const result = this.activateImportedSave(
+      recovery,
+      current,
+      now,
+      "回退存档写入失败",
+    );
+    this.platform.remove(CLIENT_CONFIG.localImportRecoveryStorageKey);
+    return result;
+  }
+
   reset(): LocalLoadResult {
     const previous = this.snapshot;
     this.platform.remove(CLIENT_CONFIG.localSaveStorageKey);
+    this.platform.remove(CLIENT_CONFIG.localImportRecoveryStorageKey);
     this.saveData = createInitialSave(new Date());
     const persisted = this.persist();
     return {
@@ -1378,6 +1437,30 @@ export class LocalGameService {
       this.persist();
       throw error;
     }
+  }
+
+  private activateImportedSave(
+    imported: LocalGameSave,
+    current: LocalGameSave,
+    now: Date,
+    failureMessage: string,
+  ): LocalLoadResult {
+    this.saveData = imported;
+    this.setSnapshot(imported.snapshot, now);
+    if (!this.persist()) {
+      this.saveData = current;
+      this.persist();
+      throw new LocalGameError(`${failureMessage}，当前进度未改变`);
+    }
+    return {
+      previous: current.snapshot,
+      snapshot: this.snapshot,
+      savedAt: this.requireSave().savedAt,
+      persisted: true,
+      events: [],
+      sourceId: createLocalId(),
+      created: false,
+    };
   }
 
   private settleTo(
@@ -2291,6 +2374,48 @@ function parseLocalGameSave(value: unknown): LocalGameSave | null {
   } catch {
     return null;
   }
+}
+
+function parseLocalBackupCode(rawCode: string): LocalGameSave {
+  if (typeof rawCode !== "string" || rawCode.length > LOCAL_BACKUP_MAX_LENGTH) {
+    throw new LocalGameError("存档备份内容过长或格式无效");
+  }
+  const code = rawCode.trim();
+  const checksumStart = LOCAL_BACKUP_PREFIX.length;
+  const checksumEnd = checksumStart + LOCAL_BACKUP_CHECKSUM_LENGTH;
+  if (
+    !code.startsWith(LOCAL_BACKUP_PREFIX) ||
+    code.charAt(checksumEnd) !== ":"
+  ) {
+    throw new LocalGameError("剪贴板中没有可识别的修仙存档备份");
+  }
+  const checksum = code.slice(checksumStart, checksumEnd);
+  const payload = code.slice(checksumEnd + 1);
+  if (!/^[0-9a-f]{8}$/.test(checksum) || backupChecksum(payload) !== checksum) {
+    throw new LocalGameError("存档备份校验失败，内容可能不完整或已被修改");
+  }
+
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(payload);
+  } catch {
+    throw new LocalGameError("存档备份内容不是有效数据");
+  }
+  const save = parseLocalGameSave(decoded);
+  if (!save) {
+    throw new LocalGameError("存档备份内容无效或版本不兼容");
+  }
+  return save;
+}
+
+function backupChecksum(value: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    hash = Math.imul(hash ^ (code & 0xff), 0x01000193);
+    hash = Math.imul(hash ^ (code >>> 8), 0x01000193);
+  }
+  return `00000000${(hash >>> 0).toString(16)}`.slice(-8);
 }
 
 function isBootstrapSnapshot(value: unknown): value is BootstrapSnapshot {

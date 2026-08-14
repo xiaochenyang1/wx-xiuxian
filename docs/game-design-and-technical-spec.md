@@ -204,10 +204,12 @@ Lv.11 后可从青云宗、丹霞谷、万象楼中选择一个本地宗门且�
 
 ### 3.1 存储位置
 
-| 平台 | 实现 | 键 |
-|---|---|---|
-| 浏览器 | `localStorage` | `cultivation-diary.local-save.v1` |
-| 微信小游戏 | `wx.getStorageSync/setStorageSync` | `cultivation-diary.local-save.v1` |
+| 平台 | 用途 | 实现 | 键 |
+|---|---|---|---|
+| 浏览器 | 当前存档 | `localStorage` | `cultivation-diary.local-save.v1` |
+| 浏览器 | 导入前回退 | `localStorage` | `cultivation-diary.import-recovery.v1` |
+| 微信小游戏 | 当前存档 | `wx.getStorageSync/setStorageSync` | `cultivation-diary.local-save.v1` |
+| 微信小游戏 | 导入前回退 | `wx.getStorageSync/setStorageSync` | `cultivation-diary.import-recovery.v1` |
 
 ### 3.2 存档信封
 
@@ -225,10 +227,18 @@ interface LocalGameSave {
 
 配置版本记录在 `snapshot.config.version`，当前为 `local-2.3.0`；`schemaVersion` 仍为 `1`。
 
+### 3.2.1 手动备份与恢复
+
+档案页可把完整 `LocalGameSave` 封装为 `XIUXIAN_SAVE_V1` 文本并复制到系统剪贴板。备份码携带 32 位校验值，用于发现复制截断或意外修改；它不是密码学签名，也不承担本地单机防作弊职责。浏览器优先使用 Clipboard API，复制时可回退到浏览器传统复制命令；微信小游戏使用 `wx.setClipboardData/getClipboardData`。整个过程不发送网络请求。
+
+导入先检查备份码长度、前缀、校验值，再走与本地载入相同的 schema、配置版本、集合长度和数值边界校验。全部通过后，当前存档先写入 `cultivation-diary.import-recovery.v1`，随后才替换主存档；无法创建回退或无法写入导入档时保持当前内存进度。成功导入会从导入时刻重建挂机锚点，不结算备份导出至导入期间的离线收益，避免重复导入旧备份反复获得资源。
+
+档案页可二次确认后恢复最近一次导入前存档。恢复成功即清除该一次性回退槽；再次导入会用当时的当前进度覆盖回退槽。重置本地进度同时清除主存档和回退槽。
+
 ### 3.3 写入时机
 
 1. 新档创建后立即写入。
-2. 每次突破、改名、使用物品、收取、分解、装备、资产养成、洞府升级、炼丹、炼器、伴侣培养、宗门捐献、历练通关、扫荡、寻宝或设置变化后写入。
+2. 每次突破、改名、使用物品、收取、分解、装备、资产养成、洞府升级、炼丹、炼器、伴侣培养、宗门捐献、历练通关、扫荡、寻宝、设置变化、备份导出、导入或回退后写入。
 3. 前台每 30 秒写入。
 4. 切后台时写入。
 5. 回到前台完成离线结算后写入。
@@ -328,7 +338,7 @@ GameBootstrap
 
 ### `PlatformAdapter`
 
-- 只提供本地存储、前后台事件、安全区和轻触反馈。
+- 只提供本地存储、剪贴板、前后台事件、安全区和轻触反馈。
 - 浏览器与微信实现保持同一接口。
 
 ### `shared`
@@ -371,6 +381,8 @@ Release 构建不创建调试根节点。调试能力仍走 `LocalGameService` �
 - 后台超过 60 秒再返回时出现离线收益汇总。
 - 突破、改名、扩包、物品使用、收取、分解、装备、强化、升星、洞府升级、历练通关和寻宝后刷新不回退。
 - 本地存储不可用时出现明确提示，当前会话仍能操作。
+- 备份码可复制并恢复同一角色；损坏或不兼容备份不会覆盖当前进度。
+- 导入前回退需要二次确认，恢复成功后不能重复使用同一回退槽。
 - 重置进度需要二次确认，完成后回到全新 Lv.1 角色。
 
 ### 微信验收

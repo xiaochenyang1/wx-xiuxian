@@ -21,6 +21,10 @@ export class FakePlatformAdapter implements PlatformAdapter {
   saveShouldFail = false;
   saveCallCount = 0;
   feedbackCallCount = 0;
+  clipboardText: string | null = null;
+  clipboardWriteShouldFail = false;
+  clipboardReadShouldFail = false;
+  readonly failedSaveKeys = new Set<string>();
 
   private readonly store = new Map<string, string>();
   private handlers: PlatformLifecycleHandlers | null = null;
@@ -41,13 +45,23 @@ export class FakePlatformAdapter implements PlatformAdapter {
 
   save<T>(key: string, value: T): boolean {
     this.saveCallCount += 1;
-    if (this.saveShouldFail) return false;
+    if (this.saveShouldFail || this.failedSaveKeys.has(key)) return false;
     this.store.set(key, JSON.stringify(value));
     return true;
   }
 
   remove(key: string): void {
     this.store.delete(key);
+  }
+
+  async writeClipboard(value: string): Promise<boolean> {
+    if (this.clipboardWriteShouldFail) return false;
+    this.clipboardText = value;
+    return true;
+  }
+
+  async readClipboard(): Promise<string | null> {
+    return this.clipboardReadShouldFail ? null : this.clipboardText;
   }
 
   subscribeLifecycle(handlers: PlatformLifecycleHandlers): () => void {

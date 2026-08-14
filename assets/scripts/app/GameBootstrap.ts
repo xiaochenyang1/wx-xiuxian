@@ -57,6 +57,10 @@ export class GameBootstrap extends Component {
       {
         retry: () => this.startGame(),
         resetProgress: () => this.resetProgress(),
+        exportProgressBackup: () => void this.exportProgressBackup(),
+        importProgressBackup: () => void this.importProgressBackup(),
+        restoreImportRecovery: () => this.restoreImportRecovery(),
+        hasImportRecovery: () => this.localGame.hasImportRecovery(),
         selectTab: (tab) => this.store.selectTab(tab),
         openFeature: (feature) => this.store.openFeature(feature),
         closeFeature: () => this.store.closeFeature(),
@@ -332,6 +336,130 @@ export class GameBootstrap extends Component {
     if (currentName && currentName !== previousName) {
       this.appView?.acceptProfileName(currentName);
     }
+  }
+
+  private async exportProgressBackup(): Promise<void> {
+    if (
+      this.destroyed ||
+      this.mutationInFlight ||
+      this.store.snapshot.phase !== "ready"
+    ) {
+      return;
+    }
+    this.mutationInFlight = true;
+    this.appView?.setBackupInFlight(true);
+    this.store.setFeatureMessage(null);
+    try {
+      const result = this.localGame.exportBackup();
+      this.store.replaceSnapshot(
+        result.snapshot,
+        result.savedAt,
+        result.persisted ? "saved" : "volatile",
+      );
+      const copied = await this.platform.writeClipboard(result.backupCode);
+      if (this.destroyed) return;
+      if (!copied) {
+        throw new LocalGameError("无法写入剪贴板，请检查剪贴板权限");
+      }
+      this.store.setFeatureMessage("存档备份已复制到剪贴板");
+    } catch (error) {
+      if (!this.destroyed) {
+        this.store.replaceSnapshot(
+          this.localGame.snapshot,
+          this.localGame.savedAt,
+          this.localGame.persistenceAvailable ? "saved" : "volatile",
+        );
+        this.store.setFeatureMessage(
+          localErrorMessage(error, "存档备份复制失败"),
+        );
+      }
+    } finally {
+      this.mutationInFlight = false;
+      this.appView?.setBackupInFlight(false);
+    }
+  }
+
+  private async importProgressBackup(): Promise<void> {
+    if (
+      this.destroyed ||
+      this.mutationInFlight ||
+      this.store.snapshot.phase !== "ready"
+    ) {
+      return;
+    }
+    this.mutationInFlight = true;
+    this.appView?.setBackupInFlight(true);
+    this.store.setFeatureMessage(null);
+    try {
+      const backupCode = await this.platform.readClipboard();
+      if (this.destroyed) return;
+      if (backupCode === null || backupCode.trim() === "") {
+        throw new LocalGameError("无法读取剪贴板，请检查剪贴板权限和内容");
+      }
+      const result = this.localGame.importBackup(backupCode);
+      this.applyProgressReplacement(
+        result,
+        "存档已恢复，原进度可通过“恢复导入前”找回",
+      );
+    } catch (error) {
+      if (!this.destroyed) {
+        this.store.replaceSnapshot(
+          this.localGame.snapshot,
+          this.localGame.savedAt,
+          this.localGame.persistenceAvailable ? "saved" : "volatile",
+        );
+        this.store.setFeatureMessage(
+          localErrorMessage(error, "剪贴板存档导入失败"),
+        );
+      }
+    } finally {
+      this.mutationInFlight = false;
+      this.appView?.setBackupInFlight(false);
+    }
+  }
+
+  private restoreImportRecovery(): void {
+    if (
+      this.destroyed ||
+      this.mutationInFlight ||
+      this.store.snapshot.phase !== "ready"
+    ) {
+      return;
+    }
+    this.mutationInFlight = true;
+    this.appView?.setBackupInFlight(true);
+    this.store.setFeatureMessage(null);
+    try {
+      const result = this.localGame.restoreImportRecovery();
+      this.applyProgressReplacement(result, "已恢复上次导入前的本地进度");
+    } catch (error) {
+      this.store.replaceSnapshot(
+        this.localGame.snapshot,
+        this.localGame.savedAt,
+        this.localGame.persistenceAvailable ? "saved" : "volatile",
+      );
+      this.store.setFeatureMessage(
+        localErrorMessage(error, "导入前存档恢复失败"),
+      );
+    } finally {
+      this.mutationInFlight = false;
+      this.appView?.setBackupInFlight(false);
+    }
+  }
+
+  private applyProgressReplacement(
+    result: ReturnType<LocalGameService["importBackup"]>,
+    message: string,
+  ): void {
+    this.appView?.interruptCultivationPresentation(true);
+    this.store.setReady(
+      result.snapshot,
+      result.savedAt,
+      result.persisted ? "saved" : "volatile",
+    );
+    this.appView?.acceptProfileName(result.snapshot.player.displayName);
+    this.store.openFeature("profile");
+    this.store.setFeatureMessage(message);
   }
 
   private equipEquipment(

@@ -83,6 +83,8 @@ import { drawExpeditionPanel } from "./panels/ExpeditionPanel";
 import { drawInventoryPanel } from "./panels/InventoryPanel";
 import {
   drawProfilePanel,
+  type ProfileBackupAction,
+  type ProfileBackupControls,
   type ProfileDraftState,
   type ProfileResetControls,
 } from "./panels/ProfilePanel";
@@ -117,6 +119,10 @@ type DebugLifecycleStatus = "foreground" | "background";
 export interface AppViewActions {
   retry(): void;
   resetProgress(): void;
+  exportProgressBackup(): void;
+  importProgressBackup(): void;
+  restoreImportRecovery(): void;
+  hasImportRecovery(): boolean;
   selectTab(tab: MainTab): void;
   openFeature(feature: FeaturePanel): void;
   closeFeature(): void;
@@ -257,6 +263,8 @@ export class AppView {
   private debugSaveResetArmed = false;
   private profileResetArmed = false;
   private profileResetPending = false;
+  private profileBackupArmed: ProfileBackupAction | null = null;
+  private profileBackupPending = false;
   private profilePlayerId: string | null = null;
   private profileAvatarDraft: ChosenAvatarVariant | null = null;
   private profileNameDraft: string | null = null;
@@ -297,6 +305,15 @@ export class AppView {
     arm: () => this.armProfileReset(),
     cancel: () => this.cancelProfileReset(),
     confirm: () => this.confirmProfileReset(),
+  };
+  private readonly profileBackupControls: ProfileBackupControls = {
+    armed: () => this.profileBackupArmed,
+    pending: () => this.profileBackupPending,
+    recoveryAvailable: () => this.actions.hasImportRecovery(),
+    copy: () => this.copyProfileBackup(),
+    arm: (action) => this.armProfileBackup(action),
+    cancel: () => this.cancelProfileBackup(),
+    confirm: () => this.confirmProfileBackup(),
   };
 
   constructor(
@@ -532,6 +549,13 @@ export class AppView {
     if (this.profileResetPending === inFlight) return;
     this.profileResetPending = inFlight;
     if (inFlight) this.profileResetArmed = false;
+    if (this.lastState) this.render(this.lastState);
+  }
+
+  setBackupInFlight(inFlight: boolean): void {
+    if (this.profileBackupPending === inFlight) return;
+    this.profileBackupPending = inFlight;
+    if (inFlight) this.profileBackupArmed = null;
     if (this.lastState) this.render(this.lastState);
   }
 
@@ -2375,6 +2399,7 @@ export class AppView {
         state,
         this.actions,
         this.profileDrafts,
+        this.profileBackupControls,
         this.profileResetControls,
       );
     if (feature === "inventory")
@@ -2407,6 +2432,7 @@ export class AppView {
 
   private armProfileReset(): void {
     this.actions.feedback();
+    this.profileBackupArmed = null;
     this.profileResetArmed = true;
     if (this.lastState) this.render(this.lastState);
   }
@@ -2423,6 +2449,32 @@ export class AppView {
     this.actions.resetProgress();
   }
 
+  private copyProfileBackup(): void {
+    this.actions.feedback();
+    this.actions.exportProgressBackup();
+  }
+
+  private armProfileBackup(action: ProfileBackupAction): void {
+    this.actions.feedback();
+    this.profileResetArmed = false;
+    this.profileBackupArmed = action;
+    if (this.lastState) this.render(this.lastState);
+  }
+
+  private cancelProfileBackup(): void {
+    this.actions.feedback();
+    this.profileBackupArmed = null;
+    if (this.lastState) this.render(this.lastState);
+  }
+
+  private confirmProfileBackup(): void {
+    const action = this.profileBackupArmed;
+    this.profileBackupArmed = null;
+    this.actions.feedback();
+    if (action === "import") this.actions.importProgressBackup();
+    if (action === "recovery") this.actions.restoreImportRecovery();
+  }
+
   private selectAvatarDraft(avatarVariant: ChosenAvatarVariant): void {
     this.actions.feedback();
     this.profileAvatarDraft = avatarVariant;
@@ -2434,11 +2486,13 @@ export class AppView {
     this.profileNameDraft = null;
     this.profileNameSource = null;
     this.profileResetArmed = false;
+    this.profileBackupArmed = null;
   }
 
   private clearPlayerUiState(): void {
     this.clearProfileDraft();
     this.profileResetPending = false;
+    this.profileBackupPending = false;
     this.debugSaveResetArmed = false;
     this.pages.inventoryStacks = 0;
     this.pages.harvestChest = 0;
