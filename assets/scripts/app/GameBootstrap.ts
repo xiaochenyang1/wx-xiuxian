@@ -1,6 +1,7 @@
 import { _decorator, Component, Node, ResolutionPolicy, view } from "cc";
 import { DEBUG } from "cc/env";
 import type {
+  AutoSalvageQuality,
   BootstrapSnapshot,
   ChosenAvatarVariant,
   DebugGrantTarget,
@@ -107,6 +108,8 @@ export class GameBootstrap extends Component {
           this.runMutation(() => this.localGame.transferHarvest(entryId)),
         salvageHarvest: (entryId) =>
           this.runMutation(() => this.localGame.salvageHarvest(entryId)),
+        toggleAutoSalvage: (quality: AutoSalvageQuality) =>
+          this.runMutation(() => this.localGame.toggleAutoSalvage(quality)),
         equipTechnique: (techniqueConfigId) =>
           this.runMutation(
             () => this.localGame.equipTechnique(techniqueConfigId),

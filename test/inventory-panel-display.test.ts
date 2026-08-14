@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { getAutoSalvageControls } from "../assets/scripts/core/AutoSalvageDisplay";
 import { isDirectlyUsableInventoryItem } from "../assets/scripts/core/InventoryDisplay";
 
 describe("inventory item actions", () => {
@@ -18,5 +19,21 @@ describe("inventory item actions", () => {
     ]) {
       expect(isDirectlyUsableInventoryItem(itemConfigId)).toBe(false);
     }
+  });
+});
+
+describe("auto salvage controls", () => {
+  it("maps both saved settings to stable toggle labels and states", () => {
+    expect(
+      getAutoSalvageControls({
+        autoSalvageCommon: true,
+        autoSalvageUncommon: false,
+        partnerUnlockNoticeSeen: false,
+        selectedTab: "inventory",
+      }),
+    ).toEqual([
+      { quality: "common", label: "普通自动", active: true },
+      { quality: "uncommon", label: "优秀自动", active: false },
+    ]);
   });
 });

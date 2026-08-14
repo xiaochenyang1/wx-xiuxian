@@ -5,6 +5,7 @@ import type { BigNumberString } from "../types";
 import type { OfflineSettlementSummary } from "./offline";
 
 export type AvatarVariant = "neutral" | "male" | "female";
+export type AutoSalvageQuality = "common" | "uncommon";
 
 export interface BootstrapSnapshot {
   account: {

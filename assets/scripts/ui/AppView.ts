@@ -1,6 +1,7 @@
 import {
   PARTNER_CONFIGS,
   PARTNER_MAX_LEVEL,
+  type AutoSalvageQuality,
   type BootstrapSnapshot,
   type ChosenAvatarVariant,
   type DebugGrantTarget,
@@ -138,6 +139,7 @@ export interface AppViewActions {
   useInventoryItem(itemConfigId: string): void;
   transferHarvest(entryId: string): void;
   salvageHarvest(entryId: string): void;
+  toggleAutoSalvage(quality: AutoSalvageQuality): void;
   equipTechnique(techniqueConfigId: string): void;
   unequipTechnique(techniqueConfigId: string): void;
   equipEquipment(

@@ -314,6 +314,18 @@ describe("every reachable save round-trips", () => {
     ).toBe(false);
   });
 
+  it("survives auto salvage setting changes", () => {
+    const reloaded = assertReloads("auto salvage settings", (service) => {
+      service.toggleAutoSalvage("common");
+      service.toggleAutoSalvage("uncommon");
+    });
+
+    expect(reloaded.snapshot.settings).toMatchObject({
+      autoSalvageCommon: true,
+      autoSalvageUncommon: true,
+    });
+  });
+
   it("survives a long chain of mixed actions", () => {
     assertReloads("mixed", (service) => {
       service.debugSimulateOffline(86_400, 7);

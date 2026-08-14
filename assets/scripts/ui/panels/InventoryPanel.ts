@@ -2,12 +2,14 @@ import { countOccupiedBagSlots } from "@cultivation-diary/shared";
 import { formatLargeNumber } from "../../core/ClientNumber";
 import type { AppState } from "../../core/ClientTypes";
 import { canRunLocalMutation } from "../../core/ClientTypes";
+import { getAutoSalvageControls } from "../../core/AutoSalvageDisplay";
 import { isDirectlyUsableInventoryItem } from "../../core/InventoryDisplay";
 import type { AppViewActions, PanelPaging } from "../AppView";
 import { COLORS } from "../primitives/Colors";
 import {
   addLabel,
   createButton,
+  createToggle,
   drawBand,
   drawPagination,
 } from "../primitives/Draw";
@@ -167,21 +169,35 @@ export function drawInventoryPanel(
 
   addLabel(
     overlay,
-    `挂机收获箱 ${data.harvestChest.pendingCount} / 100`,
-    -205,
+    `收获箱 ${data.harvestChest.pendingCount} / 100`,
+    -238,
     35,
-    270,
+    144,
     36,
-    20,
+    18,
     COLORS.jade,
     true,
     1,
     HorizontalTextAlignment.LEFT,
   );
+  getAutoSalvageControls(data.settings).forEach((control, index) => {
+    createToggle(
+      overlay,
+      `AutoSalvage-${control.quality}`,
+      control.label,
+      index === 0 ? -86 : 40,
+      35,
+      116,
+      36,
+      control.active,
+      { enabled: mutationsEnabled, fontSize: 14 },
+      () => actions.toggleAutoSalvage(control.quality),
+    );
+  });
   drawPagination(
     overlay,
     "HarvestChestPager",
-    190,
+    225,
     35,
     harvestWindow.page,
     harvestWindow.pageCount,

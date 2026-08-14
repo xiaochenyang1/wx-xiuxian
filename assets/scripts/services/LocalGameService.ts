@@ -62,6 +62,7 @@ import {
   simulateOnlineExperience,
   techniqueStarUpgradeCost,
   type AssetQuality,
+  type AutoSalvageQuality,
   type BootstrapSnapshot,
   type ChosenAvatarVariant,
   type DebugGrantTarget,
@@ -296,6 +297,26 @@ export class LocalGameService {
       },
       events: [],
     }));
+  }
+
+  toggleAutoSalvage(quality: AutoSalvageQuality): LocalMutationResult {
+    return this.mutate((snapshot) => {
+      if (quality !== "common" && quality !== "uncommon") {
+        throw new LocalGameError("该品质不支持自动分解");
+      }
+      const settingKey =
+        quality === "common" ? "autoSalvageCommon" : "autoSalvageUncommon";
+      const enabled = !snapshot.settings[settingKey];
+      const qualityName = quality === "common" ? "普通" : "优秀";
+      return {
+        snapshot: {
+          ...snapshot,
+          settings: { ...snapshot.settings, [settingKey]: enabled },
+        },
+        events: [],
+        message: `${qualityName}品质自动分解已${enabled ? "开启" : "关闭"}，仅影响后续新收获`,
+      };
+    });
   }
 
   expandInventory(): LocalMutationResult {
