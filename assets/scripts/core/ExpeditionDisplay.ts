@@ -1,5 +1,8 @@
 import {
+  EXPEDITION_STAGE_CONFIGS,
+  EXPEDITION_SWEEP_TOKEN_COST,
   evaluateExpeditionStage,
+  getExpeditionSweepCount,
   getItemConfig,
   type BootstrapSnapshot,
   type ExpeditionStageConfig,
@@ -17,7 +20,11 @@ export interface ExpeditionStageDisplay {
 }
 
 export function getExpeditionSummary(snapshot: BootstrapSnapshot): string {
-  return `已通关 ${snapshot.expedition.clearedStageIds.length} 关 · 当前战力 ${formatLargeNumber(snapshot.progress.totalPower)}`;
+  const totalSweeps = snapshot.expedition.sweepCounts.reduce(
+    (total, entry) => total + entry.count,
+    0,
+  );
+  return `首通 ${snapshot.expedition.clearedStageIds.length}/${EXPEDITION_STAGE_CONFIGS.length} · 扫荡 ${formatLargeNumber(String(totalSweeps))} · 战力 ${formatLargeNumber(snapshot.progress.totalPower)}`;
 }
 
 export function getExpeditionStageDisplay(
@@ -33,7 +40,11 @@ export function getExpeditionStageDisplay(
     ExpeditionStageStatus,
     Pick<ExpeditionStageDisplay, "statusText" | "actionText" | "actionEnabled">
   > = {
-    cleared: { statusText: "首通完成", actionText: "已完成", actionEnabled: false },
+    cleared: {
+      statusText: `已扫荡 ${formatLargeNumber(String(getExpeditionSweepCount(snapshot.expedition.sweepCounts, config.id)))} 次`,
+      actionText: "扫荡",
+      actionEnabled: true,
+    },
     locked: { statusText: "前置未完成", actionText: "未解锁", actionEnabled: false },
     underpowered: {
       statusText: `尚差 ${formatLargeNumber(evaluation.powerDeficit)} 战力`,
@@ -45,7 +56,10 @@ export function getExpeditionStageDisplay(
   return {
     status: evaluation.status,
     requirementText: `战力 ${formatLargeNumber(config.requiredPower)}`,
-    rewardText: formatExpeditionReward(config),
+    rewardText:
+      evaluation.status === "cleared"
+        ? formatExpeditionSweepReward(config)
+        : formatExpeditionReward(config),
     ...statusCopy[evaluation.status],
   };
 }
@@ -58,4 +72,14 @@ function formatExpeditionReward(config: ExpeditionStageConfig): string {
     )
     .join(" · ");
   return `灵石 ${formatLargeNumber(config.spiritStoneReward)} · ${items}`;
+}
+
+function formatExpeditionSweepReward(config: ExpeditionStageConfig): string {
+  const items = config.sweepItemRewards
+    .map(
+      (reward) =>
+        `${getItemConfig(reward.itemConfigId).displayName}x${reward.quantity}`,
+    )
+    .join(" · ");
+  return `耗寻宝令x${EXPEDITION_SWEEP_TOKEN_COST} · 灵石 ${formatLargeNumber(config.sweepSpiritStoneReward)} · ${items}`;
 }

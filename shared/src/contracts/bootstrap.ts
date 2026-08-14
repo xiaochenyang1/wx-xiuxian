@@ -99,6 +99,10 @@ export interface BootstrapSnapshot {
   };
   expedition: {
     clearedStageIds: ExpeditionStageId[];
+    sweepCounts: Array<{
+      stageConfigId: ExpeditionStageId;
+      count: number;
+    }>;
   };
   partner: {
     partnerId: string | null;

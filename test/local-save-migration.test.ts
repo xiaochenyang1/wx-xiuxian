@@ -57,6 +57,14 @@ function preFeatureCompletionSave(): MutableSave {
   return save;
 }
 
+/** Rewind a current save to the pre-sweep `local-2.1.0` format. */
+function preExpeditionSweepSave(): MutableSave {
+  const save = authenticSaveWithProgress();
+  delete save.snapshot.expedition.sweepCounts;
+  save.snapshot.config.version = "local-2.1.0";
+  return save;
+}
+
 function load(save: unknown): LocalGameService {
   const platform = new FakePlatformAdapter();
   platform.seed(SAVE_KEY, save);
@@ -109,7 +117,7 @@ describe("local-1.0.0 migration", () => {
   it("chains through both migrations and backfills every new subsystem", () => {
     const service = load(legacySave());
 
-    expect(service.snapshot.config.version).toBe("local-2.1.0");
+    expect(service.snapshot.config.version).toBe("local-2.2.0");
     expect(service.snapshot.cave.buildings).toEqual(
       CAVE_BUILDING_CONFIGS.map((config) => ({
         buildingConfigId: config.id,
@@ -117,6 +125,7 @@ describe("local-1.0.0 migration", () => {
       })),
     );
     expect(service.snapshot.expedition.clearedStageIds).toEqual([]);
+    expect(service.snapshot.expedition.sweepCounts).toEqual([]);
     expect(service.snapshot.partner).toEqual({ partnerId: null, level: 0, bond: 0 });
     expect(service.snapshot.sect).toEqual({ sectId: null, level: 0, contribution: 0 });
   });
@@ -141,10 +150,11 @@ describe("local-1.1.0 migration", () => {
 
     const service = load(legacy);
 
-    expect(service.snapshot.config.version).toBe("local-2.1.0");
+    expect(service.snapshot.config.version).toBe("local-2.2.0");
     expect(service.snapshot.cave.buildings[0].level).toBe(4);
     expect(service.snapshot.cave.buildings[3].level).toBe(CAVE_MAX_LEVEL);
     expect(service.snapshot.expedition.clearedStageIds).toEqual([]);
+    expect(service.snapshot.expedition.sweepCounts).toEqual([]);
     expect(service.snapshot.player.id).toBe(legacy.snapshot.player.id);
     expect(service.snapshot.account.id).toBe(legacy.snapshot.account.id);
   });
@@ -183,7 +193,7 @@ describe("local-1.2.0 to local-2.0.0 migration", () => {
 
     const service = load(legacy);
 
-    expect(service.snapshot.config.version).toBe("local-2.1.0");
+    expect(service.snapshot.config.version).toBe("local-2.2.0");
     expect(service.snapshot.cave.buildings[0].level).toBe(6);
     expect(service.snapshot.expedition.clearedStageIds).toEqual(
       legacy.snapshot.expedition.clearedStageIds,
@@ -221,7 +231,7 @@ describe("local-2.0.0 to local-2.1.0 migration", () => {
 
     const service = load(legacy);
 
-    expect(service.snapshot.config.version).toBe("local-2.1.0");
+    expect(service.snapshot.config.version).toBe("local-2.2.0");
     expect(
       service.snapshot.inventory.stacks.some(
         (stack) => stack.itemConfigId === "protection_talisman",
@@ -232,6 +242,36 @@ describe("local-2.0.0 to local-2.1.0 migration", () => {
         (stack) => stack.itemConfigId === "rename_card",
       )?.quantity,
     ).toBe("1");
+  });
+});
+
+describe("local-2.1.0 to local-2.2.0 migration", () => {
+  it("keeps expedition clears while adding empty sweep counters", () => {
+    const legacy = preExpeditionSweepSave();
+    legacy.snapshot.expedition.clearedStageIds = EXPEDITION_STAGE_CONFIGS.slice(
+      0,
+      4,
+    ).map((stage) => stage.id);
+
+    const service = load(legacy);
+
+    expect(service.snapshot.config.version).toBe("local-2.2.0");
+    expect(service.snapshot.expedition.clearedStageIds).toEqual(
+      legacy.snapshot.expedition.clearedStageIds,
+    );
+    expect(service.snapshot.expedition.sweepCounts).toEqual([]);
+    expect(service.snapshot.player.id).toBe(legacy.snapshot.player.id);
+    expect(service.snapshot.wallet.spiritStone).toBe(
+      legacy.snapshot.wallet.spiritStone,
+    );
+  });
+
+  it("does not discard a valid pre-sweep save", () => {
+    const platform = new FakePlatformAdapter();
+    platform.seed(SAVE_KEY, preExpeditionSweepSave());
+    const service = new LocalGameService(platform);
+
+    expect(service.initialize(LATER).created).toBe(false);
   });
 });
 

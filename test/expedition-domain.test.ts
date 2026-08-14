@@ -1,6 +1,8 @@
 import {
   EXPEDITION_STAGE_CONFIGS,
+  EXPEDITION_SWEEP_TOKEN_COST,
   evaluateExpeditionStage,
+  evaluateExpeditionSweep,
   getExpeditionStageConfig,
   getItemConfig,
 } from "@cultivation-diary/shared";
@@ -32,7 +34,16 @@ describe("expedition configuration", () => {
         expect(Number.isInteger(reward.quantity)).toBe(true);
         expect(reward.quantity).toBeGreaterThan(0);
       }
+      expect(BigInt(stage.sweepSpiritStoneReward)).toBeGreaterThan(0n);
+      expect(stage.sweepItemRewards.length).toBeGreaterThan(0);
+      for (const reward of stage.sweepItemRewards) {
+        expect(() => getItemConfig(reward.itemConfigId)).not.toThrow();
+        expect(reward.itemConfigId).not.toBe("treasure_token");
+        expect(Number.isInteger(reward.quantity)).toBe(true);
+        expect(reward.quantity).toBeGreaterThan(0);
+      }
     }
+    expect(EXPEDITION_SWEEP_TOKEN_COST).toBe(1);
   });
 
   it("rejects an unknown stage id", () => {
@@ -40,6 +51,31 @@ describe("expedition configuration", () => {
       "Unknown expedition stage config: missing_stage",
     );
     expect(() => evaluateExpeditionStage("missing_stage", [], "100")).toThrow();
+  });
+});
+
+describe("expedition sweep evaluation", () => {
+  const first = EXPEDITION_STAGE_CONFIGS[0]!;
+  const second = EXPEDITION_STAGE_CONFIGS[1]!;
+
+  it("requires the stage's first clear before sweeping", () => {
+    expect(evaluateExpeditionSweep(first.id, [], "999999")).toEqual({
+      status: "locked",
+      powerDeficit: "0",
+    });
+    expect(
+      evaluateExpeditionSweep(second.id, [first.id], "999999"),
+    ).toEqual({ status: "locked", powerDeficit: "0" });
+  });
+
+  it("checks current power and accepts the exact threshold", () => {
+    expect(evaluateExpeditionSweep(first.id, [first.id], "99")).toEqual({
+      status: "underpowered",
+      powerDeficit: "1",
+    });
+    expect(
+      evaluateExpeditionSweep(first.id, [first.id], first.requiredPower),
+    ).toEqual({ status: "ready", powerDeficit: "0" });
   });
 });
 

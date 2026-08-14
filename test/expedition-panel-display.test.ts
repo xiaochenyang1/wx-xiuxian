@@ -16,12 +16,13 @@ const FUTURE = new Date("2099-01-01T00:00:00.000Z");
 function snapshotWith(
   clearedStageIds: ExpeditionStageId[] = [],
   totalPower = "100",
+  sweepCounts: BootstrapSnapshot["expedition"]["sweepCounts"] = [],
 ): BootstrapSnapshot {
   const service = new LocalGameService(new FakePlatformAdapter());
   service.initialize(FUTURE);
   return {
     ...service.snapshot,
-    expedition: { clearedStageIds },
+    expedition: { clearedStageIds, sweepCounts },
     progress: { ...service.snapshot.progress, totalPower },
   };
 }
@@ -48,9 +49,10 @@ describe("expedition stage display", () => {
       getExpeditionStageDisplay(snapshotWith([first.id]), first),
     ).toMatchObject({
       status: "cleared",
-      statusText: "首通完成",
-      actionText: "已完成",
-      actionEnabled: false,
+      statusText: "已扫荡 0 次",
+      actionText: "扫荡",
+      actionEnabled: true,
+      rewardText: "耗寻宝令x1 · 灵石 100 · 木材x3 · 石材x3",
     });
     expect(getExpeditionStageDisplay(snapshotWith(), second)).toMatchObject({
       status: "locked",
@@ -101,11 +103,17 @@ describe("expedition stage display", () => {
 
 describe("expedition summary", () => {
   it("shows cleared count and formatted current power", () => {
-    expect(getExpeditionSummary(snapshotWith())).toBe("已通关 0 关 · 当前战力 100");
+    expect(getExpeditionSummary(snapshotWith())).toBe(
+      "首通 0/6 · 扫荡 0 · 战力 100",
+    );
     expect(
       getExpeditionSummary(
-        snapshotWith([EXPEDITION_STAGE_CONFIGS[0]!.id], "12345"),
+        snapshotWith(
+          [EXPEDITION_STAGE_CONFIGS[0]!.id],
+          "12345",
+          [{ stageConfigId: EXPEDITION_STAGE_CONFIGS[0]!.id, count: 12 }],
+        ),
       ),
-    ).toBe("已通关 1 关 · 当前战力 1.23万");
+    ).toBe("首通 1/6 · 扫荡 12 · 战力 1.23万");
   });
 });

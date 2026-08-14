@@ -51,7 +51,10 @@ export function drawExpeditionPanel(
   EXPEDITION_STAGE_CONFIGS.forEach((config, index) => {
     const display = getExpeditionStageDisplay(snapshot, config);
     const y = 320 - index * 122;
-    const active = display.status === "ready" || display.status === "underpowered";
+    const active =
+      display.status === "ready" ||
+      display.status === "underpowered" ||
+      display.status === "cleared";
     drawBand(
       overlay,
       `Expedition-${config.id}`,
@@ -122,7 +125,10 @@ export function drawExpeditionPanel(
         fontSize: 15,
         enabled: mutationsEnabled && display.actionEnabled,
       },
-      () => actions.challengeExpedition(config.id),
+      () =>
+        display.status === "cleared"
+          ? actions.sweepExpedition(config.id)
+          : actions.challengeExpedition(config.id),
     );
   });
 }

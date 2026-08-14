@@ -126,6 +126,7 @@ export interface AppViewActions {
   expandInventory(): void;
   upgradeCaveBuilding(buildingConfigId: string): void;
   challengeExpedition(stageConfigId: string): void;
+  sweepExpedition(stageConfigId: string): void;
   huntTreasure(): void;
   brewAlchemy(recipeId: string): void;
   craftEquipment(recipeId: string): void;

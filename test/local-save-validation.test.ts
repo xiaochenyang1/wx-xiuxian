@@ -1,4 +1,8 @@
-import { EXPEDITION_STAGE_CONFIGS, MAX_LEVEL } from "@cultivation-diary/shared";
+import {
+  EXPEDITION_STAGE_CONFIGS,
+  EXPEDITION_SWEEP_MAX_COUNT,
+  MAX_LEVEL,
+} from "@cultivation-diary/shared";
 import { describe, expect, it } from "vitest";
 import { CLIENT_CONFIG } from "../assets/scripts/core/ClientConfig";
 import { LocalGameService } from "../assets/scripts/services/LocalGameService";
@@ -72,6 +76,19 @@ describe("save validation accepts legitimate data", () => {
       ).toBe(false);
     }
   });
+
+  it("accepts valid sweep counters for cleared stages", () => {
+    expect(
+      corrupt((save) => {
+        const [first, second] = EXPEDITION_STAGE_CONFIGS;
+        save.snapshot.expedition.clearedStageIds = [first!.id, second!.id];
+        save.snapshot.expedition.sweepCounts = [
+          { stageConfigId: second!.id, count: EXPEDITION_SWEEP_MAX_COUNT },
+          { stageConfigId: first!.id, count: 1 },
+        ];
+      }),
+    ).toBe(false);
+  });
 });
 
 describe("expedition validation", () => {
@@ -80,6 +97,12 @@ describe("expedition validation", () => {
     expect(corrupt((save) => (save.snapshot.expedition = null))).toBe(true);
     expect(
       corrupt((save) => (save.snapshot.expedition.clearedStageIds = {})),
+    ).toBe(true);
+    expect(
+      corrupt((save) => (save.snapshot.expedition.sweepCounts = null)),
+    ).toBe(true);
+    expect(
+      corrupt((save) => delete save.snapshot.expedition.sweepCounts),
     ).toBe(true);
   });
 
@@ -116,6 +139,49 @@ describe("expedition validation", () => {
         ];
       }),
     ).toBe(true);
+  });
+
+  it("rejects sweep counters for unknown, uncleared, duplicated, or invalid stages", () => {
+    const [first, second] = EXPEDITION_STAGE_CONFIGS;
+    expect(
+      corrupt((save) => {
+        save.snapshot.expedition.clearedStageIds = [first!.id];
+        save.snapshot.expedition.sweepCounts = [
+          { stageConfigId: "unknown", count: 1 },
+        ];
+      }),
+    ).toBe(true);
+    expect(
+      corrupt((save) => {
+        save.snapshot.expedition.clearedStageIds = [first!.id];
+        save.snapshot.expedition.sweepCounts = [
+          { stageConfigId: second!.id, count: 1 },
+        ];
+      }),
+    ).toBe(true);
+    expect(
+      corrupt((save) => {
+        save.snapshot.expedition.clearedStageIds = [first!.id];
+        save.snapshot.expedition.sweepCounts = [
+          { stageConfigId: first!.id, count: 1 },
+          { stageConfigId: first!.id, count: 2 },
+        ];
+      }),
+    ).toBe(true);
+    for (const count of [
+      0,
+      1.5,
+      EXPEDITION_SWEEP_MAX_COUNT + 1,
+    ]) {
+      expect(
+        corrupt((save) => {
+          save.snapshot.expedition.clearedStageIds = [first!.id];
+          save.snapshot.expedition.sweepCounts = [
+            { stageConfigId: first!.id, count },
+          ];
+        }),
+      ).toBe(true);
+    }
   });
 });
 

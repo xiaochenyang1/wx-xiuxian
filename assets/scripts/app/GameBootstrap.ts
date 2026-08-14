@@ -74,6 +74,8 @@ export class GameBootstrap extends Component {
           ),
         challengeExpedition: (stageConfigId) =>
           this.runMutation(() => this.localGame.challengeExpedition(stageConfigId)),
+        sweepExpedition: (stageConfigId) =>
+          this.runMutation(() => this.localGame.sweepExpedition(stageConfigId)),
         huntTreasure: () =>
           this.runMutation(() => this.localGame.huntTreasure()),
         brewAlchemy: (recipeId) =>

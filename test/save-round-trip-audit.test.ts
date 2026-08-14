@@ -177,6 +177,7 @@ describe("every reachable save round-trips", () => {
   it("survives an expedition first-clear reward", () => {
     assertReloads("expedition", (service) => {
       service.challengeExpedition(EXPEDITION_STAGE_CONFIGS[0]!.id);
+      service.sweepExpedition(EXPEDITION_STAGE_CONFIGS[0]!.id);
     });
   });
 

@@ -7,6 +7,8 @@ import {
   EQUIPMENT_MAX_ENHANCE_LEVEL,
   EQUIPMENT_CONFIGS,
   EXPEDITION_STAGE_CONFIGS,
+  EXPEDITION_SWEEP_MAX_COUNT,
+  EXPEDITION_SWEEP_TOKEN_COST,
   PARTNER_MAX_LEVEL,
   SECT_MAX_LEVEL,
   MAX_LEVEL,
@@ -34,6 +36,7 @@ import {
   decimal,
   equipmentEnhanceCost,
   evaluateExpeditionStage,
+  evaluateExpeditionSweep,
   getCaveBuildingConfig,
   getAlchemyRecipeConfig,
   getCraftingRecipeConfig,
@@ -66,7 +69,8 @@ import { CLIENT_CONFIG } from "../core/ClientConfig";
 import type { PlatformAdapter } from "../platform/PlatformAdapter";
 
 const LOCAL_SAVE_SCHEMA_VERSION = 1 as const;
-const GAME_CONFIG_VERSION = "local-2.1.0";
+const GAME_CONFIG_VERSION = "local-2.2.0";
+const GAME_CONFIG_VERSION_PRE_EXPEDITION_SWEEPS = "local-2.1.0";
 const GAME_CONFIG_VERSION_PRE_ITEM_COMPLETION = "local-2.0.0";
 const GAME_CONFIG_VERSION_PRE_FEATURE_COMPLETION = "local-1.2.0";
 const GAME_CONFIG_VERSION_PRE_EXPEDITION = "local-1.1.0";
@@ -405,26 +409,12 @@ export class LocalGameService {
         throw new LocalGameError(`战力不足，还需 ${evaluation.powerDeficit}`);
       }
 
-      const occupiedSlots =
-        snapshot.inventory.stacks.length +
-        snapshot.equipment.filter((item) => item.location !== "harvest").length;
-      const rewardItemIds = new Set(
-        config.itemRewards.map((reward) => reward.itemConfigId),
+      const inventory = addStackRewards(
+        snapshot,
+        snapshot.inventory,
+        config.itemRewards,
+        "行囊空间不足，无法领取历练首通奖励",
       );
-      const newStackCount = [...rewardItemIds].filter(
-        (itemConfigId) =>
-          !snapshot.inventory.stacks.some(
-            (stack) => stack.itemConfigId === itemConfigId,
-          ),
-      ).length;
-      if (occupiedSlots + newStackCount > snapshot.inventory.bagCapacity) {
-        throw new LocalGameError("行囊空间不足，无法领取历练首通奖励");
-      }
-
-      let inventory = snapshot.inventory;
-      for (const reward of config.itemRewards) {
-        inventory = addStack(inventory, reward.itemConfigId, reward.quantity);
-      }
       const spiritStone = decimal(snapshot.wallet.spiritStone).plus(
         config.spiritStoneReward,
       );
@@ -433,6 +423,7 @@ export class LocalGameService {
           ...snapshot,
           inventory,
           expedition: {
+            ...snapshot.expedition,
             clearedStageIds: [
               ...snapshot.expedition.clearedStageIds,
               config.id,
@@ -450,6 +441,83 @@ export class LocalGameService {
         },
         events: [],
         message: `首通${config.displayName}，获得 ${config.spiritStoneReward} 灵石和历练物资`,
+      };
+    });
+  }
+
+  sweepExpedition(stageConfigId: string): LocalMutationResult {
+    return this.mutate((snapshot) => {
+      let config: ReturnType<typeof getExpeditionStageConfig>;
+      try {
+        config = getExpeditionStageConfig(stageConfigId);
+      } catch {
+        throw new LocalGameError("未知的历练关卡");
+      }
+
+      const evaluation = evaluateExpeditionSweep(
+        config.id,
+        snapshot.expedition.clearedStageIds,
+        snapshot.progress.totalPower,
+      );
+      if (evaluation.status === "locked") {
+        throw new LocalGameError("完成该关首通后才能扫荡");
+      }
+      if (evaluation.status === "underpowered") {
+        throw new LocalGameError(`当前战力不足，还需 ${evaluation.powerDeficit}`);
+      }
+
+      const existingSweep = snapshot.expedition.sweepCounts.find(
+        (entry) => entry.stageConfigId === config.id,
+      );
+      if ((existingSweep?.count ?? 0) >= EXPEDITION_SWEEP_MAX_COUNT) {
+        throw new LocalGameError("该关扫荡次数已达到本地存档上限");
+      }
+
+      const tokens = decimal(stackQuantity(snapshot, "treasure_token"));
+      if (tokens.lessThan(EXPEDITION_SWEEP_TOKEN_COST)) {
+        throw new LocalGameError("寻宝令不足，无法扫荡");
+      }
+      let inventory = setStackQuantity(
+        snapshot.inventory,
+        "treasure_token",
+        tokens.minus(EXPEDITION_SWEEP_TOKEN_COST).toFixed(0),
+      );
+      inventory = addStackRewards(
+        snapshot,
+        inventory,
+        config.sweepItemRewards,
+        "行囊空间不足，无法领取扫荡奖励",
+      );
+
+      const sweepCounts = existingSweep
+        ? snapshot.expedition.sweepCounts.map((entry) =>
+            entry.stageConfigId === config.id
+              ? { ...entry, count: entry.count + 1 }
+              : entry,
+          )
+        : [
+            ...snapshot.expedition.sweepCounts,
+            { stageConfigId: config.id, count: 1 },
+          ];
+      return {
+        snapshot: {
+          ...snapshot,
+          inventory,
+          expedition: { ...snapshot.expedition, sweepCounts },
+          wallet: {
+            ...snapshot.wallet,
+            spiritStone: decimal(snapshot.wallet.spiritStone)
+              .plus(config.sweepSpiritStoneReward)
+              .toFixed(0),
+            lifetimeSpiritStoneEarned: decimal(
+              snapshot.wallet.lifetimeSpiritStoneEarned,
+            )
+              .plus(config.sweepSpiritStoneReward)
+              .toFixed(0),
+          },
+        },
+        events: [],
+        message: `扫荡${config.displayName}，获得 ${config.sweepSpiritStoneReward} 灵石和历练物资`,
       };
     });
   }
@@ -496,7 +564,11 @@ export class LocalGameService {
             ]!
           : reward.itemConfigId;
       const quantity = reward.quantity;
-      ensureStackOutputCapacity({ ...snapshot, inventory }, itemConfigId);
+      ensureStackOutputCapacity(
+        { ...snapshot, inventory },
+        itemConfigId,
+        "行囊空间不足，无法领取寻宝奖励",
+      );
       inventory = addStack(inventory, itemConfigId, quantity);
       return {
         snapshot: { ...snapshot, inventory },
@@ -1398,7 +1470,7 @@ function createInitialSave(now: Date): LocalGameSave {
     equipment: [],
     harvestChest: { pendingCount: 0, entries: [] },
     cave: { buildings: createEmptyCaveBuildings() },
-    expedition: { clearedStageIds: [] },
+    expedition: { clearedStageIds: [], sweepCounts: [] },
     partner: { partnerId: null, level: 0, bond: 0 },
     sect: { sectId: null, level: 0, contribution: 0 },
     newcomerTasks: NEWCOMER_TASK_CONFIGS.map((task) => ({
@@ -1780,13 +1852,32 @@ function occupiedBagSlots(snapshot: BootstrapSnapshot): number {
 function ensureStackOutputCapacity(
   snapshot: BootstrapSnapshot,
   itemConfigId: string,
+  errorMessage = "行囊空间不足，无法收取炼丹产物",
 ): void {
   const alreadyOwned = snapshot.inventory.stacks.some(
     (stack) => stack.itemConfigId === itemConfigId,
   );
   if (!alreadyOwned && occupiedBagSlots(snapshot) >= snapshot.inventory.bagCapacity) {
-    throw new LocalGameError("行囊空间不足，无法收取炼丹产物");
+    throw new LocalGameError(errorMessage);
   }
+}
+
+function addStackRewards(
+  snapshot: BootstrapSnapshot,
+  inventory: BootstrapSnapshot["inventory"],
+  rewards: readonly { readonly itemConfigId: string; readonly quantity: number }[],
+  capacityErrorMessage: string,
+): BootstrapSnapshot["inventory"] {
+  let next = inventory;
+  for (const reward of rewards) {
+    ensureStackOutputCapacity(
+      { ...snapshot, inventory: next },
+      reward.itemConfigId,
+      capacityErrorMessage,
+    );
+    next = addStack(next, reward.itemConfigId, reward.quantity);
+  }
+  return next;
 }
 
 function ensureEquipmentCapacity(snapshot: BootstrapSnapshot): void {
@@ -1992,6 +2083,25 @@ function migrateSnapshot(snapshot: unknown): unknown {
             },
           }
         : {}),
+      config: {
+        ...config,
+        version: GAME_CONFIG_VERSION_PRE_EXPEDITION_SWEEPS,
+      },
+    };
+    config = migrated.config;
+  }
+  if (
+    isRecord(config) &&
+    config.version === GAME_CONFIG_VERSION_PRE_EXPEDITION_SWEEPS
+  ) {
+    const expedition = isRecord(migrated.expedition)
+      ? migrated.expedition
+      : null;
+    migrated = {
+      ...migrated,
+      ...(expedition
+        ? { expedition: { ...expedition, sweepCounts: [] } }
+        : {}),
       config: { ...config, version: GAME_CONFIG_VERSION },
     };
   }
@@ -2121,13 +2231,38 @@ function isSectSnapshot(value: unknown): boolean {
 }
 
 function isExpeditionSnapshot(value: unknown): boolean {
-  if (!isRecord(value) || !Array.isArray(value.clearedStageIds)) return false;
+  if (
+    !isRecord(value) ||
+    !Array.isArray(value.clearedStageIds) ||
+    !Array.isArray(value.sweepCounts)
+  ) {
+    return false;
+  }
   if (value.clearedStageIds.length > EXPEDITION_STAGE_CONFIGS.length) return false;
-  return value.clearedStageIds.every(
-    (stageId, index) =>
-      typeof stageId === "string" &&
-      stageId === EXPEDITION_STAGE_CONFIGS[index]?.id,
-  );
+  if (
+    !value.clearedStageIds.every(
+      (stageId, index) =>
+        typeof stageId === "string" &&
+        stageId === EXPEDITION_STAGE_CONFIGS[index]?.id,
+    ) ||
+    value.sweepCounts.length > value.clearedStageIds.length
+  ) {
+    return false;
+  }
+  const sweepStageIds = new Set<string>();
+  for (const entry of value.sweepCounts) {
+    if (
+      !isRecord(entry) ||
+      typeof entry.stageConfigId !== "string" ||
+      value.clearedStageIds.indexOf(entry.stageConfigId) < 0 ||
+      sweepStageIds.has(entry.stageConfigId) ||
+      !isIntegerBetween(entry.count, 1, EXPEDITION_SWEEP_MAX_COUNT)
+    ) {
+      return false;
+    }
+    sweepStageIds.add(entry.stageConfigId);
+  }
+  return true;
 }
 
 function isCaveSnapshot(value: unknown): boolean {
