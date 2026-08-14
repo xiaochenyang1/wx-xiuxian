@@ -65,6 +65,44 @@ function preExpeditionSweepSave(): MutableSave {
   return save;
 }
 
+/** Rewind a current save to the pre-equipment-management `local-2.2.0` format. */
+function preEquipmentManagementSave(): MutableSave {
+  const save = authenticSaveWithProgress();
+  save.snapshot.config.version = "local-2.2.0";
+  save.snapshot.harvestChest = { pendingCount: 0, entries: [] };
+  save.snapshot.equipment = [
+    {
+      id: "00000000-0000-4000-8000-000000000201",
+      equipmentConfigId: "ironwood_sword",
+      displayName: "玄木剑",
+      quality: "common",
+      slot: "weapon",
+      fixedPower: "80",
+      enhanceLevel: 0,
+      rolledAffixes: [],
+      location: "bag",
+      equippedSlot: null,
+      isLocked: false,
+      configVersion: "local-idle-drop-v1",
+    },
+    {
+      id: "00000000-0000-4000-8000-000000000202",
+      equipmentConfigId: "cloudweave_robe",
+      displayName: "流云法袍",
+      quality: "rare",
+      slot: "armor",
+      fixedPower: "120",
+      enhanceLevel: 0,
+      rolledAffixes: [],
+      location: "bag",
+      equippedSlot: null,
+      isLocked: false,
+      configVersion: "local-idle-drop-v1",
+    },
+  ];
+  return save;
+}
+
 function load(save: unknown): LocalGameService {
   const platform = new FakePlatformAdapter();
   platform.seed(SAVE_KEY, save);
@@ -117,7 +155,7 @@ describe("local-1.0.0 migration", () => {
   it("chains through both migrations and backfills every new subsystem", () => {
     const service = load(legacySave());
 
-    expect(service.snapshot.config.version).toBe("local-2.2.0");
+    expect(service.snapshot.config.version).toBe("local-2.3.0");
     expect(service.snapshot.cave.buildings).toEqual(
       CAVE_BUILDING_CONFIGS.map((config) => ({
         buildingConfigId: config.id,
@@ -150,7 +188,7 @@ describe("local-1.1.0 migration", () => {
 
     const service = load(legacy);
 
-    expect(service.snapshot.config.version).toBe("local-2.2.0");
+    expect(service.snapshot.config.version).toBe("local-2.3.0");
     expect(service.snapshot.cave.buildings[0].level).toBe(4);
     expect(service.snapshot.cave.buildings[3].level).toBe(CAVE_MAX_LEVEL);
     expect(service.snapshot.expedition.clearedStageIds).toEqual([]);
@@ -193,7 +231,7 @@ describe("local-1.2.0 to local-2.0.0 migration", () => {
 
     const service = load(legacy);
 
-    expect(service.snapshot.config.version).toBe("local-2.2.0");
+    expect(service.snapshot.config.version).toBe("local-2.3.0");
     expect(service.snapshot.cave.buildings[0].level).toBe(6);
     expect(service.snapshot.expedition.clearedStageIds).toEqual(
       legacy.snapshot.expedition.clearedStageIds,
@@ -231,7 +269,7 @@ describe("local-2.0.0 to local-2.1.0 migration", () => {
 
     const service = load(legacy);
 
-    expect(service.snapshot.config.version).toBe("local-2.2.0");
+    expect(service.snapshot.config.version).toBe("local-2.3.0");
     expect(
       service.snapshot.inventory.stacks.some(
         (stack) => stack.itemConfigId === "protection_talisman",
@@ -255,7 +293,7 @@ describe("local-2.1.0 to local-2.2.0 migration", () => {
 
     const service = load(legacy);
 
-    expect(service.snapshot.config.version).toBe("local-2.2.0");
+    expect(service.snapshot.config.version).toBe("local-2.3.0");
     expect(service.snapshot.expedition.clearedStageIds).toEqual(
       legacy.snapshot.expedition.clearedStageIds,
     );
@@ -269,6 +307,26 @@ describe("local-2.1.0 to local-2.2.0 migration", () => {
   it("does not discard a valid pre-sweep save", () => {
     const platform = new FakePlatformAdapter();
     platform.seed(SAVE_KEY, preExpeditionSweepSave());
+    const service = new LocalGameService(platform);
+
+    expect(service.initialize(LATER).created).toBe(false);
+  });
+});
+
+describe("local-2.2.0 to local-2.3.0 migration", () => {
+  it("protects existing rare equipment while preserving ordinary gear", () => {
+    const legacy = preEquipmentManagementSave();
+    const service = load(legacy);
+
+    expect(service.snapshot.config.version).toBe("local-2.3.0");
+    expect(service.snapshot.equipment[0]!.isLocked).toBe(false);
+    expect(service.snapshot.equipment[1]!.isLocked).toBe(true);
+    expect(service.snapshot.player.id).toBe(legacy.snapshot.player.id);
+  });
+
+  it("does not discard a valid pre-equipment-management save", () => {
+    const platform = new FakePlatformAdapter();
+    platform.seed(SAVE_KEY, preEquipmentManagementSave());
     const service = new LocalGameService(platform);
 
     expect(service.initialize(LATER).created).toBe(false);

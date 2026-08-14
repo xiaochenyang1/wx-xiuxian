@@ -1,6 +1,8 @@
 import {
   ASSET_QUALITY_MULTIPLIER_BP,
   equipmentEnhanceCost,
+  equipmentSalvageReward,
+  shouldAutoLockEquipment,
   techniqueStarUpgradeCost,
   type AssetQuality,
 } from "@cultivation-diary/shared";
@@ -99,4 +101,41 @@ describe("technique star-up costs", () => {
       expect(() => techniqueStarUpgradeCost(currentStar)).toThrow(RangeError);
     },
   );
+});
+
+describe("equipment salvage rewards", () => {
+  it("returns a base reward by quality", () => {
+    expect(equipmentSalvageReward("common", 0)).toEqual({
+      spiritStone: 100,
+      enhanceStone: 1,
+      refundedSpiritStone: 0,
+      refundedEnhanceStone: 0,
+    });
+    expect(equipmentSalvageReward("rare", 0)).toEqual({
+      spiritStone: 600,
+      enhanceStone: 4,
+      refundedSpiritStone: 0,
+      refundedEnhanceStone: 0,
+    });
+  });
+
+  it("refunds half of enhancement investment using the same upgrade quotes", () => {
+    expect(equipmentSalvageReward("common", 2)).toEqual({
+      spiritStone: 475,
+      enhanceStone: 2,
+      refundedSpiritStone: 375,
+      refundedEnhanceStone: 1,
+    });
+  });
+
+  it("auto-locks rare and higher quality equipment", () => {
+    expect(shouldAutoLockEquipment("uncommon")).toBe(false);
+    expect(shouldAutoLockEquipment("rare")).toBe(true);
+    expect(shouldAutoLockEquipment("primordial")).toBe(true);
+  });
+
+  it("rejects an invalid salvage level", () => {
+    expect(() => equipmentSalvageReward("common", -1)).toThrow(RangeError);
+    expect(() => equipmentSalvageReward("common", 21)).toThrow(RangeError);
+  });
 });

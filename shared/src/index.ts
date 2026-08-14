@@ -17,6 +17,7 @@ export * from "./decimal";
 export * from "./domain/cave";
 export * from "./domain/economy";
 export * from "./domain/expedition";
+export * from "./domain/inventory";
 export * from "./domain/cultivation-settlement";
 export * from "./domain/number-format";
 export * from "./domain/loadout";

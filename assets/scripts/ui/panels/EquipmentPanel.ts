@@ -1,6 +1,10 @@
-import type { EquippedEquipmentSlot } from "@cultivation-diary/shared";
+import {
+  getStoredEquipment,
+  type EquippedEquipmentSlot,
+} from "@cultivation-diary/shared";
 import { getEquipmentEnhanceDisplay } from "../../core/AssetUpgradeDisplay";
 import { formatLargeNumber } from "../../core/ClientNumber";
+import { getEquipmentManagementDisplay } from "../../core/EquipmentManagementDisplay";
 import type { AppState } from "../../core/ClientTypes";
 import { canRunLocalMutation } from "../../core/ClientTypes";
 import type { AppViewActions, PanelPaging } from "../AppView";
@@ -20,9 +24,9 @@ export function drawEquipmentPanel(
   actions: AppViewActions,
   paging: PanelPaging,
 ): void {
-  const equipment = state.bootstrap!.equipment;
+  const equipment = getStoredEquipment(state.bootstrap!);
   const mutationsEnabled = canRunLocalMutation(state);
-  const equipmentWindow = paging.window("equipment", equipment.length, 7);
+  const equipmentWindow = paging.window("equipment", equipment.length, 5);
   addLabel(
     overlay,
     `法宝 ${equipment.length} 件 · 强化石 ${formatLargeNumber(
@@ -66,14 +70,15 @@ export function drawEquipmentPanel(
     return;
   }
   equipment.slice(equipmentWindow.start, equipmentWindow.end).forEach((item, index) => {
-    const y = 180 - index * 72;
+    const y = 172 - index * 91;
     const enhance = getEquipmentEnhanceDisplay(state.bootstrap!, item);
-    drawBand(overlay, `Equipment-${item.id}`, 0, y, 600, 60, COLORS.panel);
+    const management = getEquipmentManagementDisplay(item);
+    drawBand(overlay, `Equipment-${item.id}`, 0, y, 600, 82, COLORS.panel);
     addLabel(
       overlay,
       item.displayName,
       -230,
-      y,
+      y + 18,
       125,
       34,
       17,
@@ -86,8 +91,8 @@ export function drawEquipmentPanel(
       overlay,
       `战力 +${formatLargeNumber(item.fixedPower)} · +${item.enhanceLevel}`,
       -95,
-      y,
-      140,
+      y + 18,
+      150,
       32,
       15,
       COLORS.gold,
@@ -97,44 +102,82 @@ export function drawEquipmentPanel(
     );
     addLabel(
       overlay,
-      enhance.costText,
-      47,
-      y,
-      140,
-      44,
+      management.protectionText,
+      82,
+      y + 18,
+      92,
+      28,
+      14,
+      item.isLocked ? COLORS.gold : COLORS.textMuted,
+    );
+    addLabel(
+      overlay,
+      enhance.costText.replace("\n", " · "),
+      207,
+      y + 18,
+      154,
+      28,
       13,
       enhance.affordable || enhance.maxed ? COLORS.textMuted : COLORS.red,
-      false,
-      2,
-      HorizontalTextAlignment.CENTER,
     );
     createButton(
       overlay,
       enhance.actionText,
-      154,
-      y,
-      64,
-      44,
+      -205,
+      y - 22,
+      86,
+      34,
       {
         fill: enhance.affordable ? COLORS.inkGreenLight : COLORS.panel,
         stroke: enhance.affordable ? COLORS.gold : COLORS.goldMuted,
-        fontSize: 14,
+        fontSize: 13,
         enabled: mutationsEnabled && enhance.actionEnabled,
       },
       () => actions.enhanceEquipment(item.id),
+    );
+    createButton(
+      overlay,
+      management.lockActionText,
+      -106,
+      y - 22,
+      86,
+      34,
+      {
+        fill: item.isLocked ? COLORS.goldMuted : COLORS.panelStrong,
+        stroke: COLORS.goldMuted,
+        text: item.isLocked ? COLORS.background : COLORS.gold,
+        fontSize: 13,
+        enabled: mutationsEnabled,
+      },
+      () => actions.toggleEquipmentLock(item.id),
+    );
+    createButton(
+      overlay,
+      management.salvageActionText,
+      20,
+      y - 22,
+      150,
+      34,
+      {
+        fill: management.salvageEnabled ? COLORS.red : COLORS.panel,
+        stroke: COLORS.goldMuted,
+        fontSize: 12,
+        enabled: mutationsEnabled && management.salvageEnabled,
+      },
+      () => actions.salvageEquipment(item.id),
     );
     if (item.equippedSlot) {
       createButton(
         overlay,
         "卸下",
-        250,
-        y,
-        86,
-        44,
+        230,
+        y - 22,
+        100,
+        34,
         {
           fill: COLORS.red,
           stroke: COLORS.goldMuted,
-          fontSize: 15,
+          fontSize: 13,
           enabled: mutationsEnabled,
         },
         () => actions.unequipEquipment(item.id),
@@ -143,14 +186,14 @@ export function drawEquipmentPanel(
       createButton(
         overlay,
         "装左",
-        213,
-        y,
-        50,
-        42,
+        202,
+        y - 22,
+        48,
+        34,
         {
           fill: COLORS.inkGreenLight,
           stroke: COLORS.goldMuted,
-          fontSize: 14,
+          fontSize: 12,
           enabled: mutationsEnabled,
         },
         () => actions.equipEquipment(item.id, "accessory_left"),
@@ -158,14 +201,14 @@ export function drawEquipmentPanel(
       createButton(
         overlay,
         "装右",
-        268,
-        y,
-        50,
-        42,
+        258,
+        y - 22,
+        48,
+        34,
         {
           fill: COLORS.inkGreenLight,
           stroke: COLORS.goldMuted,
-          fontSize: 14,
+          fontSize: 12,
           enabled: mutationsEnabled,
         },
         () => actions.equipEquipment(item.id, "accessory_right"),
@@ -178,14 +221,14 @@ export function drawEquipmentPanel(
           equipment.some((candidate) => candidate.equippedSlot === equippedSlot)
             ? "替换"
             : "装备",
-          250,
-          y,
-          86,
-          44,
+          230,
+          y - 22,
+          100,
+          34,
           {
             fill: COLORS.inkGreenLight,
             stroke: COLORS.goldMuted,
-            fontSize: 15,
+            fontSize: 13,
             enabled: mutationsEnabled,
           },
           () => actions.equipEquipment(item.id, equippedSlot),

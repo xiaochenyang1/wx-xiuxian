@@ -295,6 +295,25 @@ describe("every reachable save round-trips", () => {
     });
   });
 
+  it("survives equipment lock changes and bag salvage", () => {
+    const reloaded = assertReloads(
+      "equipment management",
+      (service) => {
+        service.unequipEquipment(UPGRADE_EQUIPMENT_ID);
+        service.toggleEquipmentLock(UPGRADE_EQUIPMENT_ID);
+        service.toggleEquipmentLock(UPGRADE_EQUIPMENT_ID);
+        service.salvageEquipment(UPGRADE_EQUIPMENT_ID);
+      },
+      seedUpgradeAssets,
+    );
+
+    expect(
+      reloaded.snapshot.equipment.some(
+        (equipment) => equipment.id === UPGRADE_EQUIPMENT_ID,
+      ),
+    ).toBe(false);
+  });
+
   it("survives a long chain of mixed actions", () => {
     assertReloads("mixed", (service) => {
       service.debugSimulateOffline(86_400, 7);

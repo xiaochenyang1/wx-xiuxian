@@ -146,6 +146,8 @@ export interface AppViewActions {
   ): void;
   unequipEquipment(equipmentInstanceId: string): void;
   enhanceEquipment(equipmentInstanceId: string): void;
+  toggleEquipmentLock(equipmentInstanceId: string): void;
+  salvageEquipment(equipmentInstanceId: string): void;
   dismissOfflineSettlement(): void;
   simulateOffline(seconds: number, dropSeed?: number): void;
   grantDebug(target: DebugGrantTarget): void;

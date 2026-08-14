@@ -7,6 +7,20 @@ import {
 export const EQUIPMENT_MAX_ENHANCE_LEVEL = 20;
 export const TECHNIQUE_MAX_STAR = 10;
 export const TECHNIQUE_PAGES_PER_DUPLICATE = 5;
+export const EQUIPMENT_SALVAGE_ENHANCE_REFUND_BP = 5_000;
+export const ENHANCE_STONE_OVERFLOW_SPIRIT_STONE_VALUE = 100;
+
+const EQUIPMENT_SALVAGE_BASE_REWARD: Readonly<
+  Record<AssetQuality, { readonly spiritStone: number; readonly enhanceStone: number }>
+> = {
+  common: { spiritStone: 100, enhanceStone: 1 },
+  uncommon: { spiritStone: 250, enhanceStone: 2 },
+  rare: { spiritStone: 600, enhanceStone: 4 },
+  epic: { spiritStone: 1_500, enhanceStone: 8 },
+  legendary: { spiritStone: 4_000, enhanceStone: 15 },
+  mythic: { spiritStone: 10_000, enhanceStone: 25 },
+  primordial: { spiritStone: 25_000, enhanceStone: 40 },
+};
 
 const TECHNIQUE_DUPLICATE_COST_BY_TARGET_STAR = [
   0,
@@ -31,6 +45,13 @@ export interface EquipmentEnhanceCost {
 export interface TechniqueStarUpgradeCost {
   readonly targetStar: number;
   readonly duplicateCount: number;
+}
+
+export interface EquipmentSalvageReward {
+  readonly spiritStone: number;
+  readonly enhanceStone: number;
+  readonly refundedSpiritStone: number;
+  readonly refundedEnhanceStone: number;
 }
 
 export function equipmentEnhanceCost(
@@ -83,6 +104,51 @@ export function techniqueStarUpgradeCost(
     throw new RangeError(`Unknown technique target star: ${targetStar}`);
   }
   return { targetStar, duplicateCount };
+}
+
+export function shouldAutoLockEquipment(quality: AssetQuality): boolean {
+  const qualityMultiplierBp = ASSET_QUALITY_MULTIPLIER_BP[quality];
+  if (qualityMultiplierBp === undefined) {
+    throw new RangeError(`Unknown equipment quality: ${quality}`);
+  }
+  return quality !== "common" && quality !== "uncommon";
+}
+
+export function equipmentSalvageReward(
+  quality: AssetQuality,
+  enhanceLevel: number,
+): EquipmentSalvageReward {
+  const base = EQUIPMENT_SALVAGE_BASE_REWARD[quality];
+  if (!base) throw new RangeError(`Unknown equipment quality: ${quality}`);
+  if (
+    !Number.isSafeInteger(enhanceLevel) ||
+    enhanceLevel < 0 ||
+    enhanceLevel > EQUIPMENT_MAX_ENHANCE_LEVEL
+  ) {
+    throw new RangeError(
+      `Equipment enhance level must be between 0 and ${EQUIPMENT_MAX_ENHANCE_LEVEL}: ${enhanceLevel}`,
+    );
+  }
+
+  let investedSpiritStone = 0;
+  let investedEnhanceStone = 0;
+  for (let currentLevel = 0; currentLevel < enhanceLevel; currentLevel += 1) {
+    const cost = equipmentEnhanceCost(quality, currentLevel);
+    investedSpiritStone += cost.spiritStone;
+    investedEnhanceStone += cost.enhanceStone;
+  }
+  const refundedSpiritStone = Math.floor(
+    (investedSpiritStone * EQUIPMENT_SALVAGE_ENHANCE_REFUND_BP) / BASIS_POINTS,
+  );
+  const refundedEnhanceStone = Math.floor(
+    (investedEnhanceStone * EQUIPMENT_SALVAGE_ENHANCE_REFUND_BP) / BASIS_POINTS,
+  );
+  return {
+    spiritStone: base.spiritStone + refundedSpiritStone,
+    enhanceStone: base.enhanceStone + refundedEnhanceStone,
+    refundedSpiritStone,
+    refundedEnhanceStone,
+  };
 }
 
 function scaleByBasisPointsCeil(value: number, multiplierBp: number): number {

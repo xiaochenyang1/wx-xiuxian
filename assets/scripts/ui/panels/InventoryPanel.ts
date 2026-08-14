@@ -1,3 +1,4 @@
+import { countOccupiedBagSlots } from "@cultivation-diary/shared";
 import { formatLargeNumber } from "../../core/ClientNumber";
 import type { AppState } from "../../core/ClientTypes";
 import { canRunLocalMutation } from "../../core/ClientTypes";
@@ -26,7 +27,7 @@ export function drawInventoryPanel(
 ): void {
   const data = state.bootstrap!;
   const mutationsEnabled = canRunLocalMutation(state);
-  const usedSlots = data.inventory.stacks.length + data.equipment.length;
+  const usedSlots = countOccupiedBagSlots(data);
   const stackWindow = paging.window(
     "inventoryStacks",
     data.inventory.stacks.length,

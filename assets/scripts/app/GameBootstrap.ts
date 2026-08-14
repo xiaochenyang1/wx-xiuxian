@@ -129,6 +129,14 @@ export class GameBootstrap extends Component {
             () => this.localGame.enhanceEquipment(equipmentInstanceId),
             "power_change",
           ),
+        toggleEquipmentLock: (equipmentInstanceId) =>
+          this.runMutation(() =>
+            this.localGame.toggleEquipmentLock(equipmentInstanceId),
+          ),
+        salvageEquipment: (equipmentInstanceId) =>
+          this.runMutation(() =>
+            this.localGame.salvageEquipment(equipmentInstanceId),
+          ),
         dismissOfflineSettlement: () => this.dismissOfflineSettlement(),
         simulateOffline: (seconds, seed) => this.debugSimulateOffline(seconds, seed),
         grantDebug: (target) => this.debugGrant(target),

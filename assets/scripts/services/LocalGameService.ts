@@ -4,6 +4,7 @@ import {
   CRAFTING_QUALITY_WEIGHTS,
   CAVE_BUILDING_CONFIGS,
   CAVE_MAX_LEVEL,
+  ENHANCE_STONE_OVERFLOW_SPIRIT_STONE_VALUE,
   EQUIPMENT_MAX_ENHANCE_LEVEL,
   EQUIPMENT_CONFIGS,
   EXPEDITION_STAGE_CONFIGS,
@@ -32,9 +33,11 @@ import {
   caveUpgradeCost,
   craftingQualityWeight,
   completeBreakthrough,
+  countOccupiedBagSlots,
   createEmptyCaveBuildings,
   decimal,
   equipmentEnhanceCost,
+  equipmentSalvageReward,
   evaluateExpeditionStage,
   evaluateExpeditionSweep,
   getCaveBuildingConfig,
@@ -55,6 +58,7 @@ import {
   requiredExperienceForLevel,
   settleCultivation,
   sectContributionRequirement,
+  shouldAutoLockEquipment,
   simulateOnlineExperience,
   techniqueStarUpgradeCost,
   type AssetQuality,
@@ -69,7 +73,8 @@ import { CLIENT_CONFIG } from "../core/ClientConfig";
 import type { PlatformAdapter } from "../platform/PlatformAdapter";
 
 const LOCAL_SAVE_SCHEMA_VERSION = 1 as const;
-const GAME_CONFIG_VERSION = "local-2.2.0";
+const GAME_CONFIG_VERSION = "local-2.3.0";
+const GAME_CONFIG_VERSION_PRE_EQUIPMENT_MANAGEMENT = "local-2.2.0";
 const GAME_CONFIG_VERSION_PRE_EXPEDITION_SWEEPS = "local-2.1.0";
 const GAME_CONFIG_VERSION_PRE_ITEM_COMPLETION = "local-2.0.0";
 const GAME_CONFIG_VERSION_PRE_FEATURE_COMPLETION = "local-1.2.0";
@@ -892,10 +897,7 @@ export class LocalGameService {
       let message: string;
 
       if (entry.entryType === "equipment") {
-        const usedSlots =
-          snapshot.inventory.stacks.length +
-          snapshot.equipment.filter((item) => item.location !== "harvest").length;
-        if (usedSlots >= snapshot.inventory.bagCapacity) {
+        if (countOccupiedBagSlots(snapshot) >= snapshot.inventory.bagCapacity) {
           throw new LocalGameError("行囊空间不足，请先整理或扩容");
         }
         equipment = equipment.map((item) =>
@@ -945,29 +947,26 @@ export class LocalGameService {
       if (!entry) throw new LocalGameError("该收获已经处理");
       if (!isAssetQuality(entry.quality)) throw new LocalGameError("收获品质数据无效");
       const salvage = salvageValue(entry.entryType, entry.quality);
+      const applied = resolveSalvageReward(snapshot, salvage, false);
       const entries = snapshot.harvestChest.entries.filter((item) => item.id !== entryId);
       const equipment = entry.equipmentInstanceId
         ? snapshot.equipment.filter((item) => item.id !== entry.equipmentInstanceId)
         : snapshot.equipment;
-      let inventory = snapshot.inventory;
-      if (salvage.enhanceStone > 0) {
-        inventory = addStack(inventory, "enhance_stone", salvage.enhanceStone);
-      }
       return {
         snapshot: {
           ...snapshot,
           equipment,
-          inventory,
+          inventory: applied.inventory,
           wallet: {
             ...snapshot.wallet,
             spiritStone: decimal(snapshot.wallet.spiritStone)
-              .plus(salvage.spiritStone)
+              .plus(applied.spiritStone)
               .toFixed(0),
           },
           harvestChest: { pendingCount: entries.length, entries },
         },
         events: [],
-        message: `分解 ${entry.displayName}，获得 ${salvage.spiritStone} 灵石`,
+        message: salvageRewardMessage(entry.displayName, applied),
       };
     });
   }
@@ -1120,6 +1119,73 @@ export class LocalGameService {
         }),
         events: [],
         message: `消耗 ${cost.spiritStone} 灵石和 ${cost.enhanceStone} 枚强化石，${target.displayName}强化至 +${cost.targetLevel}`,
+      };
+    });
+  }
+
+  toggleEquipmentLock(equipmentInstanceId: string): LocalMutationResult {
+    return this.mutate((snapshot) => {
+      const target = snapshot.equipment.find(
+        (item) => item.id === equipmentInstanceId,
+      );
+      if (!target || target.location === "harvest") {
+        throw new LocalGameError("该法宝不在行囊中");
+      }
+      const isLocked = !target.isLocked;
+      return {
+        snapshot: {
+          ...snapshot,
+          equipment: snapshot.equipment.map((item) =>
+            item.id === equipmentInstanceId ? { ...item, isLocked } : item,
+          ),
+        },
+        events: [],
+        message: isLocked
+          ? `已锁定 ${target.displayName}，分解前需先解锁`
+          : `已解锁 ${target.displayName}`,
+      };
+    });
+  }
+
+  salvageEquipment(equipmentInstanceId: string): LocalMutationResult {
+    return this.mutate((snapshot) => {
+      const target = snapshot.equipment.find(
+        (item) => item.id === equipmentInstanceId,
+      );
+      if (!target || target.location === "harvest") {
+        throw new LocalGameError("该法宝不在行囊中");
+      }
+      if (target.location === "equipped" || target.equippedSlot !== null) {
+        throw new LocalGameError("请先卸下该法宝再分解");
+      }
+      if (target.isLocked) {
+        throw new LocalGameError("该法宝已锁定，请先解锁");
+      }
+      if (!isAssetQuality(target.quality)) {
+        throw new LocalGameError("法宝品质数据无效");
+      }
+
+      const reward = equipmentSalvageReward(
+        target.quality,
+        target.enhanceLevel,
+      );
+      const applied = resolveSalvageReward(snapshot, reward, true);
+      return {
+        snapshot: {
+          ...snapshot,
+          equipment: snapshot.equipment.filter(
+            (item) => item.id !== equipmentInstanceId,
+          ),
+          inventory: applied.inventory,
+          wallet: {
+            ...snapshot.wallet,
+            spiritStone: decimal(snapshot.wallet.spiritStone)
+              .plus(applied.spiritStone)
+              .toFixed(0),
+          },
+        },
+        events: [],
+        message: salvageRewardMessage(target.displayName, applied),
       };
     });
   }
@@ -1692,7 +1758,7 @@ function applyIdleDrops(
             : [],
         location: "harvest",
         equippedSlot: null,
-        isLocked: false,
+        isLocked: shouldAutoLockEquipment(quality),
         configVersion: DROP_CONFIG_VERSION,
       });
       next = accepted.snapshot;
@@ -1744,24 +1810,21 @@ function addHarvestCandidate(
     (quality === "uncommon" && snapshot.settings.autoSalvageUncommon);
   if (autoSalvage) {
     const salvage = salvageValue(entry.entryType, quality);
-    const inventory =
-      salvage.enhanceStone > 0
-        ? addStack(snapshot.inventory, "enhance_stone", salvage.enhanceStone)
-        : snapshot.inventory;
+    const applied = resolveSalvageReward(snapshot, salvage, false);
     return {
       snapshot: {
         ...snapshot,
-        inventory,
+        inventory: applied.inventory,
         wallet: {
           ...snapshot.wallet,
           spiritStone: decimal(snapshot.wallet.spiritStone)
-            .plus(salvage.spiritStone)
+            .plus(applied.spiritStone)
             .toFixed(0),
         },
       },
       added: false,
-      autoSalvageSpiritStone: salvage.spiritStone,
-      autoSalvageEnhanceStone: salvage.enhanceStone,
+      autoSalvageSpiritStone: applied.spiritStone,
+      autoSalvageEnhanceStone: applied.enhanceStone,
     };
   }
   const entries = [...snapshot.harvestChest.entries, entry];
@@ -1841,14 +1904,6 @@ function caveBuildingLevel(
   );
 }
 
-function occupiedBagSlots(snapshot: BootstrapSnapshot): number {
-  return (
-    snapshot.inventory.stacks.length +
-    snapshot.equipment.filter((equipment) => equipment.location !== "harvest")
-      .length
-  );
-}
-
 function ensureStackOutputCapacity(
   snapshot: BootstrapSnapshot,
   itemConfigId: string,
@@ -1857,7 +1912,10 @@ function ensureStackOutputCapacity(
   const alreadyOwned = snapshot.inventory.stacks.some(
     (stack) => stack.itemConfigId === itemConfigId,
   );
-  if (!alreadyOwned && occupiedBagSlots(snapshot) >= snapshot.inventory.bagCapacity) {
+  if (
+    !alreadyOwned &&
+    countOccupiedBagSlots(snapshot) >= snapshot.inventory.bagCapacity
+  ) {
     throw new LocalGameError(errorMessage);
   }
 }
@@ -1881,7 +1939,7 @@ function addStackRewards(
 }
 
 function ensureEquipmentCapacity(snapshot: BootstrapSnapshot): void {
-  if (occupiedBagSlots(snapshot) >= snapshot.inventory.bagCapacity) {
+  if (countOccupiedBagSlots(snapshot) >= snapshot.inventory.bagCapacity) {
     throw new LocalGameError("行囊空间不足，无法收取炼器产物");
   }
 }
@@ -1944,7 +2002,7 @@ function createCraftedEquipment(
     })),
     location: "bag",
     equippedSlot: null,
-    isLocked: false,
+    isLocked: shouldAutoLockEquipment(quality),
     configVersion: DROP_CONFIG_VERSION,
   };
 }
@@ -2012,13 +2070,61 @@ function salvageValue(entryType: string, quality: AssetQuality): {
 } {
   const uncommon = quality !== "common";
   if (entryType === "equipment") {
-    return uncommon
-      ? { spiritStone: 250, enhanceStone: 2 }
-      : { spiritStone: 100, enhanceStone: 1 };
+    return equipmentSalvageReward(quality, 0);
   }
   return uncommon
     ? { spiritStone: 200, enhanceStone: 0 }
     : { spiritStone: 80, enhanceStone: 0 };
+}
+
+function resolveSalvageReward(
+  snapshot: BootstrapSnapshot,
+  reward: { readonly spiritStone: number; readonly enhanceStone: number },
+  releasesBagSlot: boolean,
+): {
+  readonly inventory: BootstrapSnapshot["inventory"];
+  readonly spiritStone: number;
+  readonly enhanceStone: number;
+  readonly convertedEnhanceStone: number;
+} {
+  const hasEnhanceStoneStack = snapshot.inventory.stacks.some(
+    (stack) => stack.itemConfigId === "enhance_stone",
+  );
+  const canStoreEnhanceStone =
+    reward.enhanceStone === 0 ||
+    hasEnhanceStoneStack ||
+    releasesBagSlot ||
+    countOccupiedBagSlots(snapshot) < snapshot.inventory.bagCapacity;
+  const enhanceStone = canStoreEnhanceStone ? reward.enhanceStone : 0;
+  const convertedEnhanceStone = reward.enhanceStone - enhanceStone;
+  return {
+    inventory:
+      enhanceStone > 0
+        ? addStack(snapshot.inventory, "enhance_stone", enhanceStone)
+        : snapshot.inventory,
+    spiritStone:
+      reward.spiritStone +
+      convertedEnhanceStone * ENHANCE_STONE_OVERFLOW_SPIRIT_STONE_VALUE,
+    enhanceStone,
+    convertedEnhanceStone,
+  };
+}
+
+function salvageRewardMessage(
+  displayName: string,
+  reward: {
+    readonly spiritStone: number;
+    readonly enhanceStone: number;
+    readonly convertedEnhanceStone: number;
+  },
+): string {
+  const enhancementReward =
+    reward.enhanceStone > 0 ? `和 ${reward.enhanceStone} 枚强化石` : "";
+  const conversionNotice =
+    reward.convertedEnhanceStone > 0
+      ? `（${reward.convertedEnhanceStone} 枚强化石因行囊已满折为灵石）`
+      : "";
+  return `分解 ${displayName}，获得 ${reward.spiritStone} 灵石${enhancementReward}${conversionNotice}`;
 }
 
 function equipmentFitsSlot(slot: string, equippedSlot: EquippedEquipmentSlot): boolean {
@@ -2101,6 +2207,30 @@ function migrateSnapshot(snapshot: unknown): unknown {
       ...migrated,
       ...(expedition
         ? { expedition: { ...expedition, sweepCounts: [] } }
+        : {}),
+      config: {
+        ...config,
+        version: GAME_CONFIG_VERSION_PRE_EQUIPMENT_MANAGEMENT,
+      },
+    };
+    config = migrated.config;
+  }
+  if (
+    isRecord(config) &&
+    config.version === GAME_CONFIG_VERSION_PRE_EQUIPMENT_MANAGEMENT
+  ) {
+    migrated = {
+      ...migrated,
+      ...(Array.isArray(migrated.equipment)
+        ? {
+            equipment: migrated.equipment.map((item) =>
+              isRecord(item) &&
+              isAssetQualityValue(item.quality) &&
+              shouldAutoLockEquipment(item.quality)
+                ? { ...item, isLocked: true }
+                : item,
+            ),
+          }
         : {}),
       config: { ...config, version: GAME_CONFIG_VERSION },
     };
