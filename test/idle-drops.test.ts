@@ -1,10 +1,19 @@
-import { describe, expect, it } from "vitest";
+import {
+  NEWCOMER_REACH_LEVEL_8_TASK_ID,
+  countOccupiedBagSlots,
+} from "@cultivation-diary/shared";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { CLIENT_CONFIG } from "../assets/scripts/core/ClientConfig";
 import { LocalGameService } from "../assets/scripts/services/LocalGameService";
 import { FakePlatformAdapter } from "./support/fake-platform-adapter";
 
 const START = new Date("2026-01-01T00:00:00.000Z");
 const DAY_SECONDS = 86_400;
 const SEED = 20_260_101;
+
+type MutableSave = Record<string, any>;
+
+afterEach(() => vi.useRealTimers());
 
 function freshService(): LocalGameService {
   const service = new LocalGameService(new FakePlatformAdapter());
@@ -17,6 +26,40 @@ function simulateDay(seed = SEED, seconds = DAY_SECONDS): LocalGameService {
   const service = freshService();
   service.debugSimulateOffline(seconds, seed);
   return service;
+}
+
+function fullEquipmentBag(): {
+  service: LocalGameService;
+  platform: FakePlatformAdapter;
+} {
+  const platform = new FakePlatformAdapter();
+  const writer = new LocalGameService(platform);
+  writer.initialize(START);
+  const raw = platform.raw(CLIENT_CONFIG.localSaveStorageKey);
+  if (raw === undefined) throw new Error("expected a persisted save");
+  const save = JSON.parse(raw) as MutableSave;
+  save.savedAt = START.toISOString();
+  save.snapshot.progress.settledAt = START.toISOString();
+  save.snapshot.inventory = { bagCapacity: 50, stacks: [] };
+  save.snapshot.equipment = Array.from({ length: 50 }, (_, index) => ({
+    id: `full-bag-${index}`,
+    equipmentConfigId: "ironwood_sword",
+    displayName: "玄木剑",
+    quality: "common",
+    slot: "weapon",
+    fixedPower: "80",
+    enhanceLevel: 0,
+    rolledAffixes: [],
+    location: "bag",
+    equippedSlot: null,
+    isLocked: false,
+    configVersion: "local-idle-drop-v1",
+  }));
+  platform.seed(CLIENT_CONFIG.localSaveStorageKey, save);
+  const service = new LocalGameService(platform);
+  expect(service.initialize(START).created).toBe(false);
+  expect(countOccupiedBagSlots(service.snapshot)).toBe(50);
+  return { service, platform };
 }
 
 describe("seeded drop determinism", () => {
@@ -172,5 +215,95 @@ describe("drop results stay persistable", () => {
         service.snapshot.inventory.bagCapacity,
       );
     }
+  });
+
+  it("compensates a new stack from seed 0 instead of writing a 51-slot save", () => {
+    const { service, platform } = fullEquipmentBag();
+    const accountId = service.snapshot.account.id;
+
+    const result = service.debugSimulateOffline(86, 0);
+    const summary = result.snapshot.offlineSettlement!.drops;
+
+    expect(countOccupiedBagSlots(service.snapshot)).toBe(50);
+    expect(service.snapshot.inventory.stacks).toEqual([]);
+    expect(summary.stackItems).toEqual([]);
+    expect(summary.autoSalvagedCount).toBeGreaterThan(0);
+    expect(summary.autoSalvageSpiritStone).toBe(
+      String(summary.autoSalvagedCount * 100),
+    );
+    expect(service.snapshot.wallet.lifetimeSpiritStoneEarned).toBe(
+      service.snapshot.wallet.spiritStone,
+    );
+
+    const reloaded = new LocalGameService(platform);
+    const load = reloaded.initialize(new Date(service.savedAt));
+    expect(load.created).toBe(false);
+    expect(reloaded.snapshot.account.id).toBe(accountId);
+    expect(countOccupiedBagSlots(reloaded.snapshot)).toBe(50);
+  });
+});
+
+describe("automatic and debug stack rewards at full capacity", () => {
+  it("keeps the level 8 pill pending, then grants it once space is available", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(START);
+    const { service, platform } = fullEquipmentBag();
+
+    for (let level = 1; level < 8; level += 1) {
+      service.debugGrant("fill_experience");
+    }
+
+    const pendingTask = service.snapshot.newcomerTasks.find(
+      (task) => task.taskConfigId === NEWCOMER_REACH_LEVEL_8_TASK_ID,
+    );
+    expect(pendingTask).toBeDefined();
+    expect(service.snapshot.progress.level).toBe(8);
+    expect(countOccupiedBagSlots(service.snapshot)).toBe(50);
+    expect(
+      service.snapshot.inventory.stacks.some(
+        (stack) => stack.itemConfigId === "breakthrough_pill",
+      ),
+    ).toBe(false);
+    expect(pendingTask!.completedAt).not.toBeNull();
+    expect(pendingTask!.claimedAt).toBeNull();
+
+    const reloaded = new LocalGameService(platform);
+    expect(reloaded.initialize(START).created).toBe(false);
+    reloaded.debugGrant("spirit_stone");
+    reloaded.expandInventory();
+    reloaded.checkpoint(new Date(START.getTime() + 1_000));
+
+    const claimedTask = reloaded.snapshot.newcomerTasks.find(
+      (task) => task.taskConfigId === NEWCOMER_REACH_LEVEL_8_TASK_ID,
+    );
+    expect(claimedTask).toBeDefined();
+    expect(
+      reloaded.snapshot.inventory.stacks.find(
+        (stack) => stack.itemConfigId === "breakthrough_pill",
+      )?.quantity,
+    ).toBe("1");
+    expect(claimedTask!.claimedAt).not.toBeNull();
+    reloaded.checkpoint(new Date(START.getTime() + 2_000));
+    expect(
+      reloaded.snapshot.inventory.stacks.find(
+        (stack) => stack.itemConfigId === "breakthrough_pill",
+      )?.quantity,
+    ).toBe("1");
+  });
+
+  it("rejects a debug pill grant without corrupting the full save", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(START);
+    const { service, platform } = fullEquipmentBag();
+
+    expect(() => service.debugGrant("breakthrough_pill")).toThrow(
+      "行囊空间不足",
+    );
+    expect(countOccupiedBagSlots(service.snapshot)).toBe(50);
+    expect(service.snapshot.inventory.stacks).toEqual([]);
+
+    const reloaded = new LocalGameService(platform);
+    expect(reloaded.initialize(START).created).toBe(false);
+    expect(countOccupiedBagSlots(reloaded.snapshot)).toBe(50);
   });
 });

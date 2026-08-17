@@ -48,12 +48,16 @@ export function calculateTechniqueContribution(
   input: EquippedTechniqueInput,
 ): LoadoutBonuses {
   const config = getTechniqueConfig(input.techniqueConfigId);
-  const starMultiplierBp = TECHNIQUE_STAR_MULTIPLIER_BP[input.star];
-  if (starMultiplierBp === undefined) {
+  if (
+    !Number.isInteger(input.star) ||
+    input.star < 1 ||
+    input.star > TECHNIQUE_MAX_STAR
+  ) {
     throw new RangeError(
       `Technique star must be between 1 and ${TECHNIQUE_MAX_STAR}: ${input.star}`,
     );
   }
+  const starMultiplierBp = TECHNIQUE_STAR_MULTIPLIER_BP[input.star]!;
   const qualityMultiplierBp = ASSET_QUALITY_MULTIPLIER_BP[config.quality];
   return {
     fixedPower: scaleByBasisPoints(
@@ -150,7 +154,13 @@ function scaleByBasisPoints(value: number, ...multipliersBp: number[]): number {
     (result, multiplier) => result * BigInt(multiplier),
     BigInt(value),
   );
-  const divisor = 10_000n ** BigInt(multipliersBp.length);
+  // Cocos 3.8 transpiles BigInt exponentiation to Math.pow, which throws at
+  // runtime because Math.pow only accepts numbers. Repeated multiplication
+  // preserves exact integer arithmetic in both source tests and built clients.
+  const divisor = multipliersBp.reduce(
+    (result) => result * 10_000n,
+    1n,
+  );
   const result = numerator / divisor;
   if (result > BigInt(Number.MAX_SAFE_INTEGER)) {
     throw new RangeError("Calculated loadout value exceeds safe integer range");

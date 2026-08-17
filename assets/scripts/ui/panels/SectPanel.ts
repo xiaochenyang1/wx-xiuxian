@@ -2,7 +2,9 @@ import {
   SECT_CONFIGS,
   SECT_MAX_LEVEL,
   getItemConfig,
+  type SectId,
 } from "@cultivation-diary/shared";
+import type { SectConfirmationDisplay } from "../../core/SocialConfirmationDisplay";
 import {
   sectProgressText,
   selectedSect,
@@ -14,10 +16,18 @@ import { COLORS } from "../primitives/Colors";
 import { addLabel, createButton, drawBand } from "../primitives/Draw";
 import { HorizontalTextAlignment, Node } from "cc";
 
+export interface SectConfirmationControls {
+  readonly display: SectConfirmationDisplay | null;
+  begin(sectId: SectId): void;
+  cancel(): void;
+  confirm(): void;
+}
+
 export function drawSectPanel(
   overlay: Node,
   state: Readonly<AppState>,
   actions: AppViewActions,
+  confirmation: SectConfirmationControls,
 ): void {
   const snapshot = state.bootstrap!;
   const current = selectedSect(snapshot);
@@ -63,6 +73,11 @@ export function drawSectPanel(
       () => actions.donateToSect(),
     );
     addLabel(overlay, "宗门选择会写入本地存档，当前不可改投", 0, -155, 560, 34, 15, COLORS.textMuted);
+    return;
+  }
+
+  if (confirmation.display) {
+    drawSectConfirmation(overlay, confirmation);
     return;
   }
 
@@ -128,7 +143,40 @@ export function drawSectPanel(
       100,
       52,
       { fill: COLORS.inkGreen, stroke: COLORS.goldMuted, fontSize: 17 },
-      () => actions.joinSect(config.id),
+      () => confirmation.begin(config.id),
     );
   });
+}
+
+function drawSectConfirmation(
+  overlay: Node,
+  controls: SectConfirmationControls,
+): void {
+  const display = controls.display!;
+  addLabel(overlay, display.title, 0, 397, 590, 42, 24, COLORS.gold, true);
+  addLabel(overlay, display.displayName, 0, 280, 520, 56, 34, COLORS.text, true);
+  addLabel(overlay, display.detailText, 0, 224, 520, 36, 18, COLORS.textMuted);
+  addLabel(overlay, display.bonusText, 0, 152, 540, 42, 20, COLORS.jade, true);
+  addLabel(overlay, display.irreversibleText, 0, 74, 540, 38, 19, COLORS.gold, true);
+  addLabel(overlay, display.persistenceText, 0, 34, 540, 30, 15, COLORS.textMuted);
+  createButton(
+    overlay,
+    display.cancelLabel,
+    -135,
+    -52,
+    230,
+    60,
+    { fill: COLORS.panel, stroke: COLORS.goldMuted, fontSize: 18 },
+    () => controls.cancel(),
+  );
+  createButton(
+    overlay,
+    display.confirmLabel,
+    135,
+    -52,
+    230,
+    60,
+    { fill: COLORS.red, stroke: COLORS.gold, fontSize: 18 },
+    () => controls.confirm(),
+  );
 }

@@ -1,54 +1,8 @@
-import { getNewcomerTaskConfig, type BootstrapSnapshot } from "@cultivation-diary/shared";
-import { formatLargeNumber } from "../../core/ClientNumber";
 import type { AppState } from "../../core/ClientTypes";
+import { getNewcomerTaskDisplay } from "../../core/NewcomerTaskDisplay";
 import { COLORS } from "../primitives/Colors";
 import { addLabel, drawBand } from "../primitives/Draw";
 import { HorizontalTextAlignment, Node } from "cc";
-
-export interface NewcomerTaskDisplay {
-  readonly title: string;
-  readonly description: string;
-  readonly current: string;
-  readonly target: string;
-  readonly progressText: string;
-  readonly statusText: string;
-  readonly rewardText: string;
-  readonly completed: boolean;
-  readonly claimed: boolean;
-}
-
-export function getNewcomerTaskDisplay(
-  task: BootstrapSnapshot["newcomerTasks"][number],
-): NewcomerTaskDisplay {
-  let config: ReturnType<typeof getNewcomerTaskConfig>;
-  try {
-    config = getNewcomerTaskConfig(task.taskConfigId);
-  } catch {
-    // A stale or unknown config must remain renderable until the next sync.
-  }
-
-  const current = formatLargeNumber(task.progress);
-  const target = config ? String(config.targetLevel) : "?";
-  const claimed = task.claimedAt !== null;
-  const completed = claimed || task.completedAt !== null;
-  const rewardLabel = config
-    ? config.rewardLabel ?? "无额外奖励"
-    : "奖励信息不可用";
-
-  return {
-    title: config?.title ?? "未知修行任务",
-    description: config?.description ?? "任务配置暂不可用",
-    current,
-    target,
-    progressText: `进度 ${current} / ${target}`,
-    statusText: completed ? "已完成" : "进行中",
-    rewardText: claimed
-      ? `已自动发放：${rewardLabel}`
-      : `奖励：${rewardLabel}`,
-    completed,
-    claimed,
-  };
-}
 
 export function drawTaskPanel(overlay: Node, state: Readonly<AppState>): void {
   const tasks = state.bootstrap!.newcomerTasks.slice(0, 3);
@@ -61,6 +15,13 @@ export function drawTaskPanel(overlay: Node, state: Readonly<AppState>): void {
   }
   tasks.forEach((task, index) => {
     const display = getNewcomerTaskDisplay(task);
+    const statusColor =
+      display.completed && !display.pendingReward ? COLORS.gold : COLORS.jade;
+    const rewardColor = display.claimed
+      ? COLORS.gold
+      : display.pendingReward
+        ? COLORS.jade
+        : COLORS.textMuted;
     const y = 205 - index * 166;
     drawBand(overlay, `Task-${index}`, 0, y, 600, 148, COLORS.panel);
     addLabel(
@@ -84,7 +45,7 @@ export function drawTaskPanel(overlay: Node, state: Readonly<AppState>): void {
       130,
       32,
       16,
-      display.completed ? COLORS.gold : COLORS.jade,
+      statusColor,
       true,
       1,
       HorizontalTextAlignment.RIGHT,
@@ -126,7 +87,7 @@ export function drawTaskPanel(overlay: Node, state: Readonly<AppState>): void {
       316,
       30,
       15,
-      display.claimed ? COLORS.gold : COLORS.textMuted,
+      rewardColor,
       false,
       1,
       HorizontalTextAlignment.RIGHT,

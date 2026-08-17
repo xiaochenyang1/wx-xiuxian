@@ -88,6 +88,7 @@ const BAG_INITIAL_CAPACITY = 50;
 const BAG_MAX_CAPACITY = 200;
 const BAG_EXPANSION_SIZE = 10;
 const BAG_EXPANSION_BASE_COST = 5_000;
+const IDLE_STACK_OVERFLOW_SPIRIT_STONE_VALUE = 100;
 const DROP_CLOCK_MAX_REMAINDER = 60_000_000;
 const LOCAL_BACKUP_PREFIX = "XIUXIAN_SAVE_V1:";
 const LOCAL_BACKUP_CHECKSUM_LENGTH = 8;
@@ -887,6 +888,9 @@ export class LocalGameService {
       const quantity = stackQuantity(snapshot, itemConfigId);
       if (decimal(quantity).lessThan(1)) throw new LocalGameError("物品数量不足");
       if (!config.useEffect) throw new LocalGameError("该物品当前版本暂不可使用");
+      if (snapshot.progress.status === "breakthrough_ready") {
+        throw new LocalGameError("当前处于突破瓶颈，请先完成突破再使用经验丹");
+      }
 
       const simulated = simulateOnlineExperience({
         progress: snapshot.progress,
@@ -969,13 +973,102 @@ export class LocalGameService {
     });
   }
 
+  collectAllHarvest(): LocalMutationResult {
+    return this.mutate((snapshot) => {
+      const collectedEquipmentIds = new Set<string>();
+      const remainingEntries: BootstrapSnapshot["harvestChest"]["entries"] = [];
+      const techniques = [...snapshot.techniques];
+      const techniqueIndexes = new Map(
+        techniques.map((item, index) => [item.techniqueConfigId, index] as const),
+      );
+      let occupiedSlots = countOccupiedBagSlots(snapshot);
+      let equipmentCollected = 0;
+      let techniqueCollected = 0;
+      let newTechniques = 0;
+      let duplicateTechniques = 0;
+
+      for (const entry of snapshot.harvestChest.entries) {
+        if (entry.entryType === "equipment") {
+          if (occupiedSlots >= snapshot.inventory.bagCapacity) {
+            remainingEntries.push(entry);
+            continue;
+          }
+          if (
+            !entry.equipmentInstanceId ||
+            !snapshot.equipment.some(
+              (item) =>
+                item.id === entry.equipmentInstanceId &&
+                item.location === "harvest",
+            )
+          ) {
+            throw new LocalGameError("收获数据不完整，无法批量收取");
+          }
+          collectedEquipmentIds.add(entry.equipmentInstanceId);
+          occupiedSlots += 1;
+          equipmentCollected += 1;
+          continue;
+        }
+
+        if (!entry.techniqueConfigId) {
+          throw new LocalGameError("收获数据不完整，无法批量收取");
+        }
+        const existingIndex = techniqueIndexes.get(entry.techniqueConfigId);
+        if (existingIndex === undefined) {
+          techniques.push(createTechniqueSnapshot(entry.techniqueConfigId));
+          techniqueIndexes.set(entry.techniqueConfigId, techniques.length - 1);
+          newTechniques += 1;
+        } else {
+          const existing = techniques[existingIndex]!;
+          techniques[existingIndex] = {
+            ...existing,
+            duplicateCount: existing.duplicateCount + 1,
+          };
+          duplicateTechniques += 1;
+        }
+        techniqueCollected += 1;
+      }
+
+      const collectedCount = equipmentCollected + techniqueCollected;
+      if (collectedCount === 0) {
+        throw new LocalGameError("行囊空间不足，暂无可批量收取的收获");
+      }
+      const equipment = snapshot.equipment.map((item) =>
+        collectedEquipmentIds.has(item.id)
+          ? { ...item, location: "bag", equippedSlot: null }
+          : item,
+      );
+      const techniqueDetail =
+        techniqueCollected > 0
+          ? `（新录 ${newTechniques}、副本 ${duplicateTechniques}）`
+          : "";
+      const blockedNotice =
+        remainingEntries.length > 0 ? "，请整理或扩容行囊" : "";
+      return {
+        snapshot: refreshSnapshot({
+          ...snapshot,
+          equipment,
+          techniques,
+          harvestChest: {
+            pendingCount: remainingEntries.length,
+            entries: remainingEntries,
+          },
+        }),
+        events: [],
+        message: `批量收取 ${collectedCount} 件：法宝 ${equipmentCollected}、功法 ${techniqueCollected}${techniqueDetail}；剩余 ${remainingEntries.length} 件${blockedNotice}`,
+      };
+    });
+  }
+
   salvageHarvest(entryId: string): LocalMutationResult {
     return this.mutate((snapshot) => {
       const entry = snapshot.harvestChest.entries.find((item) => item.id === entryId);
       if (!entry) throw new LocalGameError("该收获已经处理");
       if (!isAssetQuality(entry.quality)) throw new LocalGameError("收获品质数据无效");
       const salvage = salvageValue(entry.entryType, entry.quality);
-      const applied = resolveSalvageReward(snapshot, salvage, false);
+      const applied = resolveSalvageReward(snapshot, salvage, {
+        releasesBagSlot: false,
+        accountLifetimeImmediately: true,
+      });
       const entries = snapshot.harvestChest.entries.filter((item) => item.id !== entryId);
       const equipment = entry.equipmentInstanceId
         ? snapshot.equipment.filter((item) => item.id !== entry.equipmentInstanceId)
@@ -985,16 +1078,74 @@ export class LocalGameService {
           ...snapshot,
           equipment,
           inventory: applied.inventory,
-          wallet: {
-            ...snapshot.wallet,
-            spiritStone: decimal(snapshot.wallet.spiritStone)
-              .plus(applied.spiritStone)
-              .toFixed(0),
-          },
+          wallet: applied.wallet,
           harvestChest: { pendingCount: entries.length, entries },
         },
         events: [],
         message: salvageRewardMessage(entry.displayName, applied),
+      };
+    });
+  }
+
+  salvageLowQualityHarvest(): LocalMutationResult {
+    return this.mutate((snapshot) => {
+      const salvageEntries = snapshot.harvestChest.entries.filter(
+        (entry) =>
+          entry.quality === "common" || entry.quality === "uncommon",
+      );
+      if (salvageEntries.length === 0) {
+        throw new LocalGameError("收获箱中没有可批量分解的普通或优秀物品");
+      }
+
+      let spiritStone = 0;
+      let enhanceStone = 0;
+      const salvagedEntryIds = new Set<string>();
+      const salvagedEquipmentIds = new Set<string>();
+      for (const entry of salvageEntries) {
+        if (!isAssetQuality(entry.quality)) {
+          throw new LocalGameError("收获品质数据无效");
+        }
+        const reward = salvageValue(entry.entryType, entry.quality);
+        spiritStone += reward.spiritStone;
+        enhanceStone += reward.enhanceStone;
+        salvagedEntryIds.add(entry.id);
+        if (entry.equipmentInstanceId) {
+          salvagedEquipmentIds.add(entry.equipmentInstanceId);
+        }
+      }
+
+      const applied = resolveSalvageReward(
+        snapshot,
+        { spiritStone, enhanceStone },
+        {
+          releasesBagSlot: false,
+          accountLifetimeImmediately: true,
+        },
+      );
+      const entries = snapshot.harvestChest.entries.filter(
+        (entry) => !salvagedEntryIds.has(entry.id),
+      );
+      const equipment = snapshot.equipment.filter(
+        (item) => !salvagedEquipmentIds.has(item.id),
+      );
+      const enhancementReward =
+        applied.enhanceStone > 0
+          ? `、强化石 ${applied.enhanceStone}`
+          : "";
+      const conversionNotice =
+        applied.convertedEnhanceStone > 0
+          ? `（${applied.convertedEnhanceStone} 枚强化石因行囊已满折为灵石）`
+          : "";
+      return {
+        snapshot: refreshSnapshot({
+          ...snapshot,
+          equipment,
+          inventory: applied.inventory,
+          wallet: applied.wallet,
+          harvestChest: { pendingCount: entries.length, entries },
+        }),
+        events: [],
+        message: `批量分解 ${salvageEntries.length} 件：获得灵石 ${applied.spiritStone}${enhancementReward}${conversionNotice}；剩余 ${entries.length} 件`,
       };
     });
   }
@@ -1197,7 +1348,10 @@ export class LocalGameService {
         target.quality,
         target.enhanceLevel,
       );
-      const applied = resolveSalvageReward(snapshot, reward, true);
+      const applied = resolveSalvageReward(snapshot, reward, {
+        releasesBagSlot: true,
+        accountLifetimeImmediately: true,
+      });
       return {
         snapshot: {
           ...snapshot,
@@ -1205,12 +1359,7 @@ export class LocalGameService {
             (item) => item.id !== equipmentInstanceId,
           ),
           inventory: applied.inventory,
-          wallet: {
-            ...snapshot.wallet,
-            spiritStone: decimal(snapshot.wallet.spiritStone)
-              .plus(applied.spiritStone)
-              .toFixed(0),
-          },
+          wallet: applied.wallet,
         },
         events: [],
         message: salvageRewardMessage(target.displayName, applied),
@@ -1284,6 +1433,11 @@ export class LocalGameService {
         };
       }
       if (target === "breakthrough_pill") {
+        ensureStackOutputCapacity(
+          snapshot,
+          "breakthrough_pill",
+          "行囊空间不足，无法增加调试突破丹",
+        );
         return {
           snapshot: {
             ...snapshot,
@@ -1761,19 +1915,26 @@ function syncNewcomerTasks(snapshot: BootstrapSnapshot): {
   const newcomerTasks = NEWCOMER_TASK_CONFIGS.map((config) => {
     const previous = existing.get(config.id);
     const completed = snapshot.progress.level >= config.targetLevel;
-    const newlyCompleted = completed && previous?.completedAt == null;
-    const claimedAt =
-      config.id === NEWCOMER_REACH_LEVEL_8_TASK_ID && completed
-        ? previous?.claimedAt ?? now
-        : previous?.claimedAt ?? null;
-    if (
+    const rewardPending =
       config.id === NEWCOMER_REACH_LEVEL_8_TASK_ID &&
-      newlyCompleted &&
-      previous?.claimedAt == null
-    ) {
+      completed &&
+      previous?.claimedAt == null;
+    const grantedThisTask =
+      rewardPending &&
+      hasStackOutputCapacity(
+        { ...snapshot, inventory },
+        "breakthrough_pill",
+      );
+    if (grantedThisTask) {
       inventory = addStack(inventory, "breakthrough_pill", 1);
       rewardGranted = true;
     }
+    const claimedAt =
+      config.id === NEWCOMER_REACH_LEVEL_8_TASK_ID
+        ? grantedThisTask
+          ? now
+          : previous?.claimedAt ?? null
+        : previous?.claimedAt ?? null;
     return {
       taskConfigId: config.id,
       progress: Math.min(snapshot.progress.level, config.targetLevel).toString(),
@@ -1891,8 +2052,29 @@ function applyIdleDrops(
   }
 
   for (const [itemConfigId, quantity] of stackRewards) {
-    next = { ...next, inventory: addStack(next.inventory, itemConfigId, quantity) };
-    summary.stackItems.push({ itemConfigId, quantity: quantity.toString() });
+    if (hasStackOutputCapacity(next, itemConfigId)) {
+      next = {
+        ...next,
+        inventory: addStack(next.inventory, itemConfigId, quantity),
+      };
+      summary.stackItems.push({ itemConfigId, quantity: quantity.toString() });
+      continue;
+    }
+
+    const compensation = decimal(quantity)
+      .times(IDLE_STACK_OVERFLOW_SPIRIT_STONE_VALUE)
+      .toFixed(0);
+    next = {
+      ...next,
+      wallet: {
+        ...next.wallet,
+        spiritStone: decimal(next.wallet.spiritStone).plus(compensation).toFixed(0),
+      },
+    };
+    summary.autoSalvagedCount += quantity;
+    summary.autoSalvageSpiritStone = decimal(summary.autoSalvageSpiritStone)
+      .plus(compensation)
+      .toFixed(0);
   }
   return { snapshot: next, summary };
 }
@@ -1914,17 +2096,15 @@ function addHarvestCandidate(
     (quality === "uncommon" && snapshot.settings.autoSalvageUncommon);
   if (autoSalvage) {
     const salvage = salvageValue(entry.entryType, quality);
-    const applied = resolveSalvageReward(snapshot, salvage, false);
+    const applied = resolveSalvageReward(snapshot, salvage, {
+      releasesBagSlot: false,
+      accountLifetimeImmediately: false,
+    });
     return {
       snapshot: {
         ...snapshot,
         inventory: applied.inventory,
-        wallet: {
-          ...snapshot.wallet,
-          spiritStone: decimal(snapshot.wallet.spiritStone)
-            .plus(applied.spiritStone)
-            .toFixed(0),
-        },
+        wallet: applied.wallet,
       },
       added: false,
       autoSalvageSpiritStone: applied.spiritStone,
@@ -2013,15 +2193,20 @@ function ensureStackOutputCapacity(
   itemConfigId: string,
   errorMessage = "行囊空间不足，无法收取炼丹产物",
 ): void {
-  const alreadyOwned = snapshot.inventory.stacks.some(
-    (stack) => stack.itemConfigId === itemConfigId,
-  );
-  if (
-    !alreadyOwned &&
-    countOccupiedBagSlots(snapshot) >= snapshot.inventory.bagCapacity
-  ) {
+  if (!hasStackOutputCapacity(snapshot, itemConfigId)) {
     throw new LocalGameError(errorMessage);
   }
+}
+
+function hasStackOutputCapacity(
+  snapshot: BootstrapSnapshot,
+  itemConfigId: string,
+): boolean {
+  return (
+    snapshot.inventory.stacks.some(
+      (stack) => stack.itemConfigId === itemConfigId,
+    ) || countOccupiedBagSlots(snapshot) < snapshot.inventory.bagCapacity
+  );
 }
 
 function addStackRewards(
@@ -2184,9 +2369,13 @@ function salvageValue(entryType: string, quality: AssetQuality): {
 function resolveSalvageReward(
   snapshot: BootstrapSnapshot,
   reward: { readonly spiritStone: number; readonly enhanceStone: number },
-  releasesBagSlot: boolean,
+  options: {
+    readonly releasesBagSlot: boolean;
+    readonly accountLifetimeImmediately: boolean;
+  },
 ): {
   readonly inventory: BootstrapSnapshot["inventory"];
+  readonly wallet: BootstrapSnapshot["wallet"];
   readonly spiritStone: number;
   readonly enhanceStone: number;
   readonly convertedEnhanceStone: number;
@@ -2197,18 +2386,28 @@ function resolveSalvageReward(
   const canStoreEnhanceStone =
     reward.enhanceStone === 0 ||
     hasEnhanceStoneStack ||
-    releasesBagSlot ||
+    options.releasesBagSlot ||
     countOccupiedBagSlots(snapshot) < snapshot.inventory.bagCapacity;
   const enhanceStone = canStoreEnhanceStone ? reward.enhanceStone : 0;
   const convertedEnhanceStone = reward.enhanceStone - enhanceStone;
+  const spiritStone =
+    reward.spiritStone +
+    convertedEnhanceStone * ENHANCE_STONE_OVERFLOW_SPIRIT_STONE_VALUE;
   return {
     inventory:
       enhanceStone > 0
         ? addStack(snapshot.inventory, "enhance_stone", enhanceStone)
         : snapshot.inventory,
-    spiritStone:
-      reward.spiritStone +
-      convertedEnhanceStone * ENHANCE_STONE_OVERFLOW_SPIRIT_STONE_VALUE,
+    wallet: {
+      ...snapshot.wallet,
+      spiritStone: decimal(snapshot.wallet.spiritStone).plus(spiritStone).toFixed(0),
+      lifetimeSpiritStoneEarned: decimal(
+        snapshot.wallet.lifetimeSpiritStoneEarned,
+      )
+        .plus(options.accountLifetimeImmediately ? spiritStone : 0)
+        .toFixed(0),
+    },
+    spiritStone,
     enhanceStone,
     convertedEnhanceStone,
   };

@@ -110,8 +110,12 @@ export class GameBootstrap extends Component {
           this.runMutation(() => this.localGame.useInventoryItem(itemConfigId)),
         transferHarvest: (entryId) =>
           this.runMutation(() => this.localGame.transferHarvest(entryId)),
+        collectAllHarvest: () =>
+          this.runMutation(() => this.localGame.collectAllHarvest()),
         salvageHarvest: (entryId) =>
           this.runMutation(() => this.localGame.salvageHarvest(entryId)),
+        salvageLowQualityHarvest: () =>
+          this.runMutation(() => this.localGame.salvageLowQualityHarvest()),
         toggleAutoSalvage: (quality: AutoSalvageQuality) =>
           this.runMutation(() => this.localGame.toggleAutoSalvage(quality)),
         equipTechnique: (techniqueConfigId) =>

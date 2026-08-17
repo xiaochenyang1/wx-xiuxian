@@ -1,3 +1,4 @@
+import type { ChosenAvatarVariant } from "@cultivation-diary/shared";
 import { resources, SpriteFrame } from "cc";
 
 export const MAIN_BACKGROUND_KEYS = [
@@ -13,9 +14,13 @@ export type MainBackgroundArt = Readonly<
   Partial<Record<MainBackgroundKey, SpriteFrame>>
 >;
 
+export type AvatarSpriteFrames = Readonly<
+  Partial<Record<ChosenAvatarVariant, SpriteFrame>>
+>;
+
 export interface SupplementalArt {
-  readonly cultivator?: SpriteFrame;
-  readonly playerAvatar?: SpriteFrame;
+  readonly cultivators: AvatarSpriteFrames;
+  readonly playerAvatars: AvatarSpriteFrames;
 }
 
 const MAIN_BACKGROUND_RESOURCE_DIR = "art/backgrounds";
@@ -72,11 +77,9 @@ export function loadSupplementalArt(): Promise<SupplementalArt> {
     loadOptionalSpriteFrames("art/characters"),
     loadOptionalSpriteFrames("art/avatars"),
   ]).then(([characters, avatars]) => {
-    const cultivator = findSpriteFrame(characters, "cultivator");
-    const playerAvatar = findSpriteFrame(avatars, "player");
     const art: SupplementalArt = Object.freeze({
-      ...(cultivator ? { cultivator } : {}),
-      ...(playerAvatar ? { playerAvatar } : {}),
+      cultivators: collectAvatarSpriteFrames(characters, "cultivator"),
+      playerAvatars: collectAvatarSpriteFrames(avatars, "player"),
     });
     cachedSupplementalArt = art;
     return art;
@@ -93,6 +96,18 @@ export function loadSupplementalArt(): Promise<SupplementalArt> {
   return request;
 }
 
+function collectAvatarSpriteFrames(
+  spriteFrames: readonly SpriteFrame[],
+  prefix: string,
+): AvatarSpriteFrames {
+  const loaded: Partial<Record<ChosenAvatarVariant, SpriteFrame>> = {};
+  for (const variant of ["male", "female"] as const) {
+    const spriteFrame = findSpriteFrame(spriteFrames, `${prefix}-${variant}`);
+    if (spriteFrame) loaded[variant] = spriteFrame;
+  }
+  return Object.freeze(loaded);
+}
+
 function loadOptionalSpriteFrames(resourceDir: string): Promise<readonly SpriteFrame[]> {
   return new Promise((resolve) => {
     resources.loadDir<SpriteFrame>(resourceDir, SpriteFrame, (error, spriteFrames) => {
@@ -105,9 +120,10 @@ function findSpriteFrame(
   spriteFrames: readonly SpriteFrame[],
   expectedName: string,
 ): SpriteFrame | undefined {
-  return spriteFrames.find(
-    (spriteFrame) => normalizeResourceName(spriteFrame.name) === expectedName,
-  );
+  return spriteFrames.find((spriteFrame) => {
+    const normalized = normalizeResourceName(spriteFrame.name);
+    return normalized === expectedName || normalized.endsWith(`/${expectedName}`);
+  });
 }
 
 function resolveMainBackgroundKey(name: string): MainBackgroundKey | null {

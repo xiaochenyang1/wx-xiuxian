@@ -109,6 +109,7 @@ describe("equipment management service", () => {
     expect(service.snapshot.equipment).toEqual([]);
     expect(stackQuantity(service, "enhance_stone")).toBe("2");
     expect(service.snapshot.wallet.spiritStone).toBe("1475");
+    expect(service.snapshot.wallet.lifetimeSpiritStoneEarned).toBe("475");
     expect(countOccupiedBagSlots(service.snapshot)).toBe(1);
     expect(result.message).toContain("475 灵石和 2 枚强化石");
   });
@@ -146,6 +147,7 @@ describe("equipment management service", () => {
 
     expect(stackQuantity(service, "enhance_stone")).toBe("0");
     expect(service.snapshot.wallet.spiritStone).toBe("1200");
+    expect(service.snapshot.wallet.lifetimeSpiritStoneEarned).toBe("200");
     expect(result.message).toContain("折为灵石");
     expect(countOccupiedBagSlots(service.snapshot)).toBe(50);
   });

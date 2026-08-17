@@ -1,4 +1,5 @@
 import {
+  NEWCOMER_REACH_LEVEL_8_TASK_ID,
   PARTNER_CONFIGS,
   PARTNER_MAX_LEVEL,
   type AutoSalvageQuality,
@@ -7,6 +8,8 @@ import {
   type DebugGrantTarget,
   type EquippedEquipmentSlot,
   type OfflineSettlementSummary,
+  type PartnerId,
+  type SectId,
 } from "@cultivation-diary/shared";
 import {
   partnerProgressText,
@@ -33,11 +36,23 @@ import {
   type CultivationPresentationPlan,
 } from "../core/CultivationPresentation";
 import {
+  getFeatureMessageDisplay,
+  getMainFeatureMessageGeometry,
+  type FeatureMessageDisplay,
+} from "../core/FeatureMessageDisplay";
+import {
   advanceLiveCultivationElapsed,
   initialLiveCultivationElapsed,
   liveCultivationSettlementKey,
   projectLiveCultivation,
 } from "../core/CultivationProjection";
+import {
+  EMPTY_SOCIAL_CONFIRMATION_STATE,
+  getPartnerConfirmationDisplay,
+  getSectConfirmationDisplay,
+  reconcileSocialConfirmationState,
+  type SocialConfirmationState,
+} from "../core/SocialConfirmationDisplay";
 import {
   clampModalButtonCenterY,
   DEFAULT_DESIGN_SAFE_AREA_LAYOUT,
@@ -70,6 +85,7 @@ import {
 import { formatSignedPowerDelta } from "./primitives/Format";
 import {
   drawAvatarPortrait,
+  drawCultivatorFigure,
   drawCurrencyChip,
   drawFeatureGlyph,
   drawGoldenFormation,
@@ -144,7 +160,9 @@ export interface AppViewActions {
   upgradeTechnique(techniqueConfigId: string): void;
   useInventoryItem(itemConfigId: string): void;
   transferHarvest(entryId: string): void;
+  collectAllHarvest(): void;
   salvageHarvest(entryId: string): void;
+  salvageLowQualityHarvest(): void;
   toggleAutoSalvage(quality: AutoSalvageQuality): void;
   equipTechnique(techniqueConfigId: string): void;
   unequipTechnique(techniqueConfigId: string): void;
@@ -232,7 +250,10 @@ export class AppView {
   private readonly safeAreaLayout: DesignSafeAreaLayout;
   private readonly chromeGeometry: AppChromeGeometry;
   private mainBackgroundArt: MainBackgroundArt = {};
-  private supplementalArt: SupplementalArt = {};
+  private supplementalArt: SupplementalArt = {
+    cultivators: {},
+    playerAvatars: {},
+  };
   private destroyed = false;
   private mainPageRoot: Node | null = null;
   private idleLabel: Label | null = null;
@@ -269,6 +290,8 @@ export class AppView {
   private profileAvatarDraft: ChosenAvatarVariant | null = null;
   private profileNameDraft: string | null = null;
   private profileNameSource: string | null = null;
+  private socialConfirmationState: SocialConfirmationState =
+    EMPTY_SOCIAL_CONFIRMATION_STATE;
   private rankingCategory: RankingCategory = "power";
   private pendingPresentation: CultivationPresentationPlan | null = null;
   private activePresentation: CultivationPresentationPlan | null = null;
@@ -382,14 +405,29 @@ export class AppView {
 
   render(state: Readonly<AppState>): void {
     this.updateCultivationProjectionAnchor(state);
+    const previousState = this.lastState;
     const playerId = state.bootstrap?.player.id ?? null;
-    if (playerId !== this.profilePlayerId) {
+    const playerIdentityChanged = playerId !== this.profilePlayerId;
+    if (playerIdentityChanged) {
       this.interruptCultivationPresentation(true);
       this.clearPlayerUiState();
       this.profilePlayerId = playerId;
     }
     const selectedTabChanged =
-      this.lastState !== null && this.lastState.selectedTab !== state.selectedTab;
+      previousState !== null && previousState.selectedTab !== state.selectedTab;
+    const activeFeatureChanged =
+      previousState !== null && previousState.activeFeature !== state.activeFeature;
+    this.socialConfirmationState = reconcileSocialConfirmationState(
+      this.socialConfirmationState,
+      {
+        selectedTab: state.selectedTab,
+        activeFeature: state.activeFeature,
+        viewChanged:
+          playerIdentityChanged || selectedTabChanged || activeFeatureChanged,
+        partnerAlreadySelected: Boolean(state.bootstrap?.partner.partnerId),
+        sectAlreadySelected: Boolean(state.bootstrap?.sect.sectId),
+      },
+    );
     this.lastState = state;
     if (selectedTabChanged) this.interruptCultivationPresentation(true);
     if (
@@ -433,7 +471,16 @@ export class AppView {
       return;
     }
 
-    this.drawMainPage(state);
+    const partnerUnlockNoticeOpen = shouldShowPartnerUnlockNotice(state);
+    const featureMessageDisplay = getFeatureMessageDisplay({
+      message: state.featureMessage,
+      selectedTab: state.selectedTab,
+      activeFeatureOpen: state.activeFeature !== null,
+      offlineSettlementOpen: state.bootstrap.offlineSettlement !== null,
+      partnerUnlockNoticeOpen,
+    });
+
+    this.drawMainPage(state, featureMessageDisplay);
     this.drawHeader(state);
     this.drawNavigation(state.selectedTab);
     this.drawBottomFeatureRail(
@@ -443,19 +490,22 @@ export class AppView {
     );
     this.drawSyncStatus(state);
     if (state.activeFeature) {
-      this.drawFeaturePanel(state, state.activeFeature);
+      this.drawFeaturePanel(state, state.activeFeature, featureMessageDisplay);
     }
     if (state.bootstrap.offlineSettlement) {
       this.drawOfflineSettlement(state.bootstrap.offlineSettlement);
     }
-    if (shouldShowPartnerUnlockNotice(state)) {
-      this.drawPartnerUnlockNotice(state);
+    if (partnerUnlockNoticeOpen) {
+      this.drawPartnerUnlockNotice(featureMessageDisplay);
     }
     this.tryStartCultivationPresentation();
     this.drawDebugPanel(state);
   }
 
-  private drawMainPage(state: Readonly<AppState>): void {
+  private drawMainPage(
+    state: Readonly<AppState>,
+    featureMessageDisplay: FeatureMessageDisplay | null,
+  ): void {
     const pageRoot = createUiNode(this.contentRoot, "MainPageRoot");
     pageRoot.setPosition(
       this.chromeGeometry.centerX,
@@ -467,17 +517,20 @@ export class AppView {
       this.drawMainBackground(state.selectedTab);
       switch (state.selectedTab) {
         case "cultivation":
-          this.drawCultivation(state);
+          this.drawCultivation(state, featureMessageDisplay);
           break;
         case "partner":
           this.drawPartner(state);
           break;
         case "ranking":
-          this.drawRanking(state);
+          this.drawRanking(state, featureMessageDisplay);
           break;
         case "cave":
           this.drawCave(state);
           break;
+      }
+      if (featureMessageDisplay?.surface === "main") {
+        this.drawMainFeatureMessage(featureMessageDisplay);
       }
     } finally {
       this.mainPageRoot = null;
@@ -1379,11 +1432,15 @@ export class AppView {
     avatarFrame.lineWidth = 3;
     avatarFrame.circle(0, 7, 52);
     avatarFrame.stroke();
-    if (this.supplementalArt.playerAvatar) {
+    const playerAvatarArt =
+      bootstrap.player.avatarVariant === "neutral"
+        ? undefined
+        : this.supplementalArt.playerAvatars[bootstrap.player.avatarVariant];
+    if (playerAvatarArt) {
       drawContainedSprite(
         avatarButton,
         "PlayerAvatarArt",
-        this.supplementalArt.playerAvatar,
+        playerAvatarArt,
         0,
         7,
         88,
@@ -1527,8 +1584,44 @@ export class AppView {
     );
   }
 
-  private drawCultivation(state: Readonly<AppState>): void {
+  private drawMainFeatureMessage(
+    display: Extract<FeatureMessageDisplay, { readonly surface: "main" }>,
+  ): void {
+    const geometry = getMainFeatureMessageGeometry(display.tab);
+    drawBand(
+      this.root,
+      "MainFeatureMessage",
+      geometry.x,
+      geometry.y,
+      geometry.width,
+      geometry.height,
+      withAlpha(COLORS.inkGreenLight, 246),
+      COLORS.goldMuted,
+    );
+    addLabel(
+      this.root,
+      display.text,
+      geometry.x,
+      geometry.y,
+      geometry.labelWidth,
+      geometry.labelHeight,
+      display.tab === "cultivation" ? 15 : 16,
+      COLORS.goldBright,
+      true,
+      display.maxLines,
+      HorizontalTextAlignment.CENTER,
+      "fixed",
+    );
+  }
+
+  private drawCultivation(
+    state: Readonly<AppState>,
+    featureMessageDisplay: FeatureMessageDisplay | null,
+  ): void {
     const data = state.bootstrap!;
+    const featureMessageOpen =
+      featureMessageDisplay?.surface === "main" &&
+      featureMessageDisplay.tab === "cultivation";
     const hasBackground = this.hasMainBackground("cultivation");
     const mutationsEnabled = canRunLocalMutation(state);
     const projection = this.resolveCultivationProjection(state);
@@ -1537,20 +1630,31 @@ export class AppView {
       data.config.maxLevel,
     );
     const pendingTasks = data.newcomerTasks.filter(
-      (task) => task.completedAt === null,
+      (task) =>
+        task.completedAt === null ||
+        (task.taskConfigId === NEWCOMER_REACH_LEVEL_8_TASK_ID &&
+          task.claimedAt === null),
     ).length;
     const pendingHarvest = data.harvestChest.pendingCount;
     if (!hasBackground) this.drawCultivationScene();
-    if (hasBackground && this.supplementalArt.cultivator) {
-      drawContainedSprite(
-        this.root,
-        "CultivatorArt",
-        this.supplementalArt.cultivator,
-        0,
-        42,
-        520,
-        730,
-      );
+    if (hasBackground) {
+      const cultivatorArt =
+        data.player.avatarVariant === "neutral"
+          ? undefined
+          : this.supplementalArt.cultivators[data.player.avatarVariant];
+      if (cultivatorArt) {
+        drawContainedSprite(
+          this.root,
+          "CultivatorArt",
+          cultivatorArt,
+          0,
+          42,
+          520,
+          730,
+        );
+      } else {
+        drawCultivatorFigure(this.root, data.player.avatarVariant, 0, 54);
+      }
     }
     drawOrnatePanel(this.root, "RealmBanner", 0, 452, 408, 78);
     addLabel(
@@ -1686,7 +1790,11 @@ export class AppView {
         progressDisplay.progressRatio ?? 0,
       );
     }
-    if (mutationsEnabled && data.progress.status !== "breakthrough_ready") {
+    if (
+      !featureMessageOpen &&
+      mutationsEnabled &&
+      data.progress.status !== "breakthrough_ready"
+    ) {
       this.cultivationGrowthLabel = addLabel(
         this.root,
         liveCultivationGainText(
@@ -1708,20 +1816,22 @@ export class AppView {
     this.lastCultivationProjectionSecond = projection.elapsedWholeSeconds;
     this.lastCultivationProjectionGain = projection.gainedSinceAnchor;
 
-    addLabel(
-      this.root,
-      `灵石收益  ${formatLargeNumber(data.progress.spiritStonePerMinute)}/分`,
-      0,
-      -205,
-      372,
-      30,
-      18,
-      COLORS.cyan,
-      true,
-      1,
-      HorizontalTextAlignment.CENTER,
-      "fixed",
-    );
+    if (!featureMessageOpen) {
+      addLabel(
+        this.root,
+        `灵石收益  ${formatLargeNumber(data.progress.spiritStonePerMinute)}/分`,
+        0,
+        -205,
+        372,
+        30,
+        18,
+        COLORS.cyan,
+        true,
+        1,
+        HorizontalTextAlignment.CENTER,
+        "fixed",
+      );
+    }
 
     if (data.progress.status === "breakthrough_ready") {
       createButton(
@@ -1758,7 +1868,7 @@ export class AppView {
         () => undefined,
       );
     }
-    if (progressDisplay.footer) {
+    if (!featureMessageOpen && progressDisplay.footer) {
       this.cultivationFooterLabel = addLabel(
         this.root,
         progressDisplay.footer,
@@ -2040,6 +2150,9 @@ export class AppView {
 
     const snapshot = state.bootstrap!;
     const partner = selectedPartner(snapshot);
+    const confirmation = getPartnerConfirmationDisplay(
+      this.socialConfirmationState.partnerId,
+    );
     drawBand(
       this.root,
       "PartnerPanel",
@@ -2052,6 +2165,10 @@ export class AppView {
         : COLORS.inkGreen,
     );
     if (!partner) {
+      if (confirmation) {
+        this.drawPartnerConfirmation(confirmation);
+        return;
+      }
       addLabel(this.root, "选择道侣", -56, 410, 500, 50, 30, COLORS.gold, true);
       addLabel(this.root, "结缘后不可更换，请确认你的修行方向", -56, 355, 500, 34, 17, COLORS.textMuted);
       PARTNER_CONFIGS.forEach((candidate, index) => {
@@ -2067,7 +2184,7 @@ export class AppView {
           88,
           44,
           { fill: COLORS.inkGreen, stroke: COLORS.goldMuted, fontSize: 15 },
-          () => this.actions.choosePartner(candidate.id),
+          () => this.beginPartnerConfirmation(candidate.id),
         );
       });
       return;
@@ -2123,7 +2240,63 @@ export class AppView {
     );
   }
 
-  private drawRanking(state: Readonly<AppState>): void {
+  private drawPartnerConfirmation(
+    confirmation: NonNullable<
+      ReturnType<typeof getPartnerConfirmationDisplay>
+    >,
+  ): void {
+    addLabel(
+      this.root,
+      confirmation.title,
+      -56,
+      400,
+      500,
+      50,
+      29,
+      COLORS.gold,
+      true,
+    );
+    addLabel(
+      this.root,
+      confirmation.displayName,
+      -56,
+      298,
+      500,
+      54,
+      34,
+      COLORS.text,
+      true,
+    );
+    addLabel(this.root, confirmation.detailText, -56, 246, 500, 34, 18, COLORS.textMuted);
+    addLabel(this.root, confirmation.bonusText, -56, 174, 500, 40, 20, COLORS.jade, true);
+    addLabel(this.root, confirmation.irreversibleText, -56, 96, 500, 38, 19, COLORS.gold, true);
+    addLabel(this.root, confirmation.persistenceText, -56, 56, 500, 30, 15, COLORS.textMuted);
+    createButton(
+      this.root,
+      confirmation.cancelLabel,
+      -161,
+      -22,
+      190,
+      58,
+      { fill: COLORS.panel, stroke: COLORS.goldMuted, fontSize: 18 },
+      () => this.cancelSocialConfirmation(),
+    );
+    createButton(
+      this.root,
+      confirmation.confirmLabel,
+      49,
+      -22,
+      190,
+      58,
+      { fill: COLORS.red, stroke: COLORS.gold, fontSize: 18 },
+      () => this.confirmPartnerSelection(),
+    );
+  }
+
+  private drawRanking(
+    state: Readonly<AppState>,
+    featureMessageDisplay: FeatureMessageDisplay | null,
+  ): void {
     const hasBackground = this.hasMainBackground("ranking");
     const tabEntries: ReadonlyArray<{ label: string; category: RankingCategory }> = [
       { label: "战力", category: "power" },
@@ -2189,7 +2362,12 @@ export class AppView {
     const playerRank = entries.findIndex((entry) => entry.player) + 1;
     addLabel(this.root, "我的排名", -220, -275, 180, 40, 20, COLORS.text);
     addLabel(this.root, `${playerRank} / ${entries.length}`, 150, -275, 150, 40, 20, COLORS.gold, true);
-    addLabel(this.root, "本地试炼榜 · NPC 标杆固定，玩家数据来自本地存档", 0, -350, 580, 32, 14, COLORS.textMuted);
+    if (
+      featureMessageDisplay?.surface !== "main" ||
+      featureMessageDisplay.tab !== "ranking"
+    ) {
+      addLabel(this.root, "本地试炼榜 · NPC 标杆固定，玩家数据来自本地存档", 0, -350, 580, 32, 14, COLORS.textMuted);
+    }
   }
 
   private drawCave(state: Readonly<AppState>): void {
@@ -2355,6 +2533,7 @@ export class AppView {
   private drawFeaturePanel(
     state: Readonly<AppState>,
     feature: FeaturePanel,
+    featureMessageDisplay: FeatureMessageDisplay | null,
   ): void {
     const overlay = createUiNode(this.root, `FeaturePanel-${feature}`);
     this.setFullscreenSize(overlay);
@@ -2411,21 +2590,34 @@ export class AppView {
     if (feature === "tasks") drawTaskPanel(overlay, state);
     if (feature === "alchemy") drawAlchemyPanel(overlay, state, this.actions);
     if (feature === "crafting") drawCraftingPanel(overlay, state, this.actions);
-    if (feature === "sect") drawSectPanel(overlay, state, this.actions);
+    if (feature === "sect") {
+      drawSectPanel(overlay, state, this.actions, {
+        display: getSectConfirmationDisplay(
+          this.socialConfirmationState.sectId,
+        ),
+        begin: (sectId) => this.beginSectConfirmation(sectId),
+        cancel: () => this.cancelSocialConfirmation(),
+        confirm: () => this.confirmSectSelection(),
+      });
+    }
     if (feature === "expedition")
       drawExpeditionPanel(overlay, state, this.actions);
 
-    if (state.featureMessage) {
-      drawBand(overlay, "FeatureMessage", 0, -473, 620, 54, COLORS.inkGreenLight);
+    if (featureMessageDisplay?.surface === "feature-panel") {
+      drawBand(overlay, "FeatureMessage", 0, -473, 620, 68, COLORS.inkGreenLight);
       addLabel(
         overlay,
-        state.featureMessage,
+        featureMessageDisplay.text,
         0,
         -473,
         590,
-        38,
-        17,
+        52,
+        16,
         COLORS.gold,
+        false,
+        featureMessageDisplay.maxLines,
+        HorizontalTextAlignment.CENTER,
+        "fixed",
       );
     }
   }
@@ -2489,8 +2681,43 @@ export class AppView {
     this.profileBackupArmed = null;
   }
 
+  private beginPartnerConfirmation(partnerId: PartnerId): void {
+    this.actions.feedback();
+    this.socialConfirmationState = { partnerId, sectId: null };
+    if (this.lastState) this.render(this.lastState);
+  }
+
+  private beginSectConfirmation(sectId: SectId): void {
+    this.actions.feedback();
+    this.socialConfirmationState = { partnerId: null, sectId };
+    if (this.lastState) this.render(this.lastState);
+  }
+
+  private cancelSocialConfirmation(): void {
+    this.actions.feedback();
+    this.socialConfirmationState = EMPTY_SOCIAL_CONFIRMATION_STATE;
+    if (this.lastState) this.render(this.lastState);
+  }
+
+  private confirmPartnerSelection(): void {
+    const partnerId = this.socialConfirmationState.partnerId;
+    if (partnerId === null) return;
+    this.socialConfirmationState = EMPTY_SOCIAL_CONFIRMATION_STATE;
+    this.actions.feedback();
+    this.actions.choosePartner(partnerId);
+  }
+
+  private confirmSectSelection(): void {
+    const sectId = this.socialConfirmationState.sectId;
+    if (sectId === null) return;
+    this.socialConfirmationState = EMPTY_SOCIAL_CONFIRMATION_STATE;
+    this.actions.feedback();
+    this.actions.joinSect(sectId);
+  }
+
   private clearPlayerUiState(): void {
     this.clearProfileDraft();
+    this.socialConfirmationState = EMPTY_SOCIAL_CONFIRMATION_STATE;
     this.profileResetPending = false;
     this.profileBackupPending = false;
     this.debugSaveResetArmed = false;
@@ -2608,7 +2835,9 @@ export class AppView {
     );
   }
 
-  private drawPartnerUnlockNotice(state: Readonly<AppState>): void {
+  private drawPartnerUnlockNotice(
+    featureMessageDisplay: FeatureMessageDisplay | null,
+  ): void {
     const overlay = createUiNode(this.root, "PartnerUnlockNoticeModal");
     this.setFullscreenSize(overlay);
     overlay.addComponent(BlockInputEvents);
@@ -2653,16 +2882,20 @@ export class AppView {
       COLORS.goldMuted,
     );
     addLabel(overlay, "伴侣入口已开启", 0, 18, 420, 38, 20, COLORS.jade, true);
-    if (state.featureMessage) {
+    if (featureMessageDisplay?.surface === "partner-unlock") {
       addLabel(
         overlay,
-        state.featureMessage,
+        featureMessageDisplay.text,
         0,
         -62,
         500,
         34,
         16,
         COLORS.textMuted,
+        false,
+        featureMessageDisplay.maxLines,
+        HorizontalTextAlignment.CENTER,
+        "fixed",
       );
     }
     createButton(

@@ -1,3 +1,4 @@
+import { MAX_LEVEL, requiredExperienceForLevel } from "@cultivation-diary/shared";
 import { describe, expect, it, vi, afterEach } from "vitest";
 import { CLIENT_CONFIG } from "../assets/scripts/core/ClientConfig";
 import {
@@ -85,6 +86,47 @@ describe("alchemy", () => {
 
     expect(quantityOf(service, "exp_pill_large")).toBe("0");
     expect(Number(result.snapshot.progress.experience)).toBeGreaterThan(0);
+  });
+
+  it.each([
+    ["exp_pill_small", "经验丹（小）"],
+    ["exp_pill_large", "经验丹（大）"],
+  ])("rejects %s at a breakthrough bottleneck without consuming it", (itemConfigId, displayName) => {
+    const { service, platform } = seededService((save) => {
+      save.snapshot.progress.level = 10;
+      save.snapshot.progress.experience = requiredExperienceForLevel(10);
+      save.snapshot.progress.status = "breakthrough_ready";
+      setStack(save, itemConfigId, displayName, 1);
+    });
+    const snapshotBefore = JSON.stringify(service.snapshot);
+    const persistedBefore = platform.raw(SAVE_KEY);
+
+    expect(() => service.useInventoryItem(itemConfigId)).toThrow(
+      new LocalGameError("当前处于突破瓶颈，请先完成突破再使用经验丹"),
+    );
+
+    expect(JSON.stringify(service.snapshot)).toBe(snapshotBefore);
+    expect(platform.raw(SAVE_KEY)).toBe(persistedBefore);
+    expect(quantityOf(service, itemConfigId)).toBe("1");
+  });
+
+  it("keeps converting experience pills into reserve at the version cap", () => {
+    const reserveBefore = 123n;
+    const { service } = seededService((save) => {
+      save.snapshot.progress.level = MAX_LEVEL;
+      save.snapshot.progress.experience = requiredExperienceForLevel(MAX_LEVEL);
+      save.snapshot.progress.cultivationReserve = reserveBefore.toString();
+      save.snapshot.progress.status = "version_cap";
+      setStack(save, "exp_pill_small", "经验丹（小）", 1);
+    });
+
+    const result = service.useInventoryItem("exp_pill_small");
+
+    expect(quantityOf(service, "exp_pill_small")).toBe("0");
+    expect(result.snapshot.progress.status).toBe("version_cap");
+    expect(BigInt(result.snapshot.progress.cultivationReserve)).toBeGreaterThan(
+      reserveBefore,
+    );
   });
 
   it("provides a renewable recipe for partner cultivation pills", () => {

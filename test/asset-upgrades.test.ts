@@ -1,5 +1,6 @@
 import {
   ASSET_QUALITY_MULTIPLIER_BP,
+  calculateTechniqueContribution,
   equipmentEnhanceCost,
   equipmentSalvageReward,
   shouldAutoLockEquipment,
@@ -99,6 +100,20 @@ describe("technique star-up costs", () => {
     "rejects an invalid current star: %s",
     (currentStar) => {
       expect(() => techniqueStarUpgradeCost(currentStar)).toThrow(RangeError);
+    },
+  );
+});
+
+describe("technique contribution star bounds", () => {
+  it.each([0, 11, 1.5, Number.NaN, Number.POSITIVE_INFINITY])(
+    "rejects an invalid equipped technique star: %s",
+    (star) => {
+      expect(() =>
+        calculateTechniqueContribution({
+          techniqueConfigId: "quiet_breathing_art",
+          star,
+        }),
+      ).toThrow(RangeError);
     },
   );
 });

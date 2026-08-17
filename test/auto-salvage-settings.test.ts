@@ -82,6 +82,9 @@ describe("auto salvage settings", () => {
 
     const configured = freshService();
     configured.toggleAutoSalvage("common");
+    const lifetimeBefore = BigInt(
+      configured.snapshot.wallet.lifetimeSpiritStoneEarned,
+    );
     const configuredResult = configured.debugSimulateOffline(SIX_HOURS, SEED);
 
     expect(
@@ -95,6 +98,12 @@ describe("auto salvage settings", () => {
     expect(
       configuredResult.snapshot.offlineSettlement?.drops.autoSalvagedCount,
     ).toBe(commonCandidates);
+    const settlement = configuredResult.snapshot.offlineSettlement!;
+    expect(BigInt(configuredResult.snapshot.wallet.lifetimeSpiritStoneEarned)).toBe(
+      lifetimeBefore +
+        BigInt(settlement.spiritStoneGained) +
+        BigInt(settlement.drops.autoSalvageSpiritStone),
+    );
   });
 
   it("does not retroactively process entries already in the harvest chest", () => {

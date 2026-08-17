@@ -88,7 +88,9 @@ export class AppStore {
   }
 
   selectTab(tab: MainTab): void {
-    if (this.state.selectedTab !== tab) this.update({ selectedTab: tab });
+    if (this.state.selectedTab !== tab) {
+      this.update({ selectedTab: tab, featureMessage: null });
+    }
   }
 
   openFeature(feature: FeaturePanel): void {
