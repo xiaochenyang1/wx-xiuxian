@@ -83,10 +83,10 @@ export function drawCraftingPanel(
     createButton(
       overlay,
       "打造",
-      238,
-      y,
-      92,
-      48,
+      246,
+      y + 23,
+      84,
+      42,
       {
         fill: display.affordable ? COLORS.inkGreen : COLORS.panel,
         stroke: display.affordable ? COLORS.gold : COLORS.goldMuted,
@@ -94,6 +94,22 @@ export function drawCraftingPanel(
         fontSize: 16,
       },
       () => actions.craftEquipment(recipe.id),
+    );
+    createButton(
+      overlay,
+      "批量打造",
+      246,
+      y - 23,
+      84,
+      42,
+      {
+        fill: display.affordable ? COLORS.inkGreenLight : COLORS.panel,
+        stroke: display.affordable ? COLORS.gold : COLORS.goldMuted,
+        text: display.affordable ? COLORS.gold : COLORS.textMuted,
+        fontSize: 14,
+        enabled: display.affordable,
+      },
+      () => actions.craftEquipmentBatch(recipe.id),
     );
   });
 }

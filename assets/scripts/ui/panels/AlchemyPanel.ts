@@ -94,10 +94,10 @@ export function drawAlchemyPanel(
     createButton(
       overlay,
       "炼制",
-      238,
-      y + 2,
-      92,
-      48,
+      246,
+      y + 26,
+      84,
+      44,
       {
         fill: display.affordable ? COLORS.inkGreen : COLORS.panel,
         stroke: display.affordable ? COLORS.gold : COLORS.goldMuted,
@@ -105,6 +105,22 @@ export function drawAlchemyPanel(
         fontSize: 16,
       },
       () => actions.brewAlchemy(recipe.id),
+    );
+    createButton(
+      overlay,
+      "批量炼制",
+      246,
+      y - 26,
+      84,
+      44,
+      {
+        fill: display.affordable ? COLORS.inkGreenLight : COLORS.panel,
+        stroke: display.affordable ? COLORS.gold : COLORS.goldMuted,
+        text: display.affordable ? COLORS.gold : COLORS.textMuted,
+        fontSize: 14,
+        enabled: display.affordable,
+      },
+      () => actions.brewAlchemyBatch(recipe.id),
     );
   });
 }

@@ -11,7 +11,10 @@ const SAVE_KEY = CLIENT_CONFIG.localSaveStorageKey;
 const NOW = new Date("2026-08-13T08:00:00.000Z");
 type MutableSave = Record<string, any>;
 
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
 
 function seededService(mutate: (save: MutableSave) => void): {
   service: LocalGameService;
@@ -88,6 +91,37 @@ describe("alchemy", () => {
     expect(Number(result.snapshot.progress.experience)).toBeGreaterThan(0);
   });
 
+  it("uses a whole experience-pill stack in one mutation", () => {
+    const { service } = seededService((save) => {
+      save.snapshot.progress.level = MAX_LEVEL;
+      save.snapshot.progress.experience = requiredExperienceForLevel(MAX_LEVEL);
+      save.snapshot.progress.status = "version_cap";
+      setStack(save, "exp_pill_small", "经验丹（小）", 3);
+    });
+
+    const result = service.useAllInventoryItems("exp_pill_small");
+
+    expect(quantityOf(service, "exp_pill_small")).toBe("0");
+    expect(Number(result.snapshot.progress.experience)).toBeGreaterThan(0);
+    expect(result.message).toMatch(/^批量使用 经验丹（小） x3，获得 \d+ 修为$/);
+  });
+
+  it("stops batch use at a breakthrough bottleneck and preserves the rest", () => {
+    const { service } = seededService((save) => {
+      const required = BigInt(requiredExperienceForLevel(10));
+      save.snapshot.progress.level = 10;
+      save.snapshot.progress.experience = (required - 1n).toString();
+      save.snapshot.progress.status = "gaining";
+      setStack(save, "exp_pill_small", "经验丹（小）", 3);
+    });
+
+    const result = service.useAllInventoryItems("exp_pill_small");
+
+    expect(quantityOf(service, "exp_pill_small")).toBe("2");
+    expect(result.snapshot.progress.status).toBe("breakthrough_ready");
+    expect(result.message).toContain("已到突破瓶颈");
+  });
+
   it.each([
     ["exp_pill_small", "经验丹（小）"],
     ["exp_pill_large", "经验丹（大）"],
@@ -161,6 +195,52 @@ describe("alchemy", () => {
     expect(JSON.stringify(service.snapshot)).toBe(before);
   });
 
+  it("brews a batch limited by the scarcest ingredient", () => {
+    const { service } = seededService((save) => {
+      save.snapshot.wallet.spiritStone = "5000";
+      setStack(save, "spiritual_herb", "灵草", 10);
+      setStack(save, "spiritual_soil", "灵土", 10);
+    });
+
+    const result = service.brewAlchemyBatch("small_experience_pill");
+
+    expect(result.snapshot.wallet.spiritStone).toBe("4400");
+    expect(quantityOf(service, "spiritual_herb")).toBe("2");
+    expect(quantityOf(service, "spiritual_soil")).toBe("6");
+    expect(quantityOf(service, "exp_pill_small")).toBe("2");
+    expect(result.message).toBe("批量炼成 小经验丹 x2");
+  });
+
+  it("brews a batch limited by spirit stones", () => {
+    const { service } = seededService((save) => {
+      save.snapshot.wallet.spiritStone = "700";
+      setStack(save, "spiritual_herb", "灵草", 100);
+      setStack(save, "spiritual_soil", "灵土", 100);
+    });
+
+    const result = service.brewAlchemyBatch("small_experience_pill");
+
+    expect(result.snapshot.wallet.spiritStone).toBe("100");
+    expect(quantityOf(service, "spiritual_herb")).toBe("92");
+    expect(quantityOf(service, "spiritual_soil")).toBe("96");
+    expect(quantityOf(service, "exp_pill_small")).toBe("2");
+  });
+
+  it("caps one brew batch at 100 even with abundant resources", () => {
+    const { service } = seededService((save) => {
+      save.snapshot.wallet.spiritStone = "1000000000";
+      setStack(save, "spiritual_herb", "灵草", 100_000);
+      setStack(save, "spiritual_soil", "灵土", 100_000);
+    });
+
+    const result = service.brewAlchemyBatch("small_experience_pill");
+
+    expect(quantityOf(service, "exp_pill_small")).toBe("100");
+    expect(result.snapshot.wallet.spiritStone).toBe("999970000");
+    expect(quantityOf(service, "spiritual_herb")).toBe("99600");
+    expect(quantityOf(service, "spiritual_soil")).toBe("99800");
+  });
+
   it("rejects a new output stack when the bag remains full", () => {
     const { service } = seededService((save) => {
       save.snapshot.wallet.spiritStone = "5000";
@@ -208,6 +288,47 @@ describe("crafting", () => {
     const reloaded = new LocalGameService(reader);
     expect(reloaded.initialize(NOW).created).toBe(false);
     expect(reloaded.snapshot.equipment.some((item) => item.id === crafted.id)).toBe(true);
+  });
+
+  it("crafts a batch and reports every rolled quality", () => {
+    const { service } = seededService((save) => {
+      save.snapshot.wallet.spiritStone = "5000";
+      setStack(save, "wood", "木材", 20);
+      setStack(save, "ore", "矿石", 20);
+    });
+    // 第一次质量投掷取最低权重（普通），第二次取高位（史诗），让批量消息带两种品质。
+    const rolls = [0, 0.99];
+    let rollIndex = 0;
+    vi.spyOn(Math, "random").mockImplementation(
+      () => rolls[rollIndex++ % rolls.length]!,
+    );
+
+    const result = service.craftEquipmentBatch("forge_weapon");
+
+    expect(result.snapshot.equipment).toHaveLength(2);
+    expect(result.snapshot.wallet.spiritStone).toBe("2600");
+    expect(quantityOf(service, "wood")).toBe("4");
+    expect(quantityOf(service, "ore")).toBe("8");
+    expect(result.message).toBe("批量锻造玄木剑 x2，品质：普通 x1、史诗 x1");
+  });
+
+  it("limits a craft batch to the remaining bag slots", () => {
+    const { service } = seededService((save) => {
+      save.snapshot.wallet.spiritStone = "5000";
+      setStack(save, "wood", "木材", 20);
+      setStack(save, "ore", "矿石", 20);
+      save.snapshot.equipment = Array.from({ length: 47 }, (_, index) =>
+        equipmentInstance(index + 1),
+      );
+    });
+
+    const result = service.craftEquipmentBatch("forge_weapon");
+
+    expect(result.snapshot.equipment).toHaveLength(48);
+    expect(result.snapshot.wallet.spiritStone).toBe("3800");
+    expect(quantityOf(service, "wood")).toBe("12");
+    expect(quantityOf(service, "ore")).toBe("14");
+    expect(result.message).toMatch(/^批量锻造玄木剑 x1，品质：\S+ x1$/);
   });
 
   it("rejects crafting when the bag remains full without deducting costs", () => {

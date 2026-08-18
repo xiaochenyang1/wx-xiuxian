@@ -156,10 +156,10 @@ export function drawInventoryPanel(
         if (directlyUsable) {
           createButton(
             overlay,
-            useDisplay.label,
-            235,
+            useDisplay.enabled ? "使用1" : useDisplay.label,
+            190,
             y,
-            104,
+            78,
             40,
             {
               fill: COLORS.inkGreenLight,
@@ -169,6 +169,23 @@ export function drawInventoryPanel(
             },
             () => actions.useInventoryItem(stack.itemConfigId),
           );
+          if (stack.quantity !== "1") {
+            createButton(
+              overlay,
+              "批量使用",
+              278,
+              y,
+              100,
+              40,
+              {
+                fill: COLORS.inkGreen,
+                stroke: COLORS.goldMuted,
+                fontSize: 14,
+                enabled: mutationsEnabled && useDisplay.enabled,
+              },
+              () => actions.useAllInventoryItems(stack.itemConfigId),
+            );
+          }
         }
       });
   }

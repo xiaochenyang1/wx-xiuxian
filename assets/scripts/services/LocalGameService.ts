@@ -1,5 +1,6 @@
 import {
   ASSET_QUALITY_DISPLAY_NAMES,
+  ASSET_QUALITY_ORDER,
   BASIS_POINTS,
   CRAFTING_QUALITY_WEIGHTS,
   CAVE_BUILDING_CONFIGS,
@@ -99,6 +100,7 @@ const DROP_CLOCK_MAX_REMAINDER = 60_000_000;
 const LOCAL_BACKUP_PREFIX = "XIUXIAN_SAVE_V1:";
 const LOCAL_BACKUP_CHECKSUM_LENGTH = 8;
 const LOCAL_BACKUP_MAX_LENGTH = 1_000_000;
+const LOCAL_BATCH_ACTION_CAP = 100;
 
 export interface LocalMutationResult {
   readonly previous: BootstrapSnapshot;
@@ -611,6 +613,17 @@ export class LocalGameService {
   }
 
   brewAlchemy(recipeId: string): LocalMutationResult {
+    return this.brewAlchemyInternal(recipeId, false);
+  }
+
+  brewAlchemyBatch(recipeId: string): LocalMutationResult {
+    return this.brewAlchemyInternal(recipeId, true);
+  }
+
+  private brewAlchemyInternal(
+    recipeId: string,
+    useAll: boolean,
+  ): LocalMutationResult {
     return this.mutate((snapshot) => {
       let recipe: ReturnType<typeof getAlchemyRecipeConfig>;
       try {
@@ -638,13 +651,23 @@ export class LocalGameService {
           );
         }
       }
+      const batchCount = useAll
+        ? maxAffordableBatchCount(
+            snapshot.wallet.spiritStone,
+            recipe.spiritStoneCost,
+            recipe.ingredients.map((ingredient) => ({
+              owned: stackQuantity(snapshot, ingredient.itemConfigId),
+              cost: ingredient.quantity,
+            })),
+          )
+        : 1;
       let inventory = snapshot.inventory;
       for (const ingredient of recipe.ingredients) {
         inventory = setStackQuantity(
           inventory,
           ingredient.itemConfigId,
           decimal(stackQuantity(snapshot, ingredient.itemConfigId))
-            .minus(ingredient.quantity)
+            .minus(decimal(ingredient.quantity).times(batchCount))
             .toFixed(0),
         );
       }
@@ -655,7 +678,7 @@ export class LocalGameService {
       inventory = addStack(
         inventory,
         recipe.outputItemConfigId,
-        recipe.outputQuantity,
+        recipe.outputQuantity * batchCount,
       );
       return {
         snapshot: {
@@ -663,16 +686,31 @@ export class LocalGameService {
           inventory,
           wallet: {
             ...snapshot.wallet,
-            spiritStone: stones.minus(recipe.spiritStoneCost).toFixed(0),
+            spiritStone: stones
+              .minus(decimal(recipe.spiritStoneCost).times(batchCount))
+              .toFixed(0),
           },
         },
         events: [],
-        message: `炼成 ${recipe.displayName} x${recipe.outputQuantity}`,
+        message: useAll
+          ? `批量炼成 ${recipe.displayName} x${recipe.outputQuantity * batchCount}`
+          : `炼成 ${recipe.displayName} x${recipe.outputQuantity}`,
       };
     });
   }
 
   craftEquipment(recipeId: string): LocalMutationResult {
+    return this.craftEquipmentInternal(recipeId, false);
+  }
+
+  craftEquipmentBatch(recipeId: string): LocalMutationResult {
+    return this.craftEquipmentInternal(recipeId, true);
+  }
+
+  private craftEquipmentInternal(
+    recipeId: string,
+    useAll: boolean,
+  ): LocalMutationResult {
     return this.mutate((snapshot) => {
       let recipe: ReturnType<typeof getCraftingRecipeConfig>;
       try {
@@ -700,22 +738,44 @@ export class LocalGameService {
           );
         }
       }
+      const availableSlots =
+        snapshot.inventory.bagCapacity - countOccupiedBagSlots(snapshot);
+      if (availableSlots <= 0) {
+        throw new LocalGameError("行囊空间不足，无法炼器");
+      }
+      const batchCount = useAll
+        ? Math.min(
+            availableSlots,
+            maxAffordableBatchCount(
+              snapshot.wallet.spiritStone,
+              recipe.spiritStoneCost,
+              recipe.materials.map((material) => ({
+                owned: stackQuantity(snapshot, material.itemConfigId),
+                cost: material.quantity,
+              })),
+            ),
+          )
+        : 1;
       let inventory = snapshot.inventory;
       for (const material of recipe.materials) {
         inventory = setStackQuantity(
           inventory,
           material.itemConfigId,
           decimal(stackQuantity(snapshot, material.itemConfigId))
-            .minus(material.quantity)
+            .minus(decimal(material.quantity).times(batchCount))
             .toFixed(0),
         );
       }
       ensureEquipmentCapacity({ ...snapshot, inventory });
-      const quality = rollCraftingQuality(craftingRoomLevel, randomInteger);
-      const equipment = [
-        ...snapshot.equipment,
-        createCraftedEquipment(recipe.equipmentConfigId, quality),
-      ];
+      const equipment = [...snapshot.equipment];
+      const craftedQualities: AssetQuality[] = [];
+      const qualityCounts = new Map<AssetQuality, number>();
+      for (let index = 0; index < batchCount; index += 1) {
+        const quality = rollCraftingQuality(craftingRoomLevel, randomInteger);
+        craftedQualities.push(quality);
+        equipment.push(createCraftedEquipment(recipe.equipmentConfigId, quality));
+        qualityCounts.set(quality, (qualityCounts.get(quality) ?? 0) + 1);
+      }
       return {
         snapshot: refreshSnapshot({
           ...snapshot,
@@ -723,11 +783,15 @@ export class LocalGameService {
           equipment,
           wallet: {
             ...snapshot.wallet,
-            spiritStone: stones.minus(recipe.spiritStoneCost).toFixed(0),
+            spiritStone: stones
+              .minus(decimal(recipe.spiritStoneCost).times(batchCount))
+              .toFixed(0),
           },
         }),
         events: [],
-        message: `${recipe.displayName}成功，获得${qualityDisplayName(quality)}品质法宝`,
+        message: useAll
+          ? `批量${recipe.displayName} x${batchCount}，品质：${formatQualityCounts(qualityCounts)}`
+          : `${recipe.displayName}成功，获得${qualityDisplayName(craftedQualities[0])}品质法宝`,
       };
     });
   }
@@ -881,6 +945,17 @@ export class LocalGameService {
   }
 
   useInventoryItem(itemConfigId: string): LocalMutationResult {
+    return this.useExperienceItems(itemConfigId, false);
+  }
+
+  useAllInventoryItems(itemConfigId: string): LocalMutationResult {
+    return this.useExperienceItems(itemConfigId, true);
+  }
+
+  private useExperienceItems(
+    itemConfigId: string,
+    useAll: boolean,
+  ): LocalMutationResult {
     return this.mutate((snapshot) => {
       const config = getItemConfig(itemConfigId);
       const quantity = stackQuantity(snapshot, itemConfigId);
@@ -890,30 +965,51 @@ export class LocalGameService {
         throw new LocalGameError("当前处于突破瓶颈，请先完成突破再使用经验丹");
       }
 
-      const simulated = simulateOnlineExperience({
-        progress: snapshot.progress,
-        elapsedMilliseconds: config.useEffect.durationSeconds * 1_000,
-        experienceBonusBp: snapshot.progress.experienceBonusBp,
-      });
+      const requested = useAll ? decimal(quantity) : decimal(1);
+      let consumed = decimal(0);
+      let progress = snapshot.progress;
+      let experienceGained = decimal(0);
+      const events: ProgressionEvent[] = [];
+      while (consumed.lessThan(requested) && progress.status !== "breakthrough_ready") {
+        const simulated = simulateOnlineExperience({
+          progress,
+          elapsedMilliseconds: config.useEffect.durationSeconds * 1_000,
+          experienceBonusBp: progress.experienceBonusBp,
+        });
+        progress = { ...progress, ...simulated.progress };
+        experienceGained = experienceGained.plus(simulated.experienceGained);
+        events.push(...simulated.events);
+        consumed = consumed.plus(1);
+      }
+      if (consumed.isZero()) {
+        throw new LocalGameError("当前处于突破瓶颈，请先完成突破再使用经验丹");
+      }
       const inventory = setStackQuantity(
         snapshot.inventory,
         itemConfigId,
-        decimal(quantity).minus(1).toFixed(0),
+        decimal(quantity).minus(consumed).toFixed(0),
       );
       const progressed = refreshSnapshot({
         ...snapshot,
         inventory,
         progress: {
-          ...snapshot.progress,
-          ...simulated.progress,
+          ...progress,
           settledAt: new Date().toISOString(),
         },
       });
       const withTasks = syncNewcomerTasks(progressed);
+      const consumedText = consumed.equals(1)
+        ? ""
+        : ` x${consumed.toFixed(0)}`;
+      const bottleneckText =
+        useAll && progress.status === "breakthrough_ready" &&
+        decimal(quantity).greaterThan(consumed)
+          ? "，已到突破瓶颈"
+          : "";
       return {
         snapshot: withTasks.snapshot,
-        events: simulated.events,
-        message: `使用 ${config.displayName}，获得 ${simulated.experienceGained} 修为`,
+        events,
+        message: `${useAll ? "批量使用" : "使用"} ${config.displayName}${consumedText}，获得 ${experienceGained.toFixed(0)} 修为${bottleneckText}`,
       };
     });
   }
@@ -2102,6 +2198,34 @@ function createCraftedEquipment(
 
 function qualityDisplayName(quality: AssetQuality): string {
   return ASSET_QUALITY_DISPLAY_NAMES[quality];
+}
+
+/**
+ * 单次批量玩法操作能做的份数：灵石和每种材料各自够几份，取最小值，再压到批量上限。
+ * 调用方已经校验过至少够一份，因此返回值不会小于 1。
+ */
+function maxAffordableBatchCount(
+  spiritStone: string,
+  spiritStoneCost: number,
+  materialCosts: ReadonlyArray<{ readonly owned: string; readonly cost: number }>,
+): number {
+  let count = LOCAL_BATCH_ACTION_CAP;
+  const costs = [{ owned: spiritStone, cost: spiritStoneCost }, ...materialCosts];
+  for (const entry of costs) {
+    if (entry.cost <= 0) continue;
+    count = Math.min(
+      count,
+      decimal(entry.owned).dividedToIntegerBy(entry.cost).toNumber(),
+    );
+  }
+  return count;
+}
+
+function formatQualityCounts(counts: ReadonlyMap<AssetQuality, number>): string {
+  return [...counts.entries()]
+    .sort(([left], [right]) => ASSET_QUALITY_ORDER[left] - ASSET_QUALITY_ORDER[right])
+    .map(([quality, count]) => `${qualityDisplayName(quality)} x${count}`)
+    .join("、");
 }
 
 function addStack(

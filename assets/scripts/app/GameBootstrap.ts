@@ -85,8 +85,12 @@ export class GameBootstrap extends Component {
           this.runMutation(() => this.localGame.huntTreasure()),
         brewAlchemy: (recipeId) =>
           this.runMutation(() => this.localGame.brewAlchemy(recipeId)),
+        brewAlchemyBatch: (recipeId) =>
+          this.runMutation(() => this.localGame.brewAlchemyBatch(recipeId)),
         craftEquipment: (recipeId) =>
           this.runMutation(() => this.localGame.craftEquipment(recipeId)),
+        craftEquipmentBatch: (recipeId) =>
+          this.runMutation(() => this.localGame.craftEquipmentBatch(recipeId)),
         choosePartner: (partnerId) =>
           this.runMutation(
             () => this.localGame.choosePartner(partnerId),
@@ -108,6 +112,8 @@ export class GameBootstrap extends Component {
           ),
         useInventoryItem: (itemConfigId) =>
           this.runMutation(() => this.localGame.useInventoryItem(itemConfigId)),
+        useAllInventoryItems: (itemConfigId) =>
+          this.runMutation(() => this.localGame.useAllInventoryItems(itemConfigId)),
         transferHarvest: (entryId) =>
           this.runMutation(() => this.localGame.transferHarvest(entryId)),
         collectAllHarvest: () =>

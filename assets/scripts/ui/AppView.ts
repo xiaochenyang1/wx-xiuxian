@@ -162,13 +162,16 @@ export interface AppViewActions {
   sweepExpedition(stageConfigId: string): void;
   huntTreasure(): void;
   brewAlchemy(recipeId: string): void;
+  brewAlchemyBatch(recipeId: string): void;
   craftEquipment(recipeId: string): void;
+  craftEquipmentBatch(recipeId: string): void;
   choosePartner(partnerId: string): void;
   cultivateWithPartner(): void;
   joinSect(sectId: string): void;
   donateToSect(): void;
   upgradeTechnique(techniqueConfigId: string): void;
   useInventoryItem(itemConfigId: string): void;
+  useAllInventoryItems(itemConfigId: string): void;
   transferHarvest(entryId: string): void;
   collectAllHarvest(): void;
   salvageHarvest(entryId: string): void;
