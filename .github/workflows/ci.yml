@@ -69,6 +69,9 @@ jobs:
       - name: Verify release configuration
         run: pnpm verify:release-config
 
+      - name: Verify source boundaries
+        run: pnpm verify:source
+
       - name: Typecheck
         run: pnpm typecheck
 

@@ -38,6 +38,12 @@ await mkdir(generatedConfigDirectory, { recursive: true });
 await mkdir(creatorHome, { recursive: true });
 const candidateSource = await sourceFingerprint(workspace, fingerprintConfig);
 
+if (production && candidateSource.dirty) {
+  throw new Error(
+    "Production builds require a clean Git worktree; commit or stash source changes first",
+  );
+}
+
 for (const mode of modes) {
   await buildMode(mode, candidateSource);
 }

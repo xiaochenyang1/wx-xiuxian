@@ -16,5 +16,5 @@
   // Only the test tree is listed; TypeScript pulls in the client modules the
   // tests import. That keeps `cc`-dependent files such as AppView and AppArt
   // out of this program, so no Cocos engine types are needed here.
-  "include": ["**/*.ts"]
+  "include": ["**/*.ts", "../playwright.config.ts"]
 }

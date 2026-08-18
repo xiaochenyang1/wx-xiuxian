@@ -40,7 +40,7 @@
 assets/       Cocos 场景、UI、平台适配和本地游戏服务
 shared/       会打包进客户端的数值配置与领域纯函数
 docs/         游戏设计和纯前端技术说明
-scripts/      微信小游戏构建与静态校验脚本
+scripts/      浏览器与微信小游戏构建、来源追踪和静态校验脚本
 settings/     Cocos Creator 项目设置
 ```
 
@@ -80,19 +80,34 @@ pnpm test
 # 只构建浏览器侧共享数值核心
 pnpm build:shared
 
+# 构建并校验浏览器候选包
+pnpm build:web
+
+# 对现有浏览器候选包执行桌面和移动竖屏验收
+pnpm test:e2e
+
 # 校验产品版本、微信候选标识和 Cocos Creator 版本
 pnpm verify:release-config
+
+# 校验纯本地客户端边界
+pnpm verify:source
 
 # 构建微信 debug/release 候选包
 pnpm build:wechat
 
 # 校验现有微信候选包的来源、配置、语法和调试裁剪
 pnpm verify:wechat
+
+# 校验已经构建的 Web 与微信候选包、浏览器 E2E 及全部代码门禁
+pnpm verify:candidate
+
+# 从源码构建并完成全部候选发布门禁
+pnpm release:candidate
 ```
 
 测试用 vitest 运行在纯 Node 下，不需要 Cocos Creator、浏览器或微信环境：`LocalGameService` 通过构造函数接收 `PlatformAdapter`，测试传入基于 `Map` 的假实现，时间和掉落种子也都从入参注入。覆盖范围包括结算数学、本地存档、掉落、洞府、炼丹、炼器、伴侣、宗门、本地排行、历练和资产养成的规则与展示模型；Cocos 节点绘制本身不在覆盖范围内。
 
-CI 执行依赖安装、发布配置校验、严格类型检查、测试和生产依赖审计。
+CI 执行依赖安装、发布配置校验、源码边界校验、严格类型检查、测试和生产依赖审计。Cocos Creator 构建和浏览器 E2E 属于本机发布门禁；先运行 `pnpm build:candidate`，再运行 `pnpm verify:candidate`。
 
 ## 微信小游戏
 

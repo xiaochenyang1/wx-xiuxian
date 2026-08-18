@@ -9,6 +9,9 @@
   },
   "scripts": {
     "build:shared": "pnpm --filter @cultivation-diary/shared build",
+    "build:web": "pnpm verify:release-config && node scripts/build-web.mjs",
+    "build:candidate": "pnpm verify:source && pnpm build:web && pnpm build:wechat",
+    "release:candidate": "pnpm build:candidate && pnpm verify:candidate",
     "build:wechat": "pnpm verify:release-config && node scripts/build-wechat.mjs all",
     "build:wechat:debug": "pnpm verify:release-config && node scripts/build-wechat.mjs debug",
     "build:wechat:release": "pnpm verify:release-config && node scripts/build-wechat.mjs release",
@@ -17,10 +20,14 @@
     "typecheck": "pnpm --filter @cultivation-diary/shared typecheck && pnpm --filter @cultivation-diary/shared build && tsc -p tsconfig.json --noEmit && tsc -p test/tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "test:e2e:report": "playwright show-report",
     "verify:release-config": "node scripts/verify-release-config.mjs",
+    "verify:source": "node scripts/verify-source.mjs",
+    "verify:web": "node scripts/verify-web-build.mjs",
     "verify:wechat": "node scripts/verify-wechat-build.mjs",
     "verify:wechat:production": "node scripts/verify-wechat-build.mjs --production",
-    "verify:candidate": "pnpm typecheck && pnpm test && pnpm audit --registry=https://registry.npmjs.org --prod --audit-level=high && pnpm verify:release-config && pnpm verify:wechat"
+    "verify:candidate": "pnpm verify:release-config && pnpm verify:source && pnpm typecheck && pnpm test && pnpm audit --registry=https://registry.npmjs.org --prod --audit-level=high && pnpm verify:web && pnpm test:e2e && pnpm verify:wechat"
   },
   "creator": {
     "version": "3.8.8"
@@ -30,6 +37,9 @@
   },
   "devDependencies": {
     "@cocos/creator-types": "3.8.7",
+    "@playwright/test": "^1.62.1",
+    "@types/pngjs": "^6.0.5",
+    "pngjs": "^7.0.0",
     "typescript": "^5.8.3",
     "vitest": "^3.2.7"
   }
