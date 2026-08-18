@@ -18,6 +18,7 @@ import {
   DEFAULT_DESIGN_SAFE_AREA_LAYOUT,
   DESIGN_VIEWPORT_HEIGHT,
   DESIGN_VIEWPORT_WIDTH,
+  resolveDesignResolutionMode,
 } from "../core/SafeArea";
 import { createPlatformAdapter } from "../platform/PlatformAdapter";
 import {
@@ -43,10 +44,14 @@ export class GameBootstrap extends Component {
   private destroyed = false;
 
   onLoad(): void {
+    const safeAreaLayout =
+      this.platform.getSafeAreaLayout?.() ?? DEFAULT_DESIGN_SAFE_AREA_LAYOUT;
     view.setDesignResolutionSize(
       DESIGN_VIEWPORT_WIDTH,
       DESIGN_VIEWPORT_HEIGHT,
-      ResolutionPolicy.FIXED_WIDTH,
+      resolveDesignResolutionMode(safeAreaLayout) === "fixed-height"
+        ? ResolutionPolicy.FIXED_HEIGHT
+        : ResolutionPolicy.FIXED_WIDTH,
     );
 
     const appRoot = new Node("AppRoot");
@@ -161,7 +166,7 @@ export class GameBootstrap extends Component {
           this.debugResetSave(playerId, confirmation),
         feedback: () => this.platform.feedback(),
       },
-      this.platform.getSafeAreaLayout?.() ?? DEFAULT_DESIGN_SAFE_AREA_LAYOUT,
+      safeAreaLayout,
     );
     this.appView = appView;
     this.unsubscribeStore = this.store.subscribe((state) => appView.render(state));
