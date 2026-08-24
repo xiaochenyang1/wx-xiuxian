@@ -2,6 +2,11 @@ import {
   CAVE_BUILDING_CONFIGS,
   CAVE_MAX_LEVEL,
   EXPEDITION_STAGE_CONFIGS,
+  NEWCOMER_REACH_LEVEL_3_TASK_ID,
+  NEWCOMER_REACH_LEVEL_5_TASK_ID,
+  NEWCOMER_REACH_LEVEL_8_TASK_ID,
+  PROGRESSION_TASK_CONFIGS,
+  TRIAL_TOWER_UNLOCK_LEVEL,
 } from "@cultivation-diary/shared";
 import { describe, expect, it } from "vitest";
 import { CLIENT_CONFIG } from "../assets/scripts/core/ClientConfig";
@@ -120,6 +125,48 @@ function prePowerModelSave(): MutableSave {
   return save;
 }
 
+/**
+ * Rewind a current save to the pre-tower `local-2.4.0` format: three newcomer
+ * tasks under the old field name, no tower record, and a two-bit `unlocks`.
+ */
+function preTrialTowerSave(): MutableSave {
+  const save = authenticSaveWithProgress();
+  save.snapshot.config.version = "local-2.4.0";
+  save.snapshot.newcomerTasks = openingTasksOnly();
+  delete save.snapshot.progressionTasks;
+  delete save.snapshot.trialTower;
+  save.snapshot.unlocks = {
+    partner: save.snapshot.unlocks.partner,
+    cave: save.snapshot.unlocks.cave,
+  };
+  return save;
+}
+
+/** The three-row task table as it stood before the chain grew to Lv.100. */
+function openingTasksOnly(): MutableSave[] {
+  return [
+    NEWCOMER_REACH_LEVEL_3_TASK_ID,
+    NEWCOMER_REACH_LEVEL_5_TASK_ID,
+    NEWCOMER_REACH_LEVEL_8_TASK_ID,
+  ].map((taskConfigId) => ({
+    taskConfigId,
+    progress: "1",
+    completedAt: null,
+    claimedAt: null,
+  }));
+}
+
+/**
+ * The fixture is parked at Lv.10 `breakthrough_ready` with its bar exactly full,
+ * so moving the level has to reset the bar too or the save reads as tampered.
+ */
+function atLevel(save: MutableSave, level: number): MutableSave {
+  save.snapshot.progress.level = level;
+  save.snapshot.progress.experience = "0";
+  save.snapshot.progress.status = "gaining";
+  return save;
+}
+
 function load(save: unknown): LocalGameService {
   const platform = new FakePlatformAdapter();
   platform.seed(SAVE_KEY, save);
@@ -172,7 +219,7 @@ describe("local-1.0.0 migration", () => {
   it("chains through both migrations and backfills every new subsystem", () => {
     const service = load(legacySave());
 
-    expect(service.snapshot.config.version).toBe("local-2.4.0");
+    expect(service.snapshot.config.version).toBe("local-2.5.0");
     expect(service.snapshot.cave.buildings).toEqual(
       CAVE_BUILDING_CONFIGS.map((config) => ({
         buildingConfigId: config.id,
@@ -205,7 +252,7 @@ describe("local-1.1.0 migration", () => {
 
     const service = load(legacy);
 
-    expect(service.snapshot.config.version).toBe("local-2.4.0");
+    expect(service.snapshot.config.version).toBe("local-2.5.0");
     expect(service.snapshot.cave.buildings[0].level).toBe(4);
     expect(service.snapshot.cave.buildings[3].level).toBe(CAVE_MAX_LEVEL);
     expect(service.snapshot.expedition.clearedStageIds).toEqual([]);
@@ -248,7 +295,7 @@ describe("local-1.2.0 to local-2.0.0 migration", () => {
 
     const service = load(legacy);
 
-    expect(service.snapshot.config.version).toBe("local-2.4.0");
+    expect(service.snapshot.config.version).toBe("local-2.5.0");
     expect(service.snapshot.cave.buildings[0].level).toBe(6);
     expect(service.snapshot.expedition.clearedStageIds).toEqual(
       legacy.snapshot.expedition.clearedStageIds,
@@ -286,7 +333,7 @@ describe("local-2.0.0 to local-2.1.0 migration", () => {
 
     const service = load(legacy);
 
-    expect(service.snapshot.config.version).toBe("local-2.4.0");
+    expect(service.snapshot.config.version).toBe("local-2.5.0");
     expect(
       service.snapshot.inventory.stacks.some(
         (stack) => stack.itemConfigId === "protection_talisman",
@@ -310,7 +357,7 @@ describe("local-2.1.0 to local-2.2.0 migration", () => {
 
     const service = load(legacy);
 
-    expect(service.snapshot.config.version).toBe("local-2.4.0");
+    expect(service.snapshot.config.version).toBe("local-2.5.0");
     expect(service.snapshot.expedition.clearedStageIds).toEqual(
       legacy.snapshot.expedition.clearedStageIds,
     );
@@ -335,7 +382,7 @@ describe("local-2.2.0 to local-2.3.0 migration", () => {
     const legacy = preEquipmentManagementSave();
     const service = load(legacy);
 
-    expect(service.snapshot.config.version).toBe("local-2.4.0");
+    expect(service.snapshot.config.version).toBe("local-2.5.0");
     expect(service.snapshot.equipment[0]!.isLocked).toBe(false);
     expect(service.snapshot.equipment[1]!.isLocked).toBe(true);
     expect(service.snapshot.player.id).toBe(legacy.snapshot.player.id);
@@ -356,7 +403,7 @@ describe("local-2.3.0 to local-2.4.0 migration", () => {
     const service = load(legacy);
     const progress = service.snapshot.progress as Record<string, unknown>;
 
-    expect(service.snapshot.config.version).toBe("local-2.4.0");
+    expect(service.snapshot.config.version).toBe("local-2.5.0");
     expect(progress.loadoutFixedPower).toBeUndefined();
     expect(typeof progress.loadoutPowerBonusBp).toBe("number");
     for (const item of [
@@ -390,14 +437,14 @@ describe("local-2.3.0 to local-2.4.0 migration", () => {
     expect(service.initialize(LATER).created).toBe(false);
   });
 
-  it("chains a local-1.0.0 save all the way to local-2.4.0", () => {
+  it("chains a local-1.0.0 save all the way to local-2.5.0", () => {
     const legacy = legacySave();
     legacy.snapshot.progress.loadoutFixedPower = "625";
     delete legacy.snapshot.progress.loadoutPowerBonusBp;
     const service = load(legacy);
     const progress = service.snapshot.progress as Record<string, unknown>;
 
-    expect(service.snapshot.config.version).toBe("local-2.4.0");
+    expect(service.snapshot.config.version).toBe("local-2.5.0");
     expect(progress.loadoutFixedPower).toBeUndefined();
     expect(typeof progress.loadoutPowerBonusBp).toBe("number");
     expect(service.snapshot.player.id).toBe(legacy.snapshot.player.id);
@@ -405,6 +452,85 @@ describe("local-2.3.0 to local-2.4.0 migration", () => {
       CAVE_BUILDING_CONFIGS.length,
     );
     expect(service.snapshot.expedition.clearedStageIds).toEqual([]);
+  });
+});
+
+describe("local-2.4.0 to local-2.5.0 migration", () => {
+  it("adds the tower record and expands the task table without losing claims", () => {
+    const legacy = preTrialTowerSave();
+    const claimed = legacy.snapshot.newcomerTasks.find(
+      (task: MutableSave) => task.taskConfigId === NEWCOMER_REACH_LEVEL_8_TASK_ID,
+    );
+    claimed.completedAt = START.toISOString();
+    claimed.claimedAt = START.toISOString();
+    const service = load(legacy);
+    const snapshot = service.snapshot as unknown as MutableSave;
+
+    expect(service.snapshot.config.version).toBe("local-2.5.0");
+    expect(service.snapshot.trialTower).toEqual({ highestFloor: 0 });
+    expect(snapshot.newcomerTasks).toBeUndefined();
+    expect(service.snapshot.progressionTasks).toHaveLength(
+      PROGRESSION_TASK_CONFIGS.length,
+    );
+    expect(service.snapshot.progressionTasks.map((task) => task.taskConfigId)).toEqual(
+      PROGRESSION_TASK_CONFIGS.map((config) => config.id),
+    );
+    // The pill was already handed over; re-running the grant would duplicate it.
+    expect(
+      service.snapshot.progressionTasks.find(
+        (task) => task.taskConfigId === NEWCOMER_REACH_LEVEL_8_TASK_ID,
+      )?.claimedAt,
+    ).toBe(START.toISOString());
+  });
+
+  it("seeds the tower unlock from the stored level and leaves earlier saves locked", () => {
+    const low = atLevel(preTrialTowerSave(), TRIAL_TOWER_UNLOCK_LEVEL - 1);
+
+    expect(rejected(low)).toBe(false);
+    expect(load(low).snapshot.unlocks.trialTower).toBe(false);
+
+    const high = atLevel(preTrialTowerSave(), TRIAL_TOWER_UNLOCK_LEVEL);
+
+    expect(rejected(high)).toBe(false);
+    expect(load(high).snapshot.unlocks.trialTower).toBe(true);
+  });
+
+  it("keeps the partner entrance a Lv.11 save had already been given", () => {
+    const legacy = atLevel(preTrialTowerSave(), 11);
+    legacy.snapshot.unlocks = { partner: true, cave: true };
+
+    expect(load(legacy).snapshot.unlocks).toEqual({
+      partner: true,
+      cave: true,
+      trialTower: false,
+    });
+  });
+
+  it("does not discard a valid pre-tower save", () => {
+    expect(rejected(preTrialTowerSave())).toBe(false);
+  });
+
+  it("chains a local-1.0.0 save all the way to the tower era", () => {
+    const legacy = legacySave();
+    legacy.snapshot.progress.loadoutFixedPower = "625";
+    delete legacy.snapshot.progress.loadoutPowerBonusBp;
+    legacy.snapshot.progressionTasks = undefined;
+    delete legacy.snapshot.progressionTasks;
+    legacy.snapshot.newcomerTasks = openingTasksOnly();
+    delete legacy.snapshot.trialTower;
+    legacy.snapshot.unlocks = { partner: false, cave: false };
+    const service = load(legacy);
+
+    expect(service.snapshot.config.version).toBe("local-2.5.0");
+    expect(service.snapshot.trialTower).toEqual({ highestFloor: 0 });
+    expect(service.snapshot.progressionTasks).toHaveLength(
+      PROGRESSION_TASK_CONFIGS.length,
+    );
+    expect(service.snapshot.unlocks).toEqual({
+      partner: false,
+      cave: false,
+      trialTower: false,
+    });
   });
 });
 

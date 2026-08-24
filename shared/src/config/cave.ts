@@ -24,6 +24,9 @@ export interface CaveBuildingConfig {
 
 export const CAVE_MAX_LEVEL = 10;
 
+/** The first large system to unlock; the tower and the partner follow later. */
+export const CAVE_UNLOCK_LEVEL = 11;
+
 export const CAVE_BUILDING_CONFIGS: readonly CaveBuildingConfig[] = [
   {
     id: "spirit_array",

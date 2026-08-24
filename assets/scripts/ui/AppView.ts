@@ -1,5 +1,4 @@
 import {
-  NEWCOMER_REACH_LEVEL_8_TASK_ID,
   PARTNER_CONFIGS,
   PARTNER_MAX_LEVEL,
   type AutoSalvageQuality,
@@ -16,6 +15,10 @@ import {
   selectedPartner,
   socialBonusText,
 } from "../core/SocialDisplay";
+import {
+  countPendingProgressionTasks,
+  VISIBLE_PROGRESSION_TASK_COUNT,
+} from "../core/ProgressionTaskDisplay";
 import {
   buildLocalRanking,
   type RankingCategory,
@@ -1642,12 +1645,10 @@ export class AppView {
       projection.progress,
       data.config.maxLevel,
     );
-    const pendingTasks = data.newcomerTasks.filter(
-      (task) =>
-        task.completedAt === null ||
-        (task.taskConfigId === NEWCOMER_REACH_LEVEL_8_TASK_ID &&
-          task.claimedAt === null),
-    ).length;
+    const pendingTasks = countPendingProgressionTasks(
+      data.progressionTasks,
+      VISIBLE_PROGRESSION_TASK_COUNT,
+    );
     const pendingHarvest = data.harvestChest.pendingCount;
     if (!hasBackground) this.drawCultivationScene();
     if (hasBackground) {

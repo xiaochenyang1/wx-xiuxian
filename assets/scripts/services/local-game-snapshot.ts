@@ -1,7 +1,9 @@
 import {
+  CAVE_UNLOCK_LEVEL,
   MAX_LEVEL,
-  NEWCOMER_REACH_LEVEL_8_TASK_ID,
-  NEWCOMER_TASK_CONFIGS,
+  PARTNER_UNLOCK_LEVEL,
+  PROGRESSION_TASK_CONFIGS,
+  TRIAL_TOWER_UNLOCK_LEVEL,
   addLoadoutBonuses,
   calculateCaveBonuses,
   calculateEquipmentContribution,
@@ -20,13 +22,17 @@ import {
   getRealmTitle,
   getItemConfig,
   isAssetQuality,
+  progressionTaskTarget,
   requiredExperienceForLevel,
   type AssetQuality,
   type BootstrapSnapshot,
+  type ProgressionTaskConfig,
+  type ProgressionTaskRewardItem,
 } from "@cultivation-diary/shared";
 
 export const LOCAL_SAVE_SCHEMA_VERSION = 1 as const;
-export const GAME_CONFIG_VERSION = "local-2.4.0";
+export const GAME_CONFIG_VERSION = "local-2.5.0";
+export const GAME_CONFIG_VERSION_PRE_TRIAL_TOWER = "local-2.4.0";
 export const GAME_CONFIG_VERSION_PRE_POWER_MODEL = "local-2.3.0";
 export const GAME_CONFIG_VERSION_PRE_EQUIPMENT_MANAGEMENT = "local-2.2.0";
 export const GAME_CONFIG_VERSION_PRE_EXPEDITION_SWEEPS = "local-2.1.0";
@@ -86,15 +92,16 @@ export function createInitialSave(now: Date): LocalGameSave {
     harvestChest: { pendingCount: 0, entries: [] },
     cave: { buildings: createEmptyCaveBuildings() },
     expedition: { clearedStageIds: [], sweepCounts: [] },
+    trialTower: { highestFloor: 0 },
     partner: { partnerId: null, level: 0, bond: 0 },
     sect: { sectId: null, level: 0, contribution: 0 },
-    newcomerTasks: NEWCOMER_TASK_CONFIGS.map((task) => ({
+    progressionTasks: PROGRESSION_TASK_CONFIGS.map((task) => ({
       taskConfigId: task.id,
-      progress: "1",
+      progress: task.condition.kind === "level" ? "1" : "0",
       completedAt: null,
       claimedAt: null,
     })),
-    unlocks: { partner: false, cave: false },
+    unlocks: { partner: false, cave: false, trialTower: false },
     settings: {
       autoSalvageCommon: false,
       autoSalvageUncommon: false,
@@ -159,7 +166,6 @@ export function refreshSnapshot(snapshot: BootstrapSnapshot): BootstrapSnapshot 
   bonuses = addLoadoutBonuses(bonuses, calculateSectBonuses(snapshot.sect));
   const level = snapshot.progress.level;
   const realm = getRealmConfigForLevel(level);
-  const unlocked = level >= 11;
   return {
     ...snapshot,
     techniques,
@@ -187,7 +193,16 @@ export function refreshSnapshot(snapshot: BootstrapSnapshot): BootstrapSnapshot 
       spiritStoneBonusBp: bonuses.spiritStoneBonusBp,
       dropBonusBp: bonuses.dropBonusBp,
     },
-    unlocks: { partner: unlocked, cave: unlocked },
+    // Unlocks are stored, not derived: each bit latches on and is never taken
+    // back. Recomputing them from the current level alone would revoke an
+    // entrance the moment its threshold moved, which is exactly what raising
+    // the partner to Lv.20 would have done to every Lv.11-19 save.
+    unlocks: {
+      partner: snapshot.unlocks.partner || level >= PARTNER_UNLOCK_LEVEL,
+      cave: snapshot.unlocks.cave || level >= CAVE_UNLOCK_LEVEL,
+      trialTower:
+        snapshot.unlocks.trialTower || level >= TRIAL_TOWER_UNLOCK_LEVEL,
+    },
     harvestChest: {
       ...snapshot.harvestChest,
       pendingCount: snapshot.harvestChest.entries.length,
@@ -195,57 +210,97 @@ export function refreshSnapshot(snapshot: BootstrapSnapshot): BootstrapSnapshot 
   };
 }
 
-export function syncNewcomerTasks(snapshot: BootstrapSnapshot): {
+export function syncProgressionTasks(snapshot: BootstrapSnapshot): {
   snapshot: BootstrapSnapshot;
   rewardGranted: boolean;
 } {
   const now = new Date().toISOString();
   let rewardGranted = false;
   let inventory = snapshot.inventory;
+  let wallet = snapshot.wallet;
   const existing = new Map(
-    snapshot.newcomerTasks.map((task) => [task.taskConfigId, task] as const),
+    snapshot.progressionTasks.map((task) => [task.taskConfigId, task] as const),
   );
-  const newcomerTasks = NEWCOMER_TASK_CONFIGS.map((config) => {
+  const progressionTasks = PROGRESSION_TASK_CONFIGS.map((config) => {
     const previous = existing.get(config.id);
-    const completed = snapshot.progress.level >= config.targetLevel;
-    const rewardPending =
-      config.id === NEWCOMER_REACH_LEVEL_8_TASK_ID &&
+    const target = progressionTaskTarget(config);
+    const current = taskProgress(snapshot, config);
+    const completed = current >= target;
+    const reward = config.reward;
+    // Tasks are reached passively, so a full bag must not throw the reward
+    // away: record the completion, leave it unclaimed, and let a later
+    // checkpoint grant it once a slot frees up.
+    const granted =
+      reward !== null &&
       completed &&
-      previous?.claimedAt == null;
-    const grantedThisTask =
-      rewardPending &&
-      hasStackOutputCapacity({ ...snapshot, inventory }, "breakthrough_pill");
-    if (grantedThisTask) {
-      inventory = addStack(inventory, "breakthrough_pill", 1);
+      previous?.claimedAt == null &&
+      hasStackOutputCapacity({ ...snapshot, inventory }, reward.items);
+    if (granted) {
+      for (const item of reward.items) {
+        inventory = addStack(inventory, item.itemConfigId, item.quantity);
+      }
+      if (reward.spiritStone > 0) {
+        wallet = addSpiritStone(wallet, reward.spiritStone);
+      }
       rewardGranted = true;
     }
-    const claimedAt =
-      config.id === NEWCOMER_REACH_LEVEL_8_TASK_ID
-        ? grantedThisTask
-          ? now
-          : previous?.claimedAt ?? null
-        : previous?.claimedAt ?? null;
     return {
       taskConfigId: config.id,
-      progress: Math.min(snapshot.progress.level, config.targetLevel).toString(),
+      progress: Math.min(current, target).toString(),
       completedAt: completed ? previous?.completedAt ?? now : null,
-      claimedAt,
+      claimedAt: granted ? now : previous?.claimedAt ?? null,
     };
   });
   return {
-    snapshot: { ...snapshot, inventory, newcomerTasks },
+    snapshot: { ...snapshot, wallet, inventory, progressionTasks },
     rewardGranted,
   };
 }
 
+function taskProgress(
+  snapshot: BootstrapSnapshot,
+  config: ProgressionTaskConfig,
+): number {
+  return config.condition.kind === "level"
+    ? snapshot.progress.level
+    : snapshot.trialTower.highestFloor;
+}
+
+/**
+ * All of a task's items land together or none do. Items already held as a stack
+ * cost no slot, so only the distinct new ids are charged against capacity.
+ */
 function hasStackOutputCapacity(
   snapshot: BootstrapSnapshot,
-  itemConfigId: string,
+  items: readonly ProgressionTaskRewardItem[],
 ): boolean {
-  return (
-    snapshot.inventory.stacks.some((stack) => stack.itemConfigId === itemConfigId) ||
-    countOccupiedBagSlots(snapshot) < snapshot.inventory.bagCapacity
+  const newStackIds = new Set(
+    items
+      .map((item) => item.itemConfigId)
+      .filter(
+        (itemConfigId) =>
+          !snapshot.inventory.stacks.some(
+            (stack) => stack.itemConfigId === itemConfigId,
+          ),
+      ),
   );
+  return (
+    countOccupiedBagSlots(snapshot) + newStackIds.size <=
+    snapshot.inventory.bagCapacity
+  );
+}
+
+function addSpiritStone(
+  wallet: BootstrapSnapshot["wallet"],
+  amount: number,
+): BootstrapSnapshot["wallet"] {
+  return {
+    ...wallet,
+    spiritStone: decimal(wallet.spiritStone).plus(amount).toFixed(0),
+    lifetimeSpiritStoneEarned: decimal(wallet.lifetimeSpiritStoneEarned)
+      .plus(amount)
+      .toFixed(0),
+  };
 }
 
 function addStack(

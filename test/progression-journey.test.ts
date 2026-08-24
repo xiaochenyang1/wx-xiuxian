@@ -36,13 +36,13 @@ describe("new player progression journey", () => {
     expect(service.snapshot.progress.level).toBe(10);
     expect(service.snapshot.progress.status).toBe("breakthrough_ready");
 
-    const task3 = service.snapshot.newcomerTasks.find(
+    const task3 = service.snapshot.progressionTasks.find(
       (task) => task.taskConfigId === NEWCOMER_REACH_LEVEL_3_TASK_ID,
     );
-    const task5 = service.snapshot.newcomerTasks.find(
+    const task5 = service.snapshot.progressionTasks.find(
       (task) => task.taskConfigId === NEWCOMER_REACH_LEVEL_5_TASK_ID,
     );
-    const task8 = service.snapshot.newcomerTasks.find(
+    const task8 = service.snapshot.progressionTasks.find(
       (task) => task.taskConfigId === NEWCOMER_REACH_LEVEL_8_TASK_ID,
     );
     expect(task3?.progress).toBe("3");
@@ -62,7 +62,13 @@ describe("new player progression journey", () => {
 
     expect(service.snapshot.progress.level).toBe(11);
     expect(service.snapshot.progress.status).toBe("gaining");
-    expect(service.snapshot.unlocks).toEqual({ partner: true, cave: true });
+    // Lv.11 opens the cave alone now; the tower waits for Lv.15 and the
+    // partner for Lv.20, so the opening no longer dumps three systems at once.
+    expect(service.snapshot.unlocks).toEqual({
+      partner: false,
+      cave: true,
+      trialTower: false,
+    });
     expect(
       service.snapshot.inventory.stacks.find(
         (stack) => stack.itemConfigId === "breakthrough_pill",
@@ -76,9 +82,13 @@ describe("new player progression journey", () => {
     expect(reloaded.snapshot.account.id).toBe(accountId);
     expect(reloaded.snapshot.progress.level).toBe(11);
     expect(reloaded.snapshot.progress.status).toBe("gaining");
-    expect(reloaded.snapshot.newcomerTasks).toEqual(
-      service.snapshot.newcomerTasks,
+    expect(reloaded.snapshot.progressionTasks).toEqual(
+      service.snapshot.progressionTasks,
     );
-    expect(reloaded.snapshot.unlocks).toEqual({ partner: true, cave: true });
+    expect(reloaded.snapshot.unlocks).toEqual({
+      partner: false,
+      cave: true,
+      trialTower: false,
+    });
   });
 });

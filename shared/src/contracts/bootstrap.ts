@@ -105,6 +105,10 @@ export interface BootstrapSnapshot {
       count: number;
     }>;
   };
+  trialTower: {
+    /** `0` means no floor has been cleared; the tower is climbed in order. */
+    highestFloor: number;
+  };
   partner: {
     partnerId: string | null;
     level: number;
@@ -115,7 +119,7 @@ export interface BootstrapSnapshot {
     level: number;
     contribution: number;
   };
-  newcomerTasks: Array<{
+  progressionTasks: Array<{
     taskConfigId: string;
     progress: BigNumberString;
     completedAt: string | null;
@@ -124,6 +128,7 @@ export interface BootstrapSnapshot {
   unlocks: {
     partner: boolean;
     cave: boolean;
+    trialTower: boolean;
   };
   settings: {
     autoSalvageCommon: boolean;

@@ -253,7 +253,7 @@ describe("automatic and debug stack rewards at full capacity", () => {
       service.debugGrant("fill_experience");
     }
 
-    const pendingTask = service.snapshot.newcomerTasks.find(
+    const pendingTask = service.snapshot.progressionTasks.find(
       (task) => task.taskConfigId === NEWCOMER_REACH_LEVEL_8_TASK_ID,
     );
     expect(pendingTask).toBeDefined();
@@ -273,7 +273,7 @@ describe("automatic and debug stack rewards at full capacity", () => {
     reloaded.expandInventory();
     reloaded.checkpoint(new Date(START.getTime() + 1_000));
 
-    const claimedTask = reloaded.snapshot.newcomerTasks.find(
+    const claimedTask = reloaded.snapshot.progressionTasks.find(
       (task) => task.taskConfigId === NEWCOMER_REACH_LEVEL_8_TASK_ID,
     );
     expect(claimedTask).toBeDefined();

@@ -2,6 +2,8 @@ import {
   EXPEDITION_STAGE_CONFIGS,
   EXPEDITION_SWEEP_MAX_COUNT,
   MAX_LEVEL,
+  PROGRESSION_TASK_CONFIGS,
+  TRIAL_TOWER_MAX_FLOOR,
 } from "@cultivation-diary/shared";
 import { describe, expect, it } from "vitest";
 import { CLIENT_CONFIG } from "../assets/scripts/core/ClientConfig";
@@ -444,8 +446,52 @@ describe("collection validation", () => {
 
   it("rejects unknown unlock and settings shapes", () => {
     expect(corrupt((save) => (save.snapshot.unlocks.partner = "yes"))).toBe(true);
+    expect(corrupt((save) => (save.snapshot.unlocks.trialTower = 1))).toBe(true);
+    expect(corrupt((save) => delete save.snapshot.unlocks.trialTower)).toBe(true);
     expect(corrupt((save) => (save.snapshot.settings.selectedTab = "shop"))).toBe(true);
     expect(corrupt((save) => (save.snapshot.settings.autoSalvageCommon = 1))).toBe(true);
+  });
+
+  it("rejects a trial tower floor outside the tower's height", () => {
+    expect(
+      corrupt(
+        (save) => (save.snapshot.trialTower.highestFloor = TRIAL_TOWER_MAX_FLOOR + 1),
+      ),
+    ).toBe(true);
+    expect(corrupt((save) => (save.snapshot.trialTower.highestFloor = -1))).toBe(true);
+    expect(corrupt((save) => (save.snapshot.trialTower.highestFloor = 1.5))).toBe(true);
+    expect(corrupt((save) => (save.snapshot.trialTower = null))).toBe(true);
+    // The top floor and an untouched tower are both legitimate.
+    expect(
+      corrupt(
+        (save) => (save.snapshot.trialTower.highestFloor = TRIAL_TOWER_MAX_FLOOR),
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects a progression task list that does not match the configured chain", () => {
+    expect(corrupt((save) => save.snapshot.progressionTasks.pop())).toBe(true);
+    expect(
+      corrupt((save) =>
+        save.snapshot.progressionTasks.push({
+          ...save.snapshot.progressionTasks[0],
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      corrupt(
+        (save) => (save.snapshot.progressionTasks[0].taskConfigId = "removed.task"),
+      ),
+    ).toBe(true);
+    expect(
+      corrupt((save) => (save.snapshot.progressionTasks[0].progress = "-1")),
+    ).toBe(true);
+    expect(
+      corrupt((save) => (save.snapshot.progressionTasks[0].claimedAt = "yesterday")),
+    ).toBe(true);
+    expect(authenticSave().snapshot.progressionTasks).toHaveLength(
+      PROGRESSION_TASK_CONFIGS.length,
+    );
   });
 
   it("rejects a config block from a different game version", () => {

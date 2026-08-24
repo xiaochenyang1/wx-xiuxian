@@ -9,6 +9,13 @@ export interface PartnerConfig {
 }
 
 export const PARTNER_MAX_LEVEL = 10;
+
+/**
+ * Moved out from the cave's Lv.11 so the opening does not hand the player two
+ * large systems at once. See `CAVE_UNLOCK_LEVEL` and `TRIAL_TOWER_UNLOCK_LEVEL`.
+ */
+export const PARTNER_UNLOCK_LEVEL = 20;
+
 export const PARTNER_CONFIGS: readonly PartnerConfig[] = [
   { id: "jun_rulan", displayName: "君如兰", epithet: "青云剑侍", bonusStat: "experience", bonusPerLevelBp: 120 },
   { id: "su_wanqing", displayName: "苏晚晴", epithet: "丹霞医仙", bonusStat: "spirit_stone", bonusPerLevelBp: 140 },

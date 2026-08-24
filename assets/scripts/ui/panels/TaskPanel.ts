@@ -1,20 +1,27 @@
 import type { AppState } from "../../core/ClientTypes";
-import { getNewcomerTaskDisplay } from "../../core/NewcomerTaskDisplay";
+import {
+  getProgressionTaskDisplay,
+  selectVisibleProgressionTasks,
+  VISIBLE_PROGRESSION_TASK_COUNT,
+} from "../../core/ProgressionTaskDisplay";
 import { COLORS } from "../primitives/Colors";
 import { addLabel, drawBand } from "../primitives/Draw";
 import { HorizontalTextAlignment, Node } from "cc";
 
 export function drawTaskPanel(overlay: Node, state: Readonly<AppState>): void {
-  const tasks = state.bootstrap!.newcomerTasks.slice(0, 3);
+  const tasks = selectVisibleProgressionTasks(
+    state.bootstrap!.progressionTasks,
+    VISIBLE_PROGRESSION_TASK_COUNT,
+  );
   drawBand(overlay, "TaskIntro", 0, 340, 600, 110, COLORS.inkGreen);
-  addLabel(overlay, "新手修行录", -170, 358, 240, 38, 22, COLORS.gold, true);
+  addLabel(overlay, "修行录", -170, 358, 240, 38, 22, COLORS.gold, true);
   addLabel(overlay, "里程碑与奖励会自动写入本地存档", 25, 319, 500, 32, 16, COLORS.textMuted);
   if (tasks.length === 0) {
     addLabel(overlay, "暂无修行任务", 0, 190, 520, 44, 21, COLORS.text);
     return;
   }
   tasks.forEach((task, index) => {
-    const display = getNewcomerTaskDisplay(task);
+    const display = getProgressionTaskDisplay(task);
     const statusColor =
       display.completed && !display.pendingReward ? COLORS.gold : COLORS.jade;
     const rewardColor = display.claimed

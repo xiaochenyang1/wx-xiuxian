@@ -1,3 +1,4 @@
+import { PARTNER_UNLOCK_LEVEL } from "@cultivation-diary/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CLIENT_CONFIG } from "../assets/scripts/core/ClientConfig";
 import { buildLocalRanking } from "../assets/scripts/core/RankingDisplay";
@@ -22,7 +23,9 @@ function progressedService(mutate?: (save: MutableSave) => void): {
   const raw = platform.raw(SAVE_KEY);
   if (raw === undefined) throw new Error("expected an initial save");
   const save = JSON.parse(raw) as MutableSave;
-  save.snapshot.progress.level = 11;
+  // The partner is the last of the three systems to open, so a fixture that
+  // exercises it has to clear its threshold rather than the cave's Lv.11.
+  save.snapshot.progress.level = PARTNER_UNLOCK_LEVEL;
   save.snapshot.progress.experience = "0";
   save.snapshot.progress.status = "gaining";
   save.snapshot.inventory.stacks = [
@@ -44,7 +47,9 @@ describe("partner progression", () => {
     vi.setSystemTime(NOW);
     const locked = new LocalGameService(new FakePlatformAdapter());
     locked.initialize(NOW);
-    expect(() => locked.choosePartner("jun_rulan")).toThrow("Lv.11");
+    expect(() => locked.choosePartner("jun_rulan")).toThrow(
+      `Lv.${PARTNER_UNLOCK_LEVEL}`,
+    );
 
     const { service } = progressedService();
     const baselineBonus = service.snapshot.progress.experienceBonusBp;

@@ -5,6 +5,7 @@ import {
   CRAFTING_QUALITY_WEIGHTS,
   CAVE_BUILDING_CONFIGS,
   CAVE_MAX_LEVEL,
+  CAVE_UNLOCK_LEVEL,
   ENHANCE_STONE_OVERFLOW_SPIRIT_STONE_VALUE,
   EQUIPMENT_MAX_ENHANCE_LEVEL,
   EQUIPMENT_CONFIGS,
@@ -12,10 +13,12 @@ import {
   EXPEDITION_SWEEP_MAX_COUNT,
   EXPEDITION_SWEEP_TOKEN_COST,
   PARTNER_MAX_LEVEL,
+  PARTNER_UNLOCK_LEVEL,
   SECT_MAX_LEVEL,
   MAX_LEVEL,
-  NEWCOMER_REACH_LEVEL_8_TASK_ID,
-  NEWCOMER_TASK_CONFIGS,
+  PROGRESSION_TASK_CONFIGS,
+  TRIAL_TOWER_MAX_FLOOR,
+  TRIAL_TOWER_UNLOCK_LEVEL,
   TECHNIQUE_MAX_STAR,
   TECHNIQUE_PAGES_PER_DUPLICATE,
   TECHNIQUE_CONFIGS,
@@ -83,10 +86,11 @@ import {
   GAME_CONFIG_VERSION_PRE_FEATURE_COMPLETION,
   GAME_CONFIG_VERSION_PRE_ITEM_COMPLETION,
   GAME_CONFIG_VERSION_PRE_POWER_MODEL,
+  GAME_CONFIG_VERSION_PRE_TRIAL_TOWER,
   LOCAL_SAVE_SCHEMA_VERSION,
   createInitialSave,
   refreshSnapshot,
-  syncNewcomerTasks,
+  syncProgressionTasks,
   type LocalGameSave,
 } from "./local-game-snapshot";
 
@@ -360,7 +364,9 @@ export class LocalGameService {
   upgradeCaveBuilding(buildingConfigId: string): LocalMutationResult {
     return this.mutate((snapshot) => {
       if (!snapshot.unlocks.cave) {
-        throw new LocalGameError("修为达到 Lv.11 才能开辟洞府");
+        throw new LocalGameError(
+          `修为达到 Lv.${CAVE_UNLOCK_LEVEL} 才能开辟洞府`,
+        );
       }
       const config = getCaveBuildingConfig(buildingConfigId);
       const building = snapshot.cave.buildings.find(
@@ -800,7 +806,9 @@ export class LocalGameService {
   choosePartner(partnerId: string): LocalMutationResult {
     return this.mutate((snapshot) => {
       if (!snapshot.unlocks.partner) {
-        throw new LocalGameError("修为达到 Lv.11 才能结识道侣");
+        throw new LocalGameError(
+          `修为达到 Lv.${PARTNER_UNLOCK_LEVEL} 才能结识道侣`,
+        );
       }
       if (snapshot.partner.partnerId !== null) {
         throw new LocalGameError("道侣已经确定，不能再次选择");
@@ -998,7 +1006,7 @@ export class LocalGameService {
           settledAt: new Date().toISOString(),
         },
       });
-      const withTasks = syncNewcomerTasks(progressed);
+      const withTasks = syncProgressionTasks(progressed);
       const consumedText = consumed.equals(1)
         ? ""
         : ` x${consumed.toFixed(0)}`;
@@ -1552,7 +1560,7 @@ export class LocalGameService {
         ...snapshot,
         progress: { ...snapshot.progress, ...applied.progress },
       });
-      const withTasks = syncNewcomerTasks(progressed);
+      const withTasks = syncProgressionTasks(progressed);
       return {
         snapshot: withTasks.snapshot,
         events: applied.events,
@@ -1795,7 +1803,7 @@ export class LocalGameService {
           .toFixed(0),
       },
     });
-    const taskResult = syncNewcomerTasks(next);
+    const taskResult = syncProgressionTasks(next);
     next = taskResult.snapshot;
     const effectiveSeconds = Math.floor(elapsedMilliseconds / 1_000);
     const shouldShow =
@@ -2492,10 +2500,65 @@ function migrateSnapshot(snapshot: unknown): unknown {
       ...(Array.isArray(migrated.equipment)
         ? { equipment: migrated.equipment.map(renameItemPowerField) }
         : {}),
+      config: { ...config, version: GAME_CONFIG_VERSION_PRE_TRIAL_TOWER },
+    };
+    config = migrated.config;
+  }
+  if (
+    isRecord(config) &&
+    config.version === GAME_CONFIG_VERSION_PRE_TRIAL_TOWER
+  ) {
+    // Padding the task list is mandatory, not cosmetic: `isProgressionTaskList`
+    // requires the stored count to equal the config length exactly, so the
+    // table growing from 3 rows to 22 would condemn every existing save as
+    // corrupt and hand the player a new one.
+    migrated = {
+      ...migrated,
+      trialTower: { highestFloor: 0 },
+      progressionTasks: padProgressionTasks(migrated.newcomerTasks),
+      unlocks: seedTrialTowerUnlock(migrated.unlocks, migrated.progress),
       config: { ...config, version: GAME_CONFIG_VERSION },
     };
+    delete (migrated as Record<string, unknown>).newcomerTasks;
   }
   return migrated;
+}
+
+function padProgressionTasks(value: unknown): unknown[] {
+  const existing = new Map<string, unknown>();
+  if (Array.isArray(value)) {
+    for (const task of value) {
+      if (isRecord(task) && typeof task.taskConfigId === "string") {
+        existing.set(task.taskConfigId, task);
+      }
+    }
+  }
+  return PROGRESSION_TASK_CONFIGS.map(
+    (config) =>
+      existing.get(config.id) ?? {
+        taskConfigId: config.id,
+        progress: "0",
+        completedAt: null,
+        claimedAt: null,
+      },
+  );
+}
+
+/**
+ * Unlocks became stored and monotonic in this version. The other two bits are
+ * already on disk from when they were derived, so only the tower's needs a
+ * value, and the current level is the only fair thing to seed it from.
+ */
+function seedTrialTowerUnlock(
+  unlocks: unknown,
+  progress: unknown,
+): Record<string, unknown> {
+  const level =
+    isRecord(progress) && typeof progress.level === "number" ? progress.level : 1;
+  return {
+    ...(isRecord(unlocks) ? unlocks : { partner: false, cave: false }),
+    trialTower: level >= TRIAL_TOWER_UNLOCK_LEVEL,
+  };
 }
 
 function renameItemPowerField(item: unknown): unknown {
@@ -2616,12 +2679,14 @@ function isBootstrapSnapshot(value: unknown): value is BootstrapSnapshot {
     isHarvestChest(chest) &&
     isCaveSnapshot(value.cave) &&
     isExpeditionSnapshot(value.expedition) &&
+    isTrialTowerSnapshot(value.trialTower) &&
     isPartnerSnapshot(value.partner) &&
     isSectSnapshot(value.sect) &&
-    isNewcomerTaskList(value.newcomerTasks) &&
+    isProgressionTaskList(value.progressionTasks) &&
     isRecord(value.unlocks) &&
     typeof value.unlocks.partner === "boolean" &&
     typeof value.unlocks.cave === "boolean" &&
+    typeof value.unlocks.trialTower === "boolean" &&
     isRecord(settings) &&
     typeof settings.autoSalvageCommon === "boolean" &&
     typeof settings.autoSalvageUncommon === "boolean" &&
@@ -2945,8 +3010,15 @@ function isHarvestChest(value: unknown): boolean {
   });
 }
 
-function isNewcomerTaskList(value: unknown): boolean {
-  if (!Array.isArray(value) || value.length !== NEWCOMER_TASK_CONFIGS.length) {
+function isTrialTowerSnapshot(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    isIntegerBetween(value.highestFloor, 0, TRIAL_TOWER_MAX_FLOOR)
+  );
+}
+
+function isProgressionTaskList(value: unknown): boolean {
+  if (!Array.isArray(value) || value.length !== PROGRESSION_TASK_CONFIGS.length) {
     return false;
   }
   const taskIds = new Set<string>();
@@ -2959,7 +3031,7 @@ function isNewcomerTaskList(value: unknown): boolean {
       !isNullableIsoTimestamp(task.completedAt) ||
       !isNullableIsoTimestamp(task.claimedAt) ||
       (task.claimedAt !== null && task.completedAt === null) ||
-      !NEWCOMER_TASK_CONFIGS.some((config) => config.id === task.taskConfigId)
+      !PROGRESSION_TASK_CONFIGS.some((config) => config.id === task.taskConfigId)
     ) {
       return false;
     }
