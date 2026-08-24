@@ -176,6 +176,26 @@ describe("progression task chain", () => {
     );
   });
 
+  it("completes a tower milestone the moment the floor is cleared", () => {
+    // Lv.40 so power is not the binding constraint, and the floor 5 milestone is
+    // the first one the chain places inside a reachable climb.
+    const { service } = seeded((save) => {
+      save.snapshot.progress.level = 40;
+    });
+    const milestone = () => taskOf(service, "progression.trial_tower_floor_5");
+    expect(milestone().completedAt).toBeNull();
+
+    for (let floor = 1; floor <= 5; floor += 1) {
+      service.challengeTrialTower(floor);
+    }
+
+    // No checkpoint in between: clearing the floor is itself a mutation, so the
+    // milestone settles in the same tick rather than on the next tick of idle time.
+    expect(milestone().progress).toBe("5");
+    expect(milestone().completedAt).not.toBeNull();
+    expect(milestone().claimedAt).not.toBeNull();
+  });
+
   it("holds a whole reward when the bag is full and pays it once a slot frees up", () => {
     const { service, platform } = seeded((save) => {
       save.snapshot.progress.level = 20;

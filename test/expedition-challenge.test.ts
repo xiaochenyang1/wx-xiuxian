@@ -33,6 +33,10 @@ function serviceAtFrontier(
   const service = new LocalGameService(platform);
   const loaded = service.initialize(FUTURE);
   if (loaded.created) throw new Error("expected expedition fixture to load");
+  // The level milestones this fixture has already passed settle on the first
+  // tick; getting them out of the way keeps their spirit stone out of the reward
+  // deltas measured around the expedition itself.
+  service.checkpoint(new Date(FUTURE.getTime() + 1_000));
   return { service, platform };
 }
 

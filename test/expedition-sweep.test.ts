@@ -47,6 +47,10 @@ function serviceWithClears(
   const service = new LocalGameService(platform);
   const loaded = service.initialize(FUTURE);
   if (loaded.created) throw new Error("expected sweep fixture to load");
+  // The level milestones this fixture has already passed settle on the first
+  // tick; getting them out of the way keeps their spirit stone out of the reward
+  // deltas measured around the sweep itself.
+  service.checkpoint(new Date(FUTURE.getTime() + 1_000));
   return { service, platform };
 }
 
@@ -72,6 +76,9 @@ describe("expedition sweep rewards", () => {
       const lifetimeBefore = BigInt(
         service.snapshot.wallet.lifetimeSpiritStoneEarned,
       );
+      const itemAmountsBefore = stage.sweepItemRewards.map((reward) =>
+        stackQuantity(service, reward.itemConfigId),
+      );
 
       const result = service.sweepExpedition(stage.id);
 
@@ -85,11 +92,11 @@ describe("expedition sweep rewards", () => {
       expect(BigInt(service.snapshot.wallet.lifetimeSpiritStoneEarned)).toBe(
         lifetimeBefore + BigInt(stage.sweepSpiritStoneReward),
       );
-      for (const reward of stage.sweepItemRewards) {
+      stage.sweepItemRewards.forEach((reward, rewardIndex) => {
         expect(stackQuantity(service, reward.itemConfigId)).toBe(
-          BigInt(reward.quantity),
+          itemAmountsBefore[rewardIndex]! + BigInt(reward.quantity),
         );
-      }
+      });
       expect(service.snapshot.expedition.sweepCounts).toContainEqual({
         stageConfigId: stage.id,
         count: 1,

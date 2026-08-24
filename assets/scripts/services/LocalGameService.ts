@@ -19,6 +19,8 @@ import {
   PROGRESSION_TASK_CONFIGS,
   TRIAL_TOWER_MAX_FLOOR,
   TRIAL_TOWER_UNLOCK_LEVEL,
+  evaluateTrialFloor,
+  trialFloorRewards,
   TECHNIQUE_MAX_STAR,
   TECHNIQUE_PAGES_PER_DUPLICATE,
   TECHNIQUE_CONFIGS,
@@ -559,6 +561,70 @@ export class LocalGameService {
         },
         events: [],
         message: `扫荡${config.displayName}，获得 ${config.sweepSpiritStoneReward} 灵石和历练物资`,
+      };
+    });
+  }
+
+  /**
+   * The tower is climbed one floor at a time and never swept: the whole point of
+   * a power ladder is that each rung is checked against the current loadout, and
+   * a sweep would hand out the rewards without ever making that check.
+   */
+  challengeTrialTower(floor: number): LocalMutationResult {
+    return this.mutate((snapshot) => {
+      if (!snapshot.unlocks.trialTower) {
+        throw new LocalGameError(
+          `修为达到 Lv.${TRIAL_TOWER_UNLOCK_LEVEL} 才能进入试炼塔`,
+        );
+      }
+      if (!isIntegerBetween(floor, 1, TRIAL_TOWER_MAX_FLOOR)) {
+        throw new LocalGameError("未知的试炼塔层数");
+      }
+      const evaluation = evaluateTrialFloor(
+        snapshot.trialTower.highestFloor,
+        floor,
+        snapshot.progress.totalPower,
+      );
+      if (evaluation.status === "cleared") {
+        throw new LocalGameError("该层已经通过，奖励不可重复领取");
+      }
+      if (evaluation.status === "locked") {
+        throw new LocalGameError(
+          `需先通过第 ${snapshot.trialTower.highestFloor + 1} 层`,
+        );
+      }
+      if (evaluation.status === "underpowered") {
+        throw new LocalGameError(`战力不足，还需 ${evaluation.powerDeficit}`);
+      }
+
+      const rewards = trialFloorRewards(floor);
+      // Checked before the floor is recorded, so a full bag leaves the climb
+      // exactly where it was rather than banking the floor and dropping the loot.
+      const inventory = addStackRewards(
+        snapshot,
+        snapshot.inventory,
+        rewards.itemRewards,
+        "行囊空间不足，无法领取试炼塔奖励",
+      );
+      return {
+        snapshot: {
+          ...snapshot,
+          inventory,
+          trialTower: { highestFloor: floor },
+          wallet: {
+            ...snapshot.wallet,
+            spiritStone: decimal(snapshot.wallet.spiritStone)
+              .plus(rewards.spiritStone)
+              .toFixed(0),
+            lifetimeSpiritStoneEarned: decimal(
+              snapshot.wallet.lifetimeSpiritStoneEarned,
+            )
+              .plus(rewards.spiritStone)
+              .toFixed(0),
+          },
+        },
+        events: [],
+        message: `登临试炼塔第 ${floor} 层，获得 ${rewards.spiritStone} 灵石和试炼奖励`,
       };
     });
   }
@@ -1678,8 +1744,13 @@ export class LocalGameService {
     const previous = this.snapshot;
     try {
       const result = operation(previous);
+      // A milestone the action itself just satisfied settles inside the same
+      // transaction: a cleared tower floor or a fresh breakthrough should show
+      // up in the task panel immediately rather than waiting for the next idle
+      // tick, which is the only other place tasks are synced.
+      const tasks = syncProgressionTasks(result.snapshot);
       const now = new Date();
-      this.setSnapshot(refreshSnapshot(result.snapshot), now);
+      this.setSnapshot(refreshSnapshot(tasks.snapshot), now);
       this.persist();
       return {
         previous,
