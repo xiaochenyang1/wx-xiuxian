@@ -103,6 +103,23 @@ function preEquipmentManagementSave(): MutableSave {
   return save;
 }
 
+/**
+ * Rewind a current save to the pre-power-model `local-2.3.0` format, where the
+ * loadout's power contribution was a fixed decimal string rather than basis
+ * points. The names have to go back for the rename step to be under test.
+ */
+function prePowerModelSave(): MutableSave {
+  const save = authenticSaveWithProgress();
+  save.snapshot.config.version = "local-2.3.0";
+  save.snapshot.progress.loadoutFixedPower = "625";
+  delete save.snapshot.progress.loadoutPowerBonusBp;
+  for (const item of [...save.snapshot.techniques, ...save.snapshot.equipment]) {
+    item.fixedPower = "80";
+    delete item.powerBonusBp;
+  }
+  return save;
+}
+
 function load(save: unknown): LocalGameService {
   const platform = new FakePlatformAdapter();
   platform.seed(SAVE_KEY, save);
@@ -155,7 +172,7 @@ describe("local-1.0.0 migration", () => {
   it("chains through both migrations and backfills every new subsystem", () => {
     const service = load(legacySave());
 
-    expect(service.snapshot.config.version).toBe("local-2.3.0");
+    expect(service.snapshot.config.version).toBe("local-2.4.0");
     expect(service.snapshot.cave.buildings).toEqual(
       CAVE_BUILDING_CONFIGS.map((config) => ({
         buildingConfigId: config.id,
@@ -188,7 +205,7 @@ describe("local-1.1.0 migration", () => {
 
     const service = load(legacy);
 
-    expect(service.snapshot.config.version).toBe("local-2.3.0");
+    expect(service.snapshot.config.version).toBe("local-2.4.0");
     expect(service.snapshot.cave.buildings[0].level).toBe(4);
     expect(service.snapshot.cave.buildings[3].level).toBe(CAVE_MAX_LEVEL);
     expect(service.snapshot.expedition.clearedStageIds).toEqual([]);
@@ -231,7 +248,7 @@ describe("local-1.2.0 to local-2.0.0 migration", () => {
 
     const service = load(legacy);
 
-    expect(service.snapshot.config.version).toBe("local-2.3.0");
+    expect(service.snapshot.config.version).toBe("local-2.4.0");
     expect(service.snapshot.cave.buildings[0].level).toBe(6);
     expect(service.snapshot.expedition.clearedStageIds).toEqual(
       legacy.snapshot.expedition.clearedStageIds,
@@ -269,7 +286,7 @@ describe("local-2.0.0 to local-2.1.0 migration", () => {
 
     const service = load(legacy);
 
-    expect(service.snapshot.config.version).toBe("local-2.3.0");
+    expect(service.snapshot.config.version).toBe("local-2.4.0");
     expect(
       service.snapshot.inventory.stacks.some(
         (stack) => stack.itemConfigId === "protection_talisman",
@@ -293,7 +310,7 @@ describe("local-2.1.0 to local-2.2.0 migration", () => {
 
     const service = load(legacy);
 
-    expect(service.snapshot.config.version).toBe("local-2.3.0");
+    expect(service.snapshot.config.version).toBe("local-2.4.0");
     expect(service.snapshot.expedition.clearedStageIds).toEqual(
       legacy.snapshot.expedition.clearedStageIds,
     );
@@ -318,7 +335,7 @@ describe("local-2.2.0 to local-2.3.0 migration", () => {
     const legacy = preEquipmentManagementSave();
     const service = load(legacy);
 
-    expect(service.snapshot.config.version).toBe("local-2.3.0");
+    expect(service.snapshot.config.version).toBe("local-2.4.0");
     expect(service.snapshot.equipment[0]!.isLocked).toBe(false);
     expect(service.snapshot.equipment[1]!.isLocked).toBe(true);
     expect(service.snapshot.player.id).toBe(legacy.snapshot.player.id);
@@ -330,6 +347,64 @@ describe("local-2.2.0 to local-2.3.0 migration", () => {
     const service = new LocalGameService(platform);
 
     expect(service.initialize(LATER).created).toBe(false);
+  });
+});
+
+describe("local-2.3.0 to local-2.4.0 migration", () => {
+  it("renames the loadout power fields and recomputes them from config", () => {
+    const legacy = prePowerModelSave();
+    const service = load(legacy);
+    const progress = service.snapshot.progress as Record<string, unknown>;
+
+    expect(service.snapshot.config.version).toBe("local-2.4.0");
+    expect(progress.loadoutFixedPower).toBeUndefined();
+    expect(typeof progress.loadoutPowerBonusBp).toBe("number");
+    for (const item of [
+      ...service.snapshot.techniques,
+      ...service.snapshot.equipment,
+    ]) {
+      expect((item as Record<string, unknown>).fixedPower).toBeUndefined();
+      expect(typeof item.powerBonusBp).toBe("number");
+    }
+  });
+
+  it("keeps every piece of player progress across the rename", () => {
+    const legacy = prePowerModelSave();
+    const service = load(legacy);
+
+    expect(service.snapshot.player.id).toBe(legacy.snapshot.player.id);
+    expect(service.snapshot.progress.level).toBe(legacy.snapshot.progress.level);
+    expect(service.snapshot.progress.experience).toBe(
+      legacy.snapshot.progress.experience,
+    );
+    expect(service.snapshot.wallet.spiritStone).toBe(
+      legacy.snapshot.wallet.spiritStone,
+    );
+  });
+
+  it("does not discard a valid pre-power-model save", () => {
+    const platform = new FakePlatformAdapter();
+    platform.seed(SAVE_KEY, prePowerModelSave());
+    const service = new LocalGameService(platform);
+
+    expect(service.initialize(LATER).created).toBe(false);
+  });
+
+  it("chains a local-1.0.0 save all the way to local-2.4.0", () => {
+    const legacy = legacySave();
+    legacy.snapshot.progress.loadoutFixedPower = "625";
+    delete legacy.snapshot.progress.loadoutPowerBonusBp;
+    const service = load(legacy);
+    const progress = service.snapshot.progress as Record<string, unknown>;
+
+    expect(service.snapshot.config.version).toBe("local-2.4.0");
+    expect(progress.loadoutFixedPower).toBeUndefined();
+    expect(typeof progress.loadoutPowerBonusBp).toBe("number");
+    expect(service.snapshot.player.id).toBe(legacy.snapshot.player.id);
+    expect(service.snapshot.cave.buildings).toHaveLength(
+      CAVE_BUILDING_CONFIGS.length,
+    );
+    expect(service.snapshot.expedition.clearedStageIds).toEqual([]);
   });
 });
 

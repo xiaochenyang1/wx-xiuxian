@@ -72,14 +72,14 @@ describe("cave building display", () => {
     expect(display.actionText).toBe("升级");
   });
 
-  it("renders percentage bonuses for rate buildings and a flat value for power", () => {
+  it("renders every bonus dimension as a percentage, power included", () => {
     const snapshot = snapshotWith((save) => {
       building(save, "spirit_array").level = 2;
       building(save, "crafting_room").level = 2;
     });
 
     expect(getCaveBuildingDisplay(snapshot, SPIRIT_ARRAY).bonusText).toBe("修为 +6%");
-    expect(getCaveBuildingDisplay(snapshot, CRAFTING_ROOM).bonusText).toBe("战力 +100");
+    expect(getCaveBuildingDisplay(snapshot, CRAFTING_ROOM).bonusText).toBe("战力 +4%");
   });
 
   it("previews the next level rather than the current one", () => {

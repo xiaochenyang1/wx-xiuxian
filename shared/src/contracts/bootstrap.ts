@@ -32,7 +32,7 @@ export interface BootstrapSnapshot {
     cultivationReserve: BigNumberString;
     experiencePerSecond: BigNumberString;
     spiritStonePerMinute: BigNumberString;
-    loadoutFixedPower: BigNumberString;
+    loadoutPowerBonusBp: number;
     experienceBonusBp: number;
     spiritStoneBonusBp: number;
     dropBonusBp: number;
@@ -58,7 +58,7 @@ export interface BootstrapSnapshot {
     star: number;
     duplicateCount: number;
     equippedSlot: string | null;
-    fixedPower: BigNumberString;
+    powerBonusBp: number;
     experienceBonusBp: number;
     spiritStoneBonusBp: number;
     dropBonusBp: number;
@@ -70,7 +70,7 @@ export interface BootstrapSnapshot {
     displayName: string;
     quality: string;
     slot: string;
-    fixedPower: BigNumberString;
+    powerBonusBp: number;
     enhanceLevel: number;
     rolledAffixes: unknown;
     location: string;

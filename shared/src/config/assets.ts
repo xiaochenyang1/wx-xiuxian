@@ -75,6 +75,13 @@ export const ASSET_QUALITY_ORDER: Readonly<Record<AssetQuality, number>> = {
   primordial: 6,
 };
 
+/**
+ * Turns an asset's base power into a percentage of the player's base power.
+ * Calibrated so a Lv.11 loadout keeps the total it had under the older
+ * fixed-power model, which is why early-game numbers needed no retuning.
+ */
+export const LOADOUT_POWER_SCALE_BP = 45_000;
+
 export const ASSET_QUALITY_MULTIPLIER_BP: Readonly<
   Record<AssetQuality, number>
 > = {

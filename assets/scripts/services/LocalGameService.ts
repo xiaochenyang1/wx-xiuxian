@@ -82,6 +82,7 @@ import {
   GAME_CONFIG_VERSION_PRE_EXPEDITION_SWEEPS,
   GAME_CONFIG_VERSION_PRE_FEATURE_COMPLETION,
   GAME_CONFIG_VERSION_PRE_ITEM_COMPLETION,
+  GAME_CONFIG_VERSION_PRE_POWER_MODEL,
   LOCAL_SAVE_SCHEMA_VERSION,
   createInitialSave,
   refreshSnapshot,
@@ -1915,7 +1916,7 @@ function applyIdleDrops(
         displayName: config.displayName,
         quality,
         slot: config.slot,
-        fixedPower: valueScore,
+        powerBonusBp: 0,
         enhanceLevel: 0,
         rolledAffixes:
           quality === "uncommon"
@@ -2069,7 +2070,7 @@ function createTechniqueSnapshot(
     star: 1,
     duplicateCount: 0,
     equippedSlot: null,
-    fixedPower: config.fixedPower.toString(),
+    powerBonusBp: 0,
     experienceBonusBp: config.experienceBonusBp,
     spiritStoneBonusBp: config.spiritStoneBonusBp,
     dropBonusBp: config.dropBonusBp,
@@ -2183,7 +2184,7 @@ function createCraftedEquipment(
     displayName: config.displayName,
     quality,
     slot: config.slot,
-    fixedPower: "0",
+    powerBonusBp: 0,
     enhanceLevel: 0,
     rolledAffixes: Array.from({ length: affixCount }, (_, index) => ({
       stat: affixStats[(startIndex + index) % affixStats.length]!,
@@ -2463,10 +2464,52 @@ function migrateSnapshot(snapshot: unknown): unknown {
             ),
           }
         : {}),
+      config: { ...config, version: GAME_CONFIG_VERSION_PRE_POWER_MODEL },
+    };
+    config = migrated.config;
+  }
+  if (isRecord(config) && config.version === GAME_CONFIG_VERSION_PRE_POWER_MODEL) {
+    // Loadout power became a percentage of base power, so the three derived
+    // display fields changed both name and type. They are rewritten from
+    // config on every load, which is why zero is a safe placeholder: it only
+    // has to survive validation until `refreshSnapshot` recomputes it. Written
+    // unconditionally rather than renamed in place, because a save reaching
+    // this step may already carry the new names.
+    migrated = {
+      ...migrated,
+      ...(isRecord(migrated.progress)
+        ? {
+            progress: replacePowerField(
+              migrated.progress,
+              "loadoutFixedPower",
+              "loadoutPowerBonusBp",
+            ),
+          }
+        : {}),
+      ...(Array.isArray(migrated.techniques)
+        ? { techniques: migrated.techniques.map(renameItemPowerField) }
+        : {}),
+      ...(Array.isArray(migrated.equipment)
+        ? { equipment: migrated.equipment.map(renameItemPowerField) }
+        : {}),
       config: { ...config, version: GAME_CONFIG_VERSION },
     };
   }
   return migrated;
+}
+
+function renameItemPowerField(item: unknown): unknown {
+  return isRecord(item) ? replacePowerField(item, "fixedPower", "powerBonusBp") : item;
+}
+
+function replacePowerField(
+  record: Record<string, unknown>,
+  oldKey: string,
+  newKey: string,
+): Record<string, unknown> {
+  const next = { ...record, [newKey]: 0 };
+  delete next[oldKey];
+  return next;
 }
 
 function parseLocalGameSave(value: unknown): LocalGameSave | null {
@@ -2708,7 +2751,7 @@ function isProgressSnapshot(value: unknown): boolean {
     isDecimalString(value.cultivationReserve) &&
     isRateString(value.experiencePerSecond) &&
     isRateString(value.spiritStonePerMinute) &&
-    isDecimalString(value.loadoutFixedPower) &&
+    isNonNegativeSafeInteger(value.loadoutPowerBonusBp) &&
     isNonNegativeSafeInteger(value.experienceBonusBp) &&
     isNonNegativeSafeInteger(value.spiritStoneBonusBp) &&
     isNonNegativeSafeInteger(value.dropBonusBp)
@@ -2779,7 +2822,7 @@ function isTechniqueList(value: unknown): boolean {
       !isIntegerBetween(technique.star, 1, TECHNIQUE_MAX_STAR) ||
       !isIntegerBetween(technique.duplicateCount, 0, 1_000_000_000) ||
       (equippedSlot !== null && equippedSlot !== config.slot) ||
-      !isDecimalString(technique.fixedPower) ||
+      !isNonNegativeSafeInteger(technique.powerBonusBp) ||
       !isNonNegativeSafeInteger(technique.experienceBonusBp) ||
       !isNonNegativeSafeInteger(technique.spiritStoneBonusBp) ||
       !isNonNegativeSafeInteger(technique.dropBonusBp) ||
@@ -2819,7 +2862,7 @@ function isEquipmentList(value: unknown): boolean {
       equipment.displayName !== config.displayName ||
       !isAssetQualityValue(equipment.quality) ||
       equipment.slot !== config.slot ||
-      !isDecimalString(equipment.fixedPower) ||
+      !isNonNegativeSafeInteger(equipment.powerBonusBp) ||
       !isIntegerBetween(
         equipment.enhanceLevel,
         0,

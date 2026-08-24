@@ -26,7 +26,8 @@ import {
 } from "@cultivation-diary/shared";
 
 export const LOCAL_SAVE_SCHEMA_VERSION = 1 as const;
-export const GAME_CONFIG_VERSION = "local-2.3.0";
+export const GAME_CONFIG_VERSION = "local-2.4.0";
+export const GAME_CONFIG_VERSION_PRE_POWER_MODEL = "local-2.3.0";
 export const GAME_CONFIG_VERSION_PRE_EQUIPMENT_MANAGEMENT = "local-2.2.0";
 export const GAME_CONFIG_VERSION_PRE_EXPEDITION_SWEEPS = "local-2.1.0";
 export const GAME_CONFIG_VERSION_PRE_ITEM_COMPLETION = "local-2.0.0";
@@ -69,7 +70,7 @@ export function createInitialSave(now: Date): LocalGameSave {
       cultivationReserve: "0",
       experiencePerSecond: "1",
       spiritStonePerMinute: "1",
-      loadoutFixedPower: "0",
+      loadoutPowerBonusBp: 0,
       experienceBonusBp: 0,
       spiritStoneBonusBp: 0,
       dropBonusBp: 0,
@@ -121,7 +122,7 @@ export function refreshSnapshot(snapshot: BootstrapSnapshot): BootstrapSnapshot 
     });
     return {
       ...item,
-      fixedPower: contribution.fixedPower,
+      powerBonusBp: contribution.powerBonusBp,
       experienceBonusBp: contribution.experienceBonusBp,
       spiritStoneBonusBp: contribution.spiritStoneBonusBp,
       dropBonusBp: contribution.dropBonusBp,
@@ -135,7 +136,7 @@ export function refreshSnapshot(snapshot: BootstrapSnapshot): BootstrapSnapshot 
       enhanceLevel: item.enhanceLevel,
       rolledAffixes: item.rolledAffixes,
     });
-    return { ...item, fixedPower: contribution.fixedPower };
+    return { ...item, powerBonusBp: contribution.powerBonusBp };
   });
   const loadout = calculateLoadoutBonuses({
     techniques: techniques
@@ -170,7 +171,9 @@ export function refreshSnapshot(snapshot: BootstrapSnapshot): BootstrapSnapshot 
       stage: getRealmStage(level),
       title: getRealmTitle(level),
       requiredExperience: requiredExperienceForLevel(level),
-      totalPower: calculateTotalPower(level, { fixedPower: bonuses.fixedPower }),
+      totalPower: calculateTotalPower(level, {
+        percentBonusBp: bonuses.powerBonusBp,
+      }),
       experiencePerSecond: calculateOnlineExperiencePerSecond(
         level,
         bonuses.experienceBonusBp,
@@ -179,7 +182,7 @@ export function refreshSnapshot(snapshot: BootstrapSnapshot): BootstrapSnapshot 
         level,
         bonuses.spiritStoneBonusBp,
       ),
-      loadoutFixedPower: bonuses.fixedPower,
+      loadoutPowerBonusBp: bonuses.powerBonusBp,
       experienceBonusBp: bonuses.experienceBonusBp,
       spiritStoneBonusBp: bonuses.spiritStoneBonusBp,
       dropBonusBp: bonuses.dropBonusBp,

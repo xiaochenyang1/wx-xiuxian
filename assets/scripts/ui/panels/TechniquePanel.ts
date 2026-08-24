@@ -10,7 +10,7 @@ import {
   drawBand,
   drawPagination,
 } from "../primitives/Draw";
-import { qualityColor } from "../primitives/Format";
+import { formatBasisPoints, qualityColor } from "../primitives/Format";
 import { HorizontalTextAlignment, Node } from "cc";
 
 export interface TechniqueSlotLabelLayout {
@@ -41,7 +41,7 @@ export function drawTechniquePanel(
   const techniqueWindow = paging.window("techniques", techniques.length, 8);
   addLabel(
     overlay,
-    `功法 ${techniques.length} 本 · 残页 ${formatLargeNumber(state.bootstrap!.inventory.stacks.find((stack) => stack.itemConfigId === "technique_page")?.quantity ?? "0")} · 装备战力 +${formatLargeNumber(state.bootstrap!.progress.loadoutFixedPower)}`,
+    `功法 ${techniques.length} 本 · 残页 ${formatLargeNumber(state.bootstrap!.inventory.stacks.find((stack) => stack.itemConfigId === "technique_page")?.quantity ?? "0")} · 装备战力 +${formatBasisPoints(state.bootstrap!.progress.loadoutPowerBonusBp)}`,
     0,
     393,
     590,
@@ -105,7 +105,7 @@ export function drawTechniquePanel(
     );
     addLabel(
       overlay,
-      `${technique.star}星 · 战力 +${formatLargeNumber(technique.fixedPower)}`,
+      `${technique.star}星 · 战力 +${formatBasisPoints(technique.powerBonusBp)}`,
       -90,
       y,
       130,
@@ -175,9 +175,4 @@ export function drawTechniquePanel(
     () => paging.show("techniques", techniqueWindow.page - 1),
     () => paging.show("techniques", techniqueWindow.page + 1),
   );
-}
-
-function formatBasisPoints(value: number): string {
-  const percent = value / 100;
-  return `${Number.isInteger(percent) ? percent.toFixed(0) : percent.toFixed(2)}%`;
 }

@@ -37,5 +37,5 @@ export function calculateSectBonuses(sect: { sectId: string | null; level: numbe
 }
 
 function emptyBonuses(): LoadoutBonuses {
-  return { fixedPower: "0", experienceBonusBp: 0, spiritStoneBonusBp: 0, dropBonusBp: 0 };
+  return { powerBonusBp: 0, experienceBonusBp: 0, spiritStoneBonusBp: 0, dropBonusBp: 0 };
 }

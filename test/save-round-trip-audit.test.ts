@@ -68,7 +68,7 @@ function seedUpgradeAssets(save: MutableSave): void {
       displayName: "玄木剑",
       quality: "common",
       slot: "weapon",
-      fixedPower: "0",
+      powerBonusBp: 0,
       enhanceLevel: 0,
       rolledAffixes: [],
       location: "equipped",
@@ -86,7 +86,7 @@ function seedUpgradeAssets(save: MutableSave): void {
       star: 1,
       duplicateCount: 1,
       equippedSlot: "mind",
-      fixedPower: "0",
+      powerBonusBp: 0,
       experienceBonusBp: 0,
       spiritStoneBonusBp: 0,
       dropBonusBp: 0,
@@ -262,11 +262,11 @@ describe("every reachable save round-trips", () => {
     const equipment = reloaded.snapshot.equipment[0]!;
     const technique = reloaded.snapshot.techniques[0]!;
     expect(equipment.enhanceLevel).toBe(1);
-    expect(equipment.fixedPower).toBe("88");
+    expect(equipment.powerBonusBp).toBe(396);
     expect(equipment.equippedSlot).toBe("weapon");
     expect(technique.star).toBe(2);
     expect(technique.duplicateCount).toBe(0);
-    expect(technique.fixedPower).toBe("48");
+    expect(technique.powerBonusBp).toBe(216);
     expect(technique.equippedSlot).toBe("mind");
   });
 

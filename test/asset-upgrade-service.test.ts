@@ -1,6 +1,7 @@
 import {
   calculateEquipmentContribution,
   calculateTechniqueContribution,
+  calculateTotalPower,
   equipmentEnhanceCost,
   techniqueStarUpgradeCost,
   type AssetQuality,
@@ -70,7 +71,7 @@ function serviceWithAssets(
       displayName: "玄木剑",
       quality: options.equipmentQuality,
       slot: "weapon",
-      fixedPower: "0",
+      powerBonusBp: 0,
       enhanceLevel: options.enhanceLevel,
       rolledAffixes: [],
       location: options.equipmentEquipped ? "equipped" : "bag",
@@ -88,7 +89,7 @@ function serviceWithAssets(
       star: options.star,
       duplicateCount: options.duplicateCount,
       equippedSlot: options.techniqueEquipped ? "mind" : null,
-      fixedPower: "0",
+      powerBonusBp: 0,
       experienceBonusBp: 0,
       spiritStoneBonusBp: 0,
       dropBonusBp: 0,
@@ -131,8 +132,7 @@ describe("equipment enhancement service", () => {
   it("charges the exact quote and refreshes an equipped item's power", () => {
     const { service } = serviceWithAssets({ equipmentEquipped: true });
     const cost = equipmentEnhanceCost("common", 0);
-    const beforePower = BigInt(service.snapshot.progress.totalPower);
-    const beforeFixedPower = BigInt(equipmentOf(service).fixedPower);
+    const beforeBonusBp = service.snapshot.progress.loadoutPowerBonusBp;
 
     const result = service.enhanceEquipment(EQUIPMENT_ID);
     const equipment = equipmentOf(service);
@@ -144,31 +144,40 @@ describe("equipment enhancement service", () => {
     });
 
     expect(equipment.enhanceLevel).toBe(cost.targetLevel);
-    expect(equipment.fixedPower).toBe(contribution.fixedPower);
+    expect(equipment.powerBonusBp).toBe(contribution.powerBonusBp);
     expect(service.snapshot.wallet.spiritStone).toBe(
       String(DEFAULT_OPTIONS.spiritStone - cost.spiritStone),
     );
     expect(stackQuantity(service, "enhance_stone")).toBe(
       String(DEFAULT_OPTIONS.enhanceStone - cost.enhanceStone),
     );
-    expect(service.snapshot.progress.loadoutFixedPower).toBe(
-      contribution.fixedPower,
+    expect(service.snapshot.progress.loadoutPowerBonusBp).toBe(
+      contribution.powerBonusBp,
     );
-    expect(BigInt(service.snapshot.progress.totalPower) - beforePower).toBe(
-      BigInt(contribution.fixedPower) - beforeFixedPower,
+    // The basis-point bonus is the unfloored signal. At Lv.1 base power is only
+    // 100, so a single enhancement level does not move the floored totalPower
+    // at all — asserting a totalPower delta here would pass even if enhancement
+    // stopped working entirely.
+    expect(service.snapshot.progress.loadoutPowerBonusBp).toBeGreaterThan(
+      beforeBonusBp,
+    );
+    expect(service.snapshot.progress.totalPower).toBe(
+      calculateTotalPower(service.snapshot.progress.level, {
+        percentBonusBp: contribution.powerBonusBp,
+      }),
     );
     expect(result.message).toContain("强化至 +1");
   });
 
   it("refreshes a bag item's derived power without changing the loadout", () => {
     const { service } = serviceWithAssets({ equipmentEquipped: false });
-    const loadoutBefore = service.snapshot.progress.loadoutFixedPower;
+    const loadoutBefore = service.snapshot.progress.loadoutPowerBonusBp;
     const totalPowerBefore = service.snapshot.progress.totalPower;
 
     service.enhanceEquipment(EQUIPMENT_ID);
 
-    expect(equipmentOf(service).fixedPower).toBe("88");
-    expect(service.snapshot.progress.loadoutFixedPower).toBe(loadoutBefore);
+    expect(equipmentOf(service).powerBonusBp).toBe(396);
+    expect(service.snapshot.progress.loadoutPowerBonusBp).toBe(loadoutBefore);
     expect(service.snapshot.progress.totalPower).toBe(totalPowerBefore);
   });
 
@@ -213,8 +222,7 @@ describe("technique star-up service", () => {
       techniqueEquipped: true,
     });
     const cost = techniqueStarUpgradeCost(3);
-    const beforePower = BigInt(service.snapshot.progress.totalPower);
-    const beforeFixedPower = BigInt(techniqueOf(service).fixedPower);
+    const beforeBonusBp = service.snapshot.progress.loadoutPowerBonusBp;
 
     const result = service.upgradeTechnique(TECHNIQUE_ID);
     const technique = techniqueOf(service);
@@ -225,18 +233,26 @@ describe("technique star-up service", () => {
 
     expect(technique.star).toBe(cost.targetStar);
     expect(technique.duplicateCount).toBe(5 - cost.duplicateCount);
-    expect(technique.fixedPower).toBe(contribution.fixedPower);
+    expect(technique.powerBonusBp).toBe(contribution.powerBonusBp);
     expect(technique.experienceBonusBp).toBe(
       contribution.experienceBonusBp,
     );
-    expect(service.snapshot.progress.loadoutFixedPower).toBe(
-      contribution.fixedPower,
+    expect(service.snapshot.progress.loadoutPowerBonusBp).toBe(
+      contribution.powerBonusBp,
     );
     expect(service.snapshot.progress.experienceBonusBp).toBe(
       contribution.experienceBonusBp,
     );
-    expect(BigInt(service.snapshot.progress.totalPower) - beforePower).toBe(
-      BigInt(contribution.fixedPower) - beforeFixedPower,
+    // Asserted on the basis-point bonus rather than a totalPower delta: at Lv.1
+    // the floored total barely moves, so a delta comparison is too weak to
+    // catch a star-up that stopped contributing.
+    expect(service.snapshot.progress.loadoutPowerBonusBp).toBeGreaterThan(
+      beforeBonusBp,
+    );
+    expect(service.snapshot.progress.totalPower).toBe(
+      calculateTotalPower(service.snapshot.progress.level, {
+        percentBonusBp: contribution.powerBonusBp,
+      }),
     );
     expect(result.message).toContain("升至 4 星");
   });
@@ -251,10 +267,10 @@ describe("technique star-up service", () => {
 
     service.upgradeTechnique(TECHNIQUE_ID);
 
-    expect(techniqueOf(service).fixedPower).toBe("48");
+    expect(techniqueOf(service).powerBonusBp).toBe(216);
     expect(techniqueOf(service).experienceBonusBp).toBe(240);
-    expect(service.snapshot.progress.loadoutFixedPower).toBe(
-      progressBefore.loadoutFixedPower,
+    expect(service.snapshot.progress.loadoutPowerBonusBp).toBe(
+      progressBefore.loadoutPowerBonusBp,
     );
     expect(service.snapshot.progress.experienceBonusBp).toBe(
       progressBefore.experienceBonusBp,

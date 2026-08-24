@@ -296,6 +296,67 @@ describe("progress validation", () => {
       corrupt((save) => (save.snapshot.progress.experienceRemainderMicros = -1)),
     ).toBe(true);
   });
+
+  it("rejects a loadout power bonus that is not a non-negative integer", () => {
+    expect(corrupt((save) => (save.snapshot.progress.loadoutPowerBonusBp = -1))).toBe(
+      true,
+    );
+    expect(corrupt((save) => (save.snapshot.progress.loadoutPowerBonusBp = 1.5))).toBe(
+      true,
+    );
+    expect(
+      corrupt((save) => (save.snapshot.progress.loadoutPowerBonusBp = "2809")),
+    ).toBe(true);
+  });
+
+  it("rejects a per-item power bonus that is not a non-negative integer", () => {
+    // Otherwise valid records, so only the power field can be the reason.
+    const technique = {
+      techniqueConfigId: "quiet_breathing_art",
+      displayName: "静息诀",
+      quality: "common",
+      slot: "mind",
+      star: 1,
+      duplicateCount: 0,
+      equippedSlot: null,
+      powerBonusBp: 0,
+      experienceBonusBp: 200,
+      spiritStoneBonusBp: 0,
+      dropBonusBp: 0,
+      configVersion: "local-idle-drop-v1",
+    };
+    const equipment = {
+      id: "00000000-0000-4000-8000-000000000301",
+      equipmentConfigId: "ironwood_sword",
+      displayName: "玄木剑",
+      quality: "common",
+      slot: "weapon",
+      powerBonusBp: 0,
+      enhanceLevel: 0,
+      rolledAffixes: [],
+      location: "bag",
+      equippedSlot: null,
+      isLocked: false,
+      configVersion: "local-idle-drop-v1",
+    };
+
+    expect(
+      corrupt((save) => {
+        save.snapshot.techniques = [technique];
+        save.snapshot.equipment = [equipment];
+      }),
+    ).toBe(false);
+    expect(
+      corrupt((save) => {
+        save.snapshot.techniques = [{ ...technique, powerBonusBp: "180" }];
+      }),
+    ).toBe(true);
+    expect(
+      corrupt((save) => {
+        save.snapshot.equipment = [{ ...equipment, powerBonusBp: -1 }];
+      }),
+    ).toBe(true);
+  });
 });
 
 describe("identity and wallet validation", () => {

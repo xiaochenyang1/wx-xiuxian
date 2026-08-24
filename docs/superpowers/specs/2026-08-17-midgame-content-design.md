@@ -224,6 +224,8 @@ partner: snapshot.unlocks.partner || level >= PARTNER_UNLOCK_LEVEL
 
 ### 6.1 迁移 `local-2.3.0 → local-2.4.0`
 
+**实施状态更正（2026-08-19）：** 第 3 节的战力模型改造已单独发布，并单独占用了 `local-2.4.0`——该版本只做下面第 3 步（`loadoutFixedPower` → `loadoutPowerBonusBp` 与单件 `fixedPower` → `powerBonusBp` 的改名与类型变更）。因此本节其余三步归属下一次版本跳 `local-2.4.0 → local-2.5.0`，且第 2 步与任务扩表仍必须同一次发布。分块发布时每块自带一次版本跳，不要把四件事塞回同一个版本号。
+
 一次版本跳，四件事：
 
 1. 补 `trialTower: { highestFloor: 0 }` 与 `unlocks.trialTower`（按当前等级判定，`level >= 15` 为 `true`）。
@@ -256,15 +258,42 @@ partner: snapshot.unlocks.partner || level >= PARTNER_UNLOCK_LEVEL
 
 ### 7.2 预期回归面
 
-战力模型改造会让现有断言的期望值失效。以下测试需要更新，属于预期改动而非"顺手改绿"，实施计划里应逐个列出并说明每处新期望值的来源：
+战力模型改造会让现有断言的期望值失效。下表按当前分支逐文件核过，属于预期改动而非"顺手改绿"。初稿此处两头都不准：把 `test/asset-upgrades.test.ts`（37 个）和 `test/expedition-domain.test.ts`（8 个）列为回归面，但它们只断言强化/升星/分解的**成本**与关卡门槛判定，不碰任何派生战力字段，改造后保持全绿、一行不动；同时漏掉了最大的单文件回归面 `test/asset-upgrade-service.test.ts`（25 处命中）。
 
-- `test/asset-upgrades.test.ts`（37 个）
-- `test/cave-bonuses.test.ts`（9 个）
-- `test/expedition-domain.test.ts`、`test/expedition-challenge.test.ts`、`test/expedition-sweep.test.ts`
-- `test/save-round-trip-audit.test.ts`、`test/local-save-validation.test.ts`（字段改名与新字段）
-- `test/progression-journey.test.ts`
+**仅字段改名**（快照 fixture 里的派生字段，`refreshSnapshot` 每次都会重算，填 `powerBonusBp: 0` 即可）：
 
-`test/feature-rail.test.ts` 需要为试炼塔入口增加一条断言。
+| 文件 | 位置 |
+| --- | --- |
+| `test/alchemy-crafting.test.ts` | 53 |
+| `test/asset-upgrade-display.test.ts` | 50、72 |
+| `test/harvest-batch.test.ts` | 26、143 |
+| `test/idle-drops.test.ts` | 50 |
+| `test/equipment-management.test.ts` | 29 |
+| `test/save-round-trip-audit.test.ts` | 71、89 |
+| `test/cave-bonuses.test.ts` | 15（`LoadoutBonuses` 字面量） |
+
+**期望值真的改变**：
+
+| 文件 | 位置 | 旧 | 新 |
+| --- | --- | --- | --- |
+| `test/asset-upgrade-service.test.ts` | 170 | `fixedPower` `"88"` | `powerBonusBp` `396` |
+| `test/asset-upgrade-service.test.ts` | 254 | `fixedPower` `"48"` | `powerBonusBp` `216` |
+| `test/save-round-trip-audit.test.ts` | 265 | `"88"` | `396` |
+| `test/save-round-trip-audit.test.ts` | 269 | `"48"` | `216` |
+| `test/cave-bonuses.test.ts` | 34 | 炼器室 `+50/级` 固定值 | `+200 bp/级` |
+
+**陷阱一：Lv.1 的 delta 断言会变成空断言。** `asset-upgrade-service.test.ts:157-158` 与 `238-239` 断言的是 `totalPower` 前后差等于派生战力前后差。百分比模型下 Lv.1 裸战力只有 100，装备 common 从 +0 到 +1 只让 bp 从 360 涨到 396，`floor(100 × 1.0396)` 与 `floor(100 × 1.036)` 同为 103，**delta 归零**——照抄改名会得到一条即使强化完全失效也能通过的断言。这两处必须改成断言 `loadoutPowerBonusBp` 本身（未经 floor 的真实信号），totalPower 另立一条非空断言（功法那条在 Lv.1 的 delta 是 1，仍非空，但同样建议改为断言 bp）。
+
+**陷阱二：迁移 fixture 必须保留旧字段名。** `local-save-migration.test.ts:80、94` 是**迁移前**的老版本存档 fixture，而字段改名正是 `local-2.3.0 → local-2.4.0` 迁移要做的事。这两处必须继续写 `fixedPower`，由迁移负责改名；一并改成新名会让迁移测试不再测到改名这一步。
+
+**需要按新规则扩写而非改值**：
+
+- `test/local-save-validation.test.ts`：新增 `trialTower.highestFloor` 越界、`unlocks.trialTower` 非布尔、`progress.loadoutPowerBonusBp` 非法、`progressionTasks` 条数不符四组用例。既有 385 行的 `unlocks.partner = "yes"` 仍然有效。
+- `test/progression-journey.test.ts`：字段改名、任务表 22 条、三个新解锁等级。
+- `test/newcomer-task-display.test.ts`：字段改名与扩表后的展示模型。
+- `test/feature-rail.test.ts`：底栏第 5 槽由灵宠改为试炼塔的断言。
+
+**确认不受影响、无需改动**：`test/asset-upgrades.test.ts`、`test/expedition-domain.test.ts`、`test/expedition-challenge.test.ts:51`、`test/expedition-sweep.test.ts:68`、`test/expedition-panel-display.test.ts`、`test/fractional-rate-round-trip.test.ts`——后四者或用 `toBeGreaterThanOrEqual` 比较，或直接注入 `totalPower` 字面量，与战力如何算出来无关。
 
 ## 8. 验收基线
 

@@ -66,7 +66,7 @@ export const CAVE_BUILDING_CONFIGS: readonly CaveBuildingConfig[] = [
     displayName: "炼器室",
     maxLevel: CAVE_MAX_LEVEL,
     bonusStat: "power",
-    bonusPerLevelBp: 50,
+    bonusPerLevelBp: 200,
     baseSpiritStoneCost: 3_000,
     materials: [
       { itemConfigId: "ore", baseQuantity: 5 },

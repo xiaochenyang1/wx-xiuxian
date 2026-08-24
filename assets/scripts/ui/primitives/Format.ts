@@ -32,6 +32,11 @@ export function formatSignedPowerDelta(value: string): string {
     : `+${formatLargeNumber(value)}`;
 }
 
+export function formatBasisPoints(value: number): string {
+  const percent = value / 100;
+  return `${Number.isInteger(percent) ? percent.toFixed(0) : percent.toFixed(2)}%`;
+}
+
 export function avatarVariantName(variant: ChosenAvatarVariant): string {
   return variant === "male" ? "男修形象" : "女修形象";
 }

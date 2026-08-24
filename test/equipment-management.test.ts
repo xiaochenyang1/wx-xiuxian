@@ -26,7 +26,7 @@ function equipment(
     displayName: "玄木剑",
     quality: "common",
     slot: "weapon",
-    fixedPower: "80",
+    powerBonusBp: 0,
     enhanceLevel: 0,
     rolledAffixes: [],
     location,

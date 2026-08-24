@@ -10,7 +10,7 @@ export function calculateCaveBonuses(
   buildings: readonly CaveBuildingInput[],
 ): LoadoutBonuses {
   const total: LoadoutBonuses = {
-    fixedPower: "0",
+    powerBonusBp: 0,
     experienceBonusBp: 0,
     spiritStoneBonusBp: 0,
     dropBonusBp: 0,
@@ -33,9 +33,7 @@ export function calculateCaveBonuses(
     if (config.bonusStat === "experience") total.experienceBonusBp += amount;
     if (config.bonusStat === "spirit_stone") total.spiritStoneBonusBp += amount;
     if (config.bonusStat === "drop") total.dropBonusBp += amount;
-    if (config.bonusStat === "power") {
-      total.fixedPower = (BigInt(total.fixedPower) + BigInt(amount)).toString();
-    }
+    if (config.bonusStat === "power") total.powerBonusBp += amount;
   }
   return total;
 }
@@ -45,7 +43,7 @@ export function addLoadoutBonuses(
   b: LoadoutBonuses,
 ): LoadoutBonuses {
   return {
-    fixedPower: (BigInt(a.fixedPower) + BigInt(b.fixedPower)).toString(),
+    powerBonusBp: a.powerBonusBp + b.powerBonusBp,
     experienceBonusBp: a.experienceBonusBp + b.experienceBonusBp,
     spiritStoneBonusBp: a.spiritStoneBonusBp + b.spiritStoneBonusBp,
     dropBonusBp: a.dropBonusBp + b.dropBonusBp,

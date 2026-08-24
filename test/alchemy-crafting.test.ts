@@ -50,7 +50,7 @@ function equipmentInstance(index: number): Record<string, unknown> {
     displayName: "玄木剑",
     quality: "common",
     slot: "weapon",
-    fixedPower: "0",
+    powerBonusBp: 0,
     enhanceLevel: 0,
     rolledAffixes: [],
     location: "bag",

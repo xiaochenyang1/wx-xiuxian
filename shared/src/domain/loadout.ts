@@ -1,6 +1,7 @@
 import {
   ASSET_QUALITY_MULTIPLIER_BP,
   ASSET_QUALITY_ORDER,
+  LOADOUT_POWER_SCALE_BP,
   getEquipmentConfig,
   getTechniqueConfig,
   type AssetQuality,
@@ -9,7 +10,6 @@ import {
   EQUIPMENT_MAX_ENHANCE_LEVEL,
   TECHNIQUE_MAX_STAR,
 } from "../config/asset-upgrades";
-import type { BigNumberString } from "../types";
 
 const TECHNIQUE_STAR_MULTIPLIER_BP = [
   0,
@@ -38,7 +38,7 @@ export interface EquippedEquipmentInput {
 }
 
 export interface LoadoutBonuses {
-  fixedPower: BigNumberString;
+  powerBonusBp: number;
   experienceBonusBp: number;
   spiritStoneBonusBp: number;
   dropBonusBp: number;
@@ -60,11 +60,12 @@ export function calculateTechniqueContribution(
   const starMultiplierBp = TECHNIQUE_STAR_MULTIPLIER_BP[input.star]!;
   const qualityMultiplierBp = ASSET_QUALITY_MULTIPLIER_BP[config.quality];
   return {
-    fixedPower: scaleByBasisPoints(
+    powerBonusBp: scaleByBasisPoints(
       config.fixedPower,
+      LOADOUT_POWER_SCALE_BP,
       qualityMultiplierBp,
       starMultiplierBp,
-    ).toString(),
+    ),
     experienceBonusBp: scaleByBasisPoints(
       config.experienceBonusBp,
       qualityMultiplierBp,
@@ -100,13 +101,13 @@ export function calculateEquipmentContribution(
   }
 
   const config = getEquipmentConfig(input.equipmentConfigId);
-  const fixedPower = scaleByBasisPoints(
+  const bonuses = emptyLoadoutBonuses();
+  bonuses.powerBonusBp = scaleByBasisPoints(
     config.basePower,
+    LOADOUT_POWER_SCALE_BP,
     ASSET_QUALITY_MULTIPLIER_BP[input.quality],
     10_000 + input.enhanceLevel * 1_000,
   );
-  const bonuses = emptyLoadoutBonuses();
-  bonuses.fixedPower = fixedPower.toString();
 
   for (const affix of parseAffixes(input.rolledAffixes)) {
     if (affix.stat === "experience_bonus") bonuses.experienceBonusBp += affix.valueBp;
@@ -132,7 +133,7 @@ export function calculateLoadoutBonuses(input: {
 
 function emptyLoadoutBonuses(): LoadoutBonuses {
   return {
-    fixedPower: "0",
+    powerBonusBp: 0,
     experienceBonusBp: 0,
     spiritStoneBonusBp: 0,
     dropBonusBp: 0,
@@ -140,7 +141,7 @@ function emptyLoadoutBonuses(): LoadoutBonuses {
 }
 
 function addContribution(total: LoadoutBonuses, contribution: LoadoutBonuses): void {
-  total.fixedPower = (BigInt(total.fixedPower) + BigInt(contribution.fixedPower)).toString();
+  total.powerBonusBp += contribution.powerBonusBp;
   total.experienceBonusBp += contribution.experienceBonusBp;
   total.spiritStoneBonusBp += contribution.spiritStoneBonusBp;
   total.dropBonusBp += contribution.dropBonusBp;

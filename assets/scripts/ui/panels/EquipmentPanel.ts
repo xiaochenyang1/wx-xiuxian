@@ -15,7 +15,7 @@ import {
   drawBand,
   drawPagination,
 } from "../primitives/Draw";
-import { qualityColor } from "../primitives/Format";
+import { formatBasisPoints, qualityColor } from "../primitives/Format";
 import { HorizontalTextAlignment, Node } from "cc";
 
 export function drawEquipmentPanel(
@@ -89,7 +89,7 @@ export function drawEquipmentPanel(
     );
     addLabel(
       overlay,
-      `战力 +${formatLargeNumber(item.fixedPower)} · +${item.enhanceLevel}`,
+      `战力 +${formatBasisPoints(item.powerBonusBp)} · +${item.enhanceLevel}`,
       -95,
       y + 18,
       150,

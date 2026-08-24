@@ -12,7 +12,7 @@ describe("cave bonuses", () => {
       { buildingConfigId: "spirit_array", level: 0 },
     ]);
     expect(bonuses).toEqual({
-      fixedPower: "0",
+      powerBonusBp: 0,
       experienceBonusBp: 0,
       spiritStoneBonusBp: 0,
       dropBonusBp: 0,
@@ -29,11 +29,9 @@ describe("cave bonuses", () => {
         .dropBonusBp,
     ).toBeGreaterThan(0);
     expect(
-      BigInt(
-        calculateCaveBonuses([{ buildingConfigId: "crafting_room", level: 1 }])
-          .fixedPower,
-      ),
-    ).toBeGreaterThan(0n);
+      calculateCaveBonuses([{ buildingConfigId: "crafting_room", level: 1 }])
+        .powerBonusBp,
+    ).toBe(200);
   });
 
   it("sums bonuses across buildings on the same dimension", () => {

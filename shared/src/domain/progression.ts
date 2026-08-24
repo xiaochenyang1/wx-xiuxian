@@ -32,7 +32,6 @@ export interface ApplyExperienceResult {
 
 export interface PowerBonuses {
   percentBonusBp?: number;
-  fixedPower?: DecimalInput;
 }
 
 export function requiredExperienceForLevel(level: number): BigNumberString {
@@ -65,12 +64,7 @@ export function calculateTotalPower(
   bonuses: PowerBonuses = {},
 ): BigNumberString {
   const percentBonusBp = bonuses.percentBonusBp ?? 0;
-  const fixedPower = decimal(bonuses.fixedPower ?? 0);
   assertValidBonus(percentBonusBp);
-
-  if (fixedPower.isNegative()) {
-    throw new RangeError("Fixed power cannot be negative");
-  }
 
   const realm = getRealmConfigForLevel(level);
   const basePower = decimal(level).times(100).times(realm.powerMultiplier);
@@ -78,7 +72,6 @@ export function calculateTotalPower(
   return basePower
     .times(BASIS_POINTS + percentBonusBp)
     .div(BASIS_POINTS)
-    .plus(fixedPower)
     .toDecimalPlaces(0, Decimal.ROUND_FLOOR)
     .toFixed(0);
 }
