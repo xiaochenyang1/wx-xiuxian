@@ -2,6 +2,7 @@ import {
   ASSET_QUALITY_MULTIPLIER_BP,
   ASSET_QUALITY_ORDER,
   LOADOUT_POWER_SCALE_BP,
+  equipmentAffixRange,
   getEquipmentConfig,
   getTechniqueConfig,
   type AssetQuality,
@@ -24,6 +25,27 @@ const TECHNIQUE_STAR_MULTIPLIER_BP = [
   76_000,
   95_000,
 ] as const;
+
+export type AffixStat =
+  | "experience_bonus"
+  | "spirit_stone_bonus"
+  | "drop_bonus";
+
+export interface RolledAffix {
+  readonly stat: AffixStat;
+  readonly valueBp: number;
+}
+
+/**
+ * The stat order affixes are stored and displayed in. A piece never carries the
+ * same stat twice, so this order makes any two pieces directly comparable
+ * without sorting at the display layer.
+ */
+export const AFFIX_STATS: readonly AffixStat[] = [
+  "experience_bonus",
+  "spirit_stone_bonus",
+  "drop_bonus",
+];
 
 export interface EquippedTechniqueInput {
   techniqueConfigId: string;
@@ -129,6 +151,62 @@ export function calculateLoadoutBonuses(input: {
     addContribution(total, calculateEquipmentContribution(equipment));
   }
   return total;
+}
+
+/**
+ * Rolls the affixes for a freshly created, rerolled or ascended piece.
+ *
+ * Stats are drawn first, without repetition, then values are rolled in stored
+ * order, so a given randomInt sequence always produces the same result. The
+ * caller owns the randomness: the service passes its plain randomInteger and
+ * the idle-drop path passes its seeded one.
+ */
+export function rollEquipmentAffixes(
+  quality: AssetQuality,
+  randomInt: (maxExclusive: number) => number,
+): RolledAffix[] {
+  const range = equipmentAffixRange(quality);
+  if (range.count === 0) return [];
+
+  const candidates = [...AFFIX_STATS];
+  for (let picked = 0; picked < range.count; picked += 1) {
+    const offset = randomInt(candidates.length - picked);
+    if (!Number.isInteger(offset) || offset < 0 || offset >= candidates.length - picked) {
+      throw new RangeError(`Affix stat roll out of range: ${offset}`);
+    }
+    const swapWith = picked + offset;
+    const held = candidates[picked]!;
+    candidates[picked] = candidates[swapWith]!;
+    candidates[swapWith] = held;
+  }
+
+  const span = range.maxValueBp - range.minValueBp + 1;
+  return candidates
+    .slice(0, range.count)
+    .sort((left, right) => AFFIX_STATS.indexOf(left) - AFFIX_STATS.indexOf(right))
+    .map((stat) => {
+      const offset = randomInt(span);
+      if (!Number.isInteger(offset) || offset < 0 || offset >= span) {
+        throw new RangeError(`Affix value roll out of range: ${offset}`);
+      }
+      return { stat, valueBp: range.minValueBp + offset };
+    });
+}
+
+/**
+ * Scores a piece's affixes against the best roll its quality can produce, in
+ * basis points. Derived on demand and never stored, which is the only way it
+ * cannot drift away from the affixes it describes.
+ */
+export function equipmentAffixScoreBp(
+  quality: AssetQuality,
+  affixes: readonly RolledAffix[],
+): number {
+  const range = equipmentAffixRange(quality);
+  if (range.count === 0) return 0;
+  const best = range.count * range.maxValueBp;
+  const rolled = affixes.reduce((total, affix) => total + affix.valueBp, 0);
+  return Math.floor((rolled * 10_000) / best);
 }
 
 function emptyLoadoutBonuses(): LoadoutBonuses {

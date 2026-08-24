@@ -104,6 +104,50 @@ export const ASSET_QUALITY_DISPLAY_NAMES: Readonly<Record<AssetQuality, string>>
   primordial: "洪荒",
 };
 
+/**
+ * How many affixes an equipment piece of each quality rolls, and the center of
+ * the value each affix rolls around. Written as a Record instead of a ternary
+ * chain so adding a quality is a compile error rather than a silent zero.
+ *
+ * The centers for uncommon through legendary are the values those qualities
+ * used to award deterministically, so existing content keeps its expected
+ * yield and only gains variance.
+ */
+export const EQUIPMENT_AFFIX_ROLL: Readonly<
+  Record<AssetQuality, { readonly count: number; readonly centerBp: number }>
+> = {
+  common: { count: 0, centerBp: 0 },
+  uncommon: { count: 1, centerBp: 100 },
+  rare: { count: 1, centerBp: 180 },
+  epic: { count: 2, centerBp: 250 },
+  legendary: { count: 3, centerBp: 350 },
+  mythic: { count: 3, centerBp: 500 },
+  primordial: { count: 3, centerBp: 700 },
+};
+
+/** Affixes roll within 40% of their quality's center value. */
+export const EQUIPMENT_AFFIX_SPREAD_BP = 4_000;
+
+export interface EquipmentAffixRange {
+  readonly count: number;
+  readonly minValueBp: number;
+  readonly maxValueBp: number;
+}
+
+export function equipmentAffixRange(quality: AssetQuality): EquipmentAffixRange {
+  const roll = EQUIPMENT_AFFIX_ROLL[quality];
+  if (!roll) throw new RangeError(`Unknown equipment quality: ${quality}`);
+  if (roll.count === 0) {
+    return { count: 0, minValueBp: 0, maxValueBp: 0 };
+  }
+  const spread = (roll.centerBp * EQUIPMENT_AFFIX_SPREAD_BP) / 10_000;
+  return {
+    count: roll.count,
+    minValueBp: Math.ceil(roll.centerBp - spread),
+    maxValueBp: Math.floor(roll.centerBp + spread),
+  };
+}
+
 export const ITEM_CONFIGS: readonly ItemConfig[] = [
   {
     id: "exp_pill_small",

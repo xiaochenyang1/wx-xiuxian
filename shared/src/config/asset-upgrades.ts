@@ -1,6 +1,7 @@
 import { BASIS_POINTS } from "../types";
 import {
   ASSET_QUALITY_MULTIPLIER_BP,
+  ASSET_QUALITY_ORDER,
   type AssetQuality,
 } from "./assets";
 
@@ -9,6 +10,26 @@ export const TECHNIQUE_MAX_STAR = 10;
 export const TECHNIQUE_PAGES_PER_DUPLICATE = 5;
 export const EQUIPMENT_SALVAGE_ENHANCE_REFUND_BP = 5_000;
 export const ENHANCE_STONE_OVERFLOW_SPIRIT_STONE_VALUE = 100;
+export const EQUIPMENT_REROLL_BASE_ENHANCE_STONE = 3;
+export const EQUIPMENT_REROLL_BASE_SPIRIT_STONE = 800;
+export const EQUIPMENT_ASCEND_DUPLICATE_COUNT = 2;
+export const EQUIPMENT_ASCEND_BASE_SPIRIT_STONE = 20_000;
+
+/**
+ * Which crafting room level unlocks ascending *into* each quality. Keyed by
+ * target rather than source, so the table itself states that mythic and
+ * primordial are the only qualities ascension can produce.
+ */
+const EQUIPMENT_ASCEND_REQUIRED_CRAFTING_ROOM_LEVEL: Readonly<
+  Partial<Record<AssetQuality, number>>
+> = {
+  mythic: 5,
+  primordial: 8,
+};
+
+const ASSET_QUALITY_BY_ORDER: readonly AssetQuality[] = (
+  Object.keys(ASSET_QUALITY_ORDER) as AssetQuality[]
+).sort((left, right) => ASSET_QUALITY_ORDER[left] - ASSET_QUALITY_ORDER[right]);
 
 const EQUIPMENT_SALVAGE_BASE_REWARD: Readonly<
   Record<AssetQuality, { readonly spiritStone: number; readonly enhanceStone: number }>
@@ -52,6 +73,18 @@ export interface EquipmentSalvageReward {
   readonly enhanceStone: number;
   readonly refundedSpiritStone: number;
   readonly refundedEnhanceStone: number;
+}
+
+export interface EquipmentRerollCost {
+  readonly enhanceStone: number;
+  readonly spiritStone: number;
+}
+
+export interface EquipmentAscendCost {
+  readonly targetQuality: AssetQuality;
+  readonly duplicateCount: number;
+  readonly spiritStone: number;
+  readonly requiredCraftingRoomLevel: number;
 }
 
 export function equipmentEnhanceCost(
@@ -112,6 +145,63 @@ export function shouldAutoLockEquipment(quality: AssetQuality): boolean {
     throw new RangeError(`Unknown equipment quality: ${quality}`);
   }
   return quality !== "common" && quality !== "uncommon";
+}
+
+export function nextAssetQuality(quality: AssetQuality): AssetQuality | null {
+  const order = ASSET_QUALITY_ORDER[quality];
+  if (order === undefined) {
+    throw new RangeError(`Unknown equipment quality: ${quality}`);
+  }
+  return ASSET_QUALITY_BY_ORDER[order + 1] ?? null;
+}
+
+export function equipmentRerollCost(quality: AssetQuality): EquipmentRerollCost {
+  const qualityMultiplierBp = ASSET_QUALITY_MULTIPLIER_BP[quality];
+  if (qualityMultiplierBp === undefined) {
+    throw new RangeError(`Unknown equipment quality: ${quality}`);
+  }
+  if (quality === "common") {
+    throw new RangeError("Common equipment has no affixes to reroll");
+  }
+  return {
+    enhanceStone: scaleByBasisPointsCeil(
+      EQUIPMENT_REROLL_BASE_ENHANCE_STONE,
+      qualityMultiplierBp,
+    ),
+    spiritStone: scaleByBasisPointsCeil(
+      EQUIPMENT_REROLL_BASE_SPIRIT_STONE,
+      qualityMultiplierBp,
+    ),
+  };
+}
+
+export function equipmentAscendCost(quality: AssetQuality): EquipmentAscendCost {
+  const targetQuality = nextAssetQuality(quality);
+  if (!targetQuality) {
+    throw new RangeError(`Equipment quality is already the highest: ${quality}`);
+  }
+  const requiredCraftingRoomLevel =
+    EQUIPMENT_ASCEND_REQUIRED_CRAFTING_ROOM_LEVEL[targetQuality];
+  if (requiredCraftingRoomLevel === undefined) {
+    throw new RangeError(`Equipment quality cannot be ascended: ${quality}`);
+  }
+  return {
+    targetQuality,
+    duplicateCount: EQUIPMENT_ASCEND_DUPLICATE_COUNT,
+    spiritStone: scaleByBasisPointsCeil(
+      EQUIPMENT_ASCEND_BASE_SPIRIT_STONE,
+      ASSET_QUALITY_MULTIPLIER_BP[targetQuality],
+    ),
+    requiredCraftingRoomLevel,
+  };
+}
+
+export function canAscendEquipmentQuality(quality: AssetQuality): boolean {
+  const targetQuality = nextAssetQuality(quality);
+  return (
+    targetQuality !== null &&
+    EQUIPMENT_ASCEND_REQUIRED_CRAFTING_ROOM_LEVEL[targetQuality] !== undefined
+  );
 }
 
 export function equipmentSalvageReward(
