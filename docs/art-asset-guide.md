@@ -40,7 +40,7 @@
 | 法宝 | `assets/resources/art/navigation/features/treasure.png` | `(161, 1247)` |
 | 炼丹 | `assets/resources/art/navigation/features/alchemy.png` | `(268, 1247)` |
 | 炼器 | `assets/resources/art/navigation/features/crafting.png` | `(375, 1247)` |
-| 灵宠 | `assets/resources/art/navigation/features/pet.png` | `(482, 1247)` |
+| 试炼塔 | `assets/resources/art/navigation/features/trial-tower.png` | `(482, 1247)` |
 | 宗门 | `assets/resources/art/navigation/features/sect.png` | `(589, 1247)` |
 | 历练 | `assets/resources/art/navigation/features/training.png` | `(696, 1247)` |
 

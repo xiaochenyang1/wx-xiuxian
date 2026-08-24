@@ -126,6 +126,7 @@ import { drawAlchemyPanel } from "./panels/AlchemyPanel";
 import { drawCraftingPanel } from "./panels/CraftingPanel";
 import { drawSectPanel } from "./panels/SectPanel";
 import { drawCavePanel } from "./panels/CavePanel";
+import { drawTrialTowerPanel } from "./panels/TrialTowerPanel";
 import {
   Button,
   BlockInputEvents,
@@ -163,6 +164,7 @@ export interface AppViewActions {
   upgradeCaveBuilding(buildingConfigId: string): void;
   challengeExpedition(stageConfigId: string): void;
   sweepExpedition(stageConfigId: string): void;
+  challengeTrialTower(floor: number): void;
   huntTreasure(): void;
   brewAlchemy(recipeId: string): void;
   brewAlchemyBatch(recipeId: string): void;
@@ -2524,8 +2526,8 @@ export class AppView {
       { label: "法宝", feature: "equipment" },
       { label: "炼丹", feature: "alchemy" },
       { label: "炼器", feature: "crafting" },
-      // 灵宠是法宝的一个槽位（月影灵狐），直接开到法宝面板。
-      { label: "灵宠", feature: "equipment" },
+      // 灵宠是法宝的一个槽位（月影灵狐），法宝面板已经管着它，这一格留给试炼塔。
+      { label: "试炼塔", feature: "trialTower" },
       { label: "宗门", feature: "sect" },
       { label: "历练", feature: "expedition" },
     ];
@@ -2570,6 +2572,7 @@ export class AppView {
       crafting: "炼器室",
       sect: "宗门",
       expedition: "历练",
+      trialTower: "试炼塔",
     }[feature];
     addLabel(overlay, title, 0, 466, 420, 54, 31, COLORS.gold, true);
     createButton(
@@ -2616,6 +2619,8 @@ export class AppView {
     }
     if (feature === "expedition")
       drawExpeditionPanel(overlay, state, this.actions);
+    if (feature === "trialTower")
+      drawTrialTowerPanel(overlay, state, this.actions);
 
     if (featureMessageDisplay?.surface === "feature-panel") {
       drawBand(overlay, "FeatureMessage", 0, -473, 620, 68, COLORS.inkGreenLight);

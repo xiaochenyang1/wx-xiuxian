@@ -11,7 +11,8 @@ export type ImplementedFeaturePanel =
   | "alchemy"
   | "crafting"
   | "sect"
-  | "expedition";
+  | "expedition"
+  | "trialTower";
 
 export type FeaturePanel = ImplementedFeaturePanel;
 

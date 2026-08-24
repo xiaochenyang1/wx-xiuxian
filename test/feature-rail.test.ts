@@ -14,7 +14,7 @@ const BOTTOM_RAIL: ReadonlyArray<{
   { label: "法宝", feature: "equipment" },
   { label: "炼丹", feature: "alchemy" },
   { label: "炼器", feature: "crafting" },
-  { label: "灵宠", feature: "equipment" },
+  { label: "试炼塔", feature: "trialTower" },
   { label: "宗门", feature: "sect" },
   { label: "历练", feature: "expedition" },
 ];
@@ -32,16 +32,18 @@ describe("bottom feature rail wiring", () => {
     );
   });
 
-  it("uses a distinct panel id for every standalone system", () => {
-    const standalone = BOTTOM_RAIL.filter((entry) => entry.label !== "灵宠");
-    expect(new Set(standalone.map((entry) => entry.feature)).size).toBe(
-      standalone.length,
+  it("gives every slot its own panel now that no label is a duplicate", () => {
+    // 灵宠 used to share the 法宝 panel because a pet is one of its slots; the
+    // tower took that slot, so a repeated panel id is now a wiring mistake.
+    expect(new Set(BOTTOM_RAIL.map((entry) => entry.feature)).size).toBe(
+      BOTTOM_RAIL.length,
     );
   });
 
-  it("routes 灵宠 to the equipment panel that owns the pet slot", () => {
-    const pet = BOTTOM_RAIL.find((entry) => entry.label === "灵宠");
-    expect(pet?.feature).toBe("equipment");
+  it("routes 试炼塔 to its own panel rather than the equipment page", () => {
+    const tower = BOTTOM_RAIL.find((entry) => entry.label === "试炼塔");
+    expect(tower?.feature).toBe("trialTower");
+    expect(BOTTOM_RAIL.some((entry) => entry.label === "灵宠")).toBe(false);
   });
 
   it("routes 历练 to its implemented expedition panel", () => {
