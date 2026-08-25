@@ -1,4 +1,4 @@
-import type { AssetQuality, EquipmentSlot } from "./assets";
+import type { AssetQuality, EquipmentBand, EquipmentSlot } from "./assets";
 
 export type CraftingRecipeId =
   | "forge_weapon"
@@ -83,16 +83,91 @@ export const CRAFTING_RECIPE_CONFIGS: readonly CraftingRecipeConfig[] = [
   },
 ];
 
+/**
+ * Crafting odds per band. This is where a band pays off: the materials a recipe
+ * costs never change with the band, so a higher band is the same material spend
+ * with better odds. `commonWeightFloor` is how far the crafting room's level can
+ * push weight out of 普通 — at band 1 it is the 3,000 the single-table version
+ * hard-coded.
+ */
+export const CRAFTING_QUALITY_BAND_WEIGHTS: Readonly<
+  Record<
+    EquipmentBand,
+    {
+      readonly commonWeightFloor: number;
+      readonly weights: readonly {
+        readonly quality: AssetQuality;
+        readonly weight: number;
+      }[];
+    }
+  >
+> = {
+  1: {
+    commonWeightFloor: 3_000,
+    weights: [
+      { quality: "common", weight: 7_000 },
+      { quality: "uncommon", weight: 2_200 },
+      { quality: "rare", weight: 650 },
+      { quality: "epic", weight: 140 },
+      { quality: "legendary", weight: 10 },
+    ],
+  },
+  2: {
+    commonWeightFloor: 2_200,
+    weights: [
+      { quality: "common", weight: 5_200 },
+      { quality: "uncommon", weight: 3_000 },
+      { quality: "rare", weight: 1_400 },
+      { quality: "epic", weight: 360 },
+      { quality: "legendary", weight: 40 },
+    ],
+  },
+  3: {
+    commonWeightFloor: 1_400,
+    weights: [
+      { quality: "common", weight: 3_400 },
+      { quality: "uncommon", weight: 3_400 },
+      { quality: "rare", weight: 2_200 },
+      { quality: "epic", weight: 900 },
+      { quality: "legendary", weight: 100 },
+    ],
+  },
+  4: {
+    commonWeightFloor: 800,
+    weights: [
+      { quality: "common", weight: 1_800 },
+      { quality: "uncommon", weight: 3_200 },
+      { quality: "rare", weight: 3_000 },
+      { quality: "epic", weight: 1_750 },
+      { quality: "legendary", weight: 250 },
+    ],
+  },
+};
+
+/** The band-1 table, kept under its old name because it is the quality list. */
 export const CRAFTING_QUALITY_WEIGHTS: readonly {
   readonly quality: AssetQuality;
   readonly weight: number;
-}[] = [
-  { quality: "common", weight: 7_000 },
-  { quality: "uncommon", weight: 2_200 },
-  { quality: "rare", weight: 650 },
-  { quality: "epic", weight: 140 },
-  { quality: "legendary", weight: 10 },
-];
+}[] = CRAFTING_QUALITY_BAND_WEIGHTS[1].weights;
+
+/**
+ * Spirit stone scales with the band, materials do not. Materials only come from
+ * idle drops and expedition sweeps and are the real late-game bottleneck, while
+ * one trial tower floor pays out into the billions — so this is where late-game
+ * spirit stone finds a sink without locking high-band crafting behind farming.
+ */
+export const CRAFTING_BAND_SPIRIT_STONE_MULTIPLIER: Readonly<
+  Record<EquipmentBand, number>
+> = { 1: 1, 2: 4, 3: 12, 4: 30 };
+
+export function craftingSpiritStoneCost(
+  recipe: CraftingRecipeConfig,
+  band: EquipmentBand,
+): number {
+  const multiplier = CRAFTING_BAND_SPIRIT_STONE_MULTIPLIER[band];
+  if (!multiplier) throw new RangeError(`Unknown equipment band: ${band}`);
+  return recipe.spiritStoneCost * multiplier;
+}
 
 export function getCraftingRecipeConfig(id: string): CraftingRecipeConfig {
   const config = CRAFTING_RECIPE_CONFIGS.find((candidate) => candidate.id === id);
@@ -103,14 +178,18 @@ export function getCraftingRecipeConfig(id: string): CraftingRecipeConfig {
 export function craftingQualityWeight(
   quality: AssetQuality,
   craftingRoomLevel: number,
+  band: EquipmentBand = 1,
 ): number {
+  const table = CRAFTING_QUALITY_BAND_WEIGHTS[band];
+  if (!table) throw new RangeError(`Unknown equipment band: ${band}`);
   const base =
-    CRAFTING_QUALITY_WEIGHTS.find((candidate) => candidate.quality === quality)
-      ?.weight ?? 0;
+    table.weights.find((candidate) => candidate.quality === quality)?.weight ?? 0;
   if (!Number.isInteger(craftingRoomLevel) || craftingRoomLevel < 0) {
     throw new RangeError("Crafting room level must be a non-negative integer");
   }
-  if (quality === "common") return Math.max(3_000, base - craftingRoomLevel * 350);
+  if (quality === "common") {
+    return Math.max(table.commonWeightFloor, base - craftingRoomLevel * 350);
+  }
   if (quality === "uncommon") return base + craftingRoomLevel * 200;
   if (quality === "rare") return base + craftingRoomLevel * 110;
   if (quality === "epic") return base + craftingRoomLevel * 35;

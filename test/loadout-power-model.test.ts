@@ -6,6 +6,8 @@ import {
   calculateCaveBonuses,
   calculateLoadoutBonuses,
   calculateTotalPower,
+  equipmentConfigForSlotAndBand,
+  type EquipmentBand,
   type EquippedEquipmentInput,
   type EquippedTechniqueInput,
 } from "@cultivation-diary/shared";
@@ -45,6 +47,22 @@ function techniqueLoadout(
   star: number,
 ): EquippedTechniqueInput[] {
   return ids.map((techniqueConfigId) => ({ techniqueConfigId, star }));
+}
+
+/** The same six slots, filled from one band's config family. */
+function bandEquipmentLoadout(
+  band: EquipmentBand,
+  quality: EquippedEquipmentInput["quality"],
+  enhanceLevel: number,
+): EquippedEquipmentInput[] {
+  return (
+    ["weapon", "armor", "accessory", "accessory", "mount", "pet"] as const
+  ).map((slot) => ({
+    equipmentConfigId: equipmentConfigForSlotAndBand(slot, band).id,
+    quality,
+    enhanceLevel,
+    rolledAffixes: [],
+  }));
 }
 
 /** Legendary +20 gear, uncommon 10-star techniques, crafting room at max. */
@@ -132,5 +150,66 @@ describe("loadout power model", () => {
 
     expect(perLevel).toBe(200);
     expect(maxLevel).toBe(2_000);
+  });
+});
+
+describe("equipment bands are not a power axis", () => {
+  /**
+   * The gate on the ruler above. `LOADOUT_POWER_SCALE_BP` is solved from the
+   * maxed and starter endpoints at the same time, which pins the top band's
+   * base sum to exactly the 450 the five original configs already had. So a
+   * 天阶 loadout must weigh the same as a 凡阶 one at equal quality and
+   * enhancement: bands buy identity, drop odds and affix size, never power.
+   * Give one band a higher `basePower` and this is what fails first.
+   */
+  const BANDS: readonly EquipmentBand[] = [1, 2, 3, 4];
+
+  it("gives every band the same maxed powerBonusBp", () => {
+    const techniques = techniqueLoadout(
+      [
+        "azure_cloud_heart_manual",
+        "drifting_cloud_steps",
+        "thunder_seal",
+        "star_observing_secret",
+      ],
+      TECHNIQUE_MAX_STAR,
+    );
+    const bonuses = BANDS.map(
+      (band) =>
+        calculateLoadoutBonuses({
+          techniques,
+          equipment: bandEquipmentLoadout(
+            band,
+            "legendary",
+            EQUIPMENT_MAX_ENHANCE_LEVEL,
+          ),
+        }).powerBonusBp,
+    );
+    expect(new Set(bonuses).size).toBe(1);
+    // 71,774 minus the crafting room's 2,000, which is a cave bonus.
+    expect(bonuses).toEqual([69_774, 69_774, 69_774, 69_774]);
+  });
+
+  it("gives every band the same starter powerBonusBp", () => {
+    const bonuses = BANDS.map(
+      (band) =>
+        calculateLoadoutBonuses({
+          techniques: [],
+          equipment: bandEquipmentLoadout(band, "common", 0),
+        }).powerBonusBp,
+    );
+    expect(new Set(bonuses).size).toBe(1);
+  });
+
+  it("reproduces the band-1 loadout with the band-resolved helper", () => {
+    expect(
+      bandEquipmentLoadout(1, "legendary", EQUIPMENT_MAX_ENHANCE_LEVEL).map(
+        (item) => item.equipmentConfigId,
+      ),
+    ).toEqual(
+      equipmentLoadout("legendary", EQUIPMENT_MAX_ENHANCE_LEVEL).map(
+        (item) => item.equipmentConfigId,
+      ),
+    );
   });
 });
