@@ -13,6 +13,13 @@ import {
   EXPEDITION_STAGE_CONFIGS,
   EXPEDITION_SWEEP_MAX_COUNT,
   EXPEDITION_SWEEP_TOKEN_COST,
+  HARVEST_CHEST_CAPACITY,
+  IDLE_DROP_ROLL_SPAN,
+  IDLE_EQUIPMENT_DROP_CHANCE,
+  IDLE_ITEM_DROPS,
+  IDLE_STACK_OVERFLOW_SPIRIT_STONE_VALUE,
+  IDLE_TECHNIQUE_DROP_CHANCE,
+  IDLE_TECHNIQUE_DROP_QUALITY_WEIGHTS,
   PARTNER_MAX_LEVEL,
   PARTNER_UNLOCK_LEVEL,
   SECT_MAX_LEVEL,
@@ -70,9 +77,11 @@ import {
   getRealmTitle,
   getTechniqueConfig,
   getSectConfig,
+  idleStackDropQuantitySpan,
   isAssetQuality,
   nextAssetQuality,
   partnerBondRequirement,
+  pickIdleStackDrop,
   pickTreasureHuntReward,
   requiredExperienceForLevel,
   readRolledAffixes,
@@ -116,12 +125,10 @@ import {
 } from "./local-game-snapshot";
 
 const OFFLINE_NOTICE_MIN_SECONDS = 60;
-const HARVEST_CHEST_CAPACITY = 100;
 const BAG_INITIAL_CAPACITY = 50;
 const BAG_MAX_CAPACITY = 200;
 const BAG_EXPANSION_SIZE = 10;
 const BAG_EXPANSION_BASE_COST = 5_000;
-const IDLE_STACK_OVERFLOW_SPIRIT_STONE_VALUE = 100;
 const DROP_CLOCK_MAX_REMAINDER = 60_000_000;
 const LOCAL_BACKUP_PREFIX = "XIUXIAN_SAVE_V1:";
 const LOCAL_BACKUP_CHECKSUM_LENGTH = 8;
@@ -2119,7 +2126,6 @@ function applyIdleDrops(
 ): { snapshot: BootstrapSnapshot; summary: DropRewardSummary } {
   const summary = emptyDropSummary();
   let next = snapshot;
-  const materialIds = ["wood", "stone", "spiritual_soil", "spiritual_herb", "ore"];
   const stackRewards = new Map<string, number>();
   // Drops never change the level, so the band is resolved once for the whole
   // run. The pool is this band's five configs and nothing else: a 凡阶 player
@@ -2128,39 +2134,34 @@ function applyIdleDrops(
   const bandEquipmentConfigs = equipmentConfigsForBand(band);
 
   for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const stackItemRoll = randomInt(1_000_000);
-    if (stackItemRoll < 350_000) {
-      const itemId = materialIds[randomInt(materialIds.length)]!;
+    // One draw over the whole span decides at most one stack reward. The id and
+    // the quantity only draw when there is something to choose, because a seeded
+    // stream turns every wasted draw into a different day's loot.
+    const stackDrop = pickIdleStackDrop(randomInt(IDLE_DROP_ROLL_SPAN));
+    if (stackDrop) {
+      const itemConfigId =
+        stackDrop.itemConfigIds.length === 1
+          ? stackDrop.itemConfigIds[0]!
+          : stackDrop.itemConfigIds[randomInt(stackDrop.itemConfigIds.length)]!;
+      const quantitySpan = idleStackDropQuantitySpan(stackDrop);
+      const quantity =
+        quantitySpan === 1
+          ? stackDrop.minQuantity
+          : stackDrop.minQuantity + randomInt(quantitySpan);
       stackRewards.set(
-        itemId,
-        (stackRewards.get(itemId) ?? 0) + 1 + randomInt(3),
+        itemConfigId,
+        (stackRewards.get(itemConfigId) ?? 0) + quantity,
       );
     }
-    if (stackItemRoll >= 350_000 && stackItemRoll < 355_000) {
-      stackRewards.set(
-        "technique_page",
-        (stackRewards.get("technique_page") ?? 0) + 1,
-      );
+    for (const itemDrop of IDLE_ITEM_DROPS) {
+      if (roll(itemDrop.chance, randomInt)) {
+        stackRewards.set(
+          itemDrop.itemConfigId,
+          (stackRewards.get(itemDrop.itemConfigId) ?? 0) + itemDrop.quantity,
+        );
+      }
     }
-    if (stackItemRoll >= 355_000 && stackItemRoll < 356_000) {
-      stackRewards.set(
-        "treasure_token",
-        (stackRewards.get("treasure_token") ?? 0) + 1,
-      );
-    }
-    if (roll(10_000, randomInt)) {
-      stackRewards.set(
-        "enhance_stone",
-        (stackRewards.get("enhance_stone") ?? 0) + 1,
-      );
-    }
-    if (roll(500, randomInt)) {
-      stackRewards.set(
-        "breakthrough_pill",
-        (stackRewards.get("breakthrough_pill") ?? 0) + 1,
-      );
-    }
-    if (roll(4_000, randomInt)) {
+    if (roll(IDLE_EQUIPMENT_DROP_CHANCE, randomInt)) {
       const config =
         bandEquipmentConfigs[randomInt(bandEquipmentConfigs.length)]!;
       const quality = rollDropQuality(band, randomInt);
@@ -2197,8 +2198,11 @@ function applyIdleDrops(
       summary.equipmentCount += 1;
       accountHarvestResult(summary, accepted);
     }
-    if (roll(1_200, randomInt)) {
-      const quality: AssetQuality = randomInt(10_000) < 8_000 ? "common" : "uncommon";
+    if (roll(IDLE_TECHNIQUE_DROP_CHANCE, randomInt)) {
+      const quality = pickWeightedQuality(
+        IDLE_TECHNIQUE_DROP_QUALITY_WEIGHTS,
+        randomInt,
+      );
       const candidates = TECHNIQUE_CONFIGS.filter((item) => item.quality === quality);
       const config = candidates[randomInt(candidates.length)]!;
       const accepted = addHarvestCandidate(next, {

@@ -4,6 +4,7 @@ export * from "./config/asset-upgrades";
 export * from "./config/alchemy";
 export * from "./config/cave";
 export * from "./config/crafting";
+export * from "./config/drops";
 export * from "./config/expedition";
 export * from "./config/partner";
 export * from "./config/progression-tasks";
