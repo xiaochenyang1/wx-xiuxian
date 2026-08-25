@@ -1,6 +1,7 @@
 import {
   AFFIX_STATS,
   ASSET_QUALITY_DISPLAY_NAMES,
+  ASSET_QUALITY_MULTIPLIER_BP,
   ASSET_QUALITY_ORDER,
   BASIS_POINTS,
   CRAFTING_QUALITY_WEIGHTS,
@@ -9,7 +10,6 @@ import {
   CAVE_UNLOCK_LEVEL,
   ENHANCE_STONE_OVERFLOW_SPIRIT_STONE_VALUE,
   EQUIPMENT_MAX_ENHANCE_LEVEL,
-  EQUIPMENT_CONFIGS,
   EXPEDITION_STAGE_CONFIGS,
   EXPEDITION_SWEEP_MAX_COUNT,
   EXPEDITION_SWEEP_TOKEN_COST,
@@ -48,6 +48,9 @@ import {
   decimal,
   equipmentAffixScoreBp,
   equipmentAscendCost,
+  equipmentBandForLevel,
+  equipmentConfigsForBand,
+  equipmentDropQualityWeights,
   equipmentEnhanceCost,
   equipmentRerollCost,
   equipmentSalvageReward,
@@ -83,6 +86,7 @@ import {
   type ChosenAvatarVariant,
   type DebugGrantTarget,
   type DropRewardSummary,
+  type EquipmentBand,
   type EquippedEquipmentSlot,
   type ProgressionEvent,
 } from "@cultivation-diary/shared";
@@ -2104,6 +2108,11 @@ function applyIdleDrops(
   let next = snapshot;
   const materialIds = ["wood", "stone", "spiritual_soil", "spiritual_herb", "ore"];
   const stackRewards = new Map<string, number>();
+  // Drops never change the level, so the band is resolved once for the whole
+  // run. The pool is this band's five configs and nothing else: a 凡阶 player
+  // cannot find a 天阶 sword, and a 天阶 player stops finding 凡阶 ones.
+  const band = equipmentBandForLevel(snapshot.progress.level);
+  const bandEquipmentConfigs = equipmentConfigsForBand(band);
 
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const stackItemRoll = randomInt(1_000_000);
@@ -2139,10 +2148,11 @@ function applyIdleDrops(
       );
     }
     if (roll(4_000, randomInt)) {
-      const config = EQUIPMENT_CONFIGS[randomInt(EQUIPMENT_CONFIGS.length)]!;
-      const quality: AssetQuality = randomInt(10_000) < 7_500 ? "common" : "uncommon";
+      const config =
+        bandEquipmentConfigs[randomInt(bandEquipmentConfigs.length)]!;
+      const quality = rollDropQuality(band, randomInt);
       const valueScore = Math.floor(
-        (config.basePower * (quality === "common" ? 10_000 : 15_000)) / 10_000,
+        (config.basePower * ASSET_QUALITY_MULTIPLIER_BP[quality]) / 10_000,
       ).toString();
       const instanceId = createLocalId();
       const candidate = {
@@ -2366,14 +2376,11 @@ function ensureEquipmentCapacity(snapshot: BootstrapSnapshot): void {
   }
 }
 
-function rollCraftingQuality(
-  craftingRoomLevel: number,
+/** Picks one entry out of a weighted table with a single random draw. */
+function pickWeightedQuality(
+  weights: readonly { readonly quality: AssetQuality; readonly weight: number }[],
   randomInt: (maxExclusive: number) => number,
 ): AssetQuality {
-  const weights = CRAFTING_QUALITY_WEIGHTS.map(({ quality }) => ({
-    quality,
-    weight: craftingQualityWeight(quality, craftingRoomLevel),
-  }));
   const totalWeight = weights.reduce((total, entry) => total + entry.weight, 0);
   let rollValue = randomInt(totalWeight);
   for (const entry of weights) {
@@ -2381,6 +2388,31 @@ function rollCraftingQuality(
     rollValue -= entry.weight;
   }
   return "common";
+}
+
+/**
+ * The quality an idle drop rolls. Band 1's table totals the same 10,000 and
+ * splits at the same 7,500 the fixed roll used, so early-game drops come out of
+ * a seeded run exactly as they did before bands existed.
+ */
+function rollDropQuality(
+  band: EquipmentBand,
+  randomInt: (maxExclusive: number) => number,
+): AssetQuality {
+  return pickWeightedQuality(equipmentDropQualityWeights(band), randomInt);
+}
+
+function rollCraftingQuality(
+  craftingRoomLevel: number,
+  randomInt: (maxExclusive: number) => number,
+): AssetQuality {
+  return pickWeightedQuality(
+    CRAFTING_QUALITY_WEIGHTS.map(({ quality }) => ({
+      quality,
+      weight: craftingQualityWeight(quality, craftingRoomLevel),
+    })),
+    randomInt,
+  );
 }
 
 function createCraftedEquipment(
