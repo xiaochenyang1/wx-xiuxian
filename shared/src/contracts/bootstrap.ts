@@ -72,7 +72,15 @@ export interface BootstrapSnapshot {
     slot: string;
     powerBonusBp: number;
     enhanceLevel: number;
-    rolledAffixes: unknown;
+    /**
+     * Affixes stay `stat: string` here and are narrowed in the domain layer,
+     * the same way `quality` and `slot` are. Load validation guarantees at most
+     * one entry per stat.
+     */
+    rolledAffixes: Array<{
+      stat: string;
+      valueBp: number;
+    }>;
     location: string;
     equippedSlot: string | null;
     isLocked: boolean;

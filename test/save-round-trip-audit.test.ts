@@ -8,6 +8,10 @@ const SAVE_KEY = CLIENT_CONFIG.localSaveStorageKey;
 const START = new Date("2026-01-01T00:00:00.000Z");
 const UPGRADE_EQUIPMENT_ID = "00000000-0000-4000-8000-000000000101";
 const UPGRADE_TECHNIQUE_ID = "quiet_breathing_art";
+const ASCEND_MATERIAL_IDS = [
+  "00000000-0000-4000-8000-000000000102",
+  "00000000-0000-4000-8000-000000000103",
+];
 
 type MutableSave = Record<string, any>;
 
@@ -95,8 +99,64 @@ function seedUpgradeAssets(save: MutableSave): void {
   ];
 }
 
-describe("every reachable save round-trips", () => {
-  it("survives a fresh start", () => {
+/**
+ * A legendary piece with two spare copies, a crafting room past both ascension
+ * gates and enough currency for a reroll: the shape a save has to survive once
+ * affixes are rolled rather than fixed.
+ */
+function seedAscensionAssets(save: MutableSave): void {
+  save.snapshot.wallet.spiritStone = "1000000";
+  save.snapshot.inventory.stacks = [
+    {
+      itemConfigId: "enhance_stone",
+      displayName: "强化石",
+      quantity: "100",
+    },
+  ];
+  save.snapshot.unlocks.cave = true;
+  save.snapshot.cave.buildings = save.snapshot.cave.buildings.map(
+    (building: MutableSave) => ({
+      ...building,
+      level: building.buildingConfigId === "crafting_room" ? 8 : building.level,
+    }),
+  );
+  save.snapshot.equipment = [
+    {
+      id: UPGRADE_EQUIPMENT_ID,
+      equipmentConfigId: "ironwood_sword",
+      displayName: "玄木剑",
+      quality: "legendary",
+      slot: "weapon",
+      powerBonusBp: 0,
+      enhanceLevel: 2,
+      rolledAffixes: [
+        { stat: "experience_bonus", valueBp: 350 },
+        { stat: "spirit_stone_bonus", valueBp: 350 },
+        { stat: "drop_bonus", valueBp: 350 },
+      ],
+      location: "equipped",
+      equippedSlot: "weapon",
+      isLocked: true,
+      configVersion: "local-idle-drop-v1",
+    },
+    ...ASCEND_MATERIAL_IDS.map((id) => ({
+      id,
+      equipmentConfigId: "ironwood_sword",
+      displayName: "玄木剑",
+      quality: "legendary",
+      slot: "weapon",
+      powerBonusBp: 0,
+      enhanceLevel: 0,
+      rolledAffixes: [{ stat: "drop_bonus", valueBp: 210 }],
+      location: "bag",
+      equippedSlot: null,
+      isLocked: false,
+      configVersion: "local-idle-drop-v1",
+    })),
+  ];
+}
+
+describe("every reachable save round-trips", () => {  it("survives a fresh start", () => {
     assertReloads("fresh", () => {});
   });
 
@@ -312,6 +372,36 @@ describe("every reachable save round-trips", () => {
         (equipment) => equipment.id === UPGRADE_EQUIPMENT_ID,
       ),
     ).toBe(false);
+  });
+
+  it("survives rerolling and ascending a piece the player is wearing", () => {
+    const reloaded = assertReloads(
+      "reroll and ascend",
+      (service) => {
+        service.rerollEquipmentAffixes(UPGRADE_EQUIPMENT_ID);
+        service.ascendEquipment(UPGRADE_EQUIPMENT_ID);
+        service.rerollEquipmentAffixes(UPGRADE_EQUIPMENT_ID);
+      },
+      seedAscensionAssets,
+    );
+
+    // The settle-first rule means the reload also banks the idle time since the
+    // fixture's timestamp, so the bag holds fresh drops as well: assert on the
+    // piece under test and on the copies it was supposed to consume.
+    const target = reloaded.snapshot.equipment.find(
+      (item) => item.id === UPGRADE_EQUIPMENT_ID,
+    );
+    expect(target).toBeDefined();
+    expect(target!.quality).toBe("mythic");
+    expect(target!.enhanceLevel).toBe(2);
+    expect(target!.equippedSlot).toBe("weapon");
+    expect(target!.rolledAffixes).toHaveLength(3);
+    expect(new Set(target!.rolledAffixes.map((affix) => affix.stat)).size).toBe(3);
+    expect(
+      reloaded.snapshot.equipment.filter((item) =>
+        ASCEND_MATERIAL_IDS.some((id) => id === item.id),
+      ),
+    ).toEqual([]);
   });
 
   it("survives auto salvage setting changes", () => {

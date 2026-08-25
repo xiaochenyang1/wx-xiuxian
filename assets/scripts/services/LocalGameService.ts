@@ -1,4 +1,5 @@
 import {
+  AFFIX_STATS,
   ASSET_QUALITY_DISPLAY_NAMES,
   ASSET_QUALITY_ORDER,
   BASIS_POINTS,
@@ -27,6 +28,7 @@ import {
   TREASURE_HUNT_TOTAL_WEIGHT,
   applyWholeExperience,
   addLoadoutBonuses,
+  affixScorePercent,
   calculatePartnerBonuses,
   calculateSectBonuses,
   calculateCaveBonuses,
@@ -37,12 +39,16 @@ import {
   calculateTechniqueContribution,
   calculateTotalPower,
   caveUpgradeCost,
+  canAscendEquipmentQuality,
   craftingQualityWeight,
   completeBreakthrough,
   countOccupiedBagSlots,
   createEmptyCaveBuildings,
   decimal,
+  equipmentAffixScoreBp,
+  equipmentAscendCost,
   equipmentEnhanceCost,
+  equipmentRerollCost,
   equipmentSalvageReward,
   evaluateExpeditionStage,
   evaluateExpeditionSweep,
@@ -59,9 +65,12 @@ import {
   getTechniqueConfig,
   getSectConfig,
   isAssetQuality,
+  nextAssetQuality,
   partnerBondRequirement,
   pickTreasureHuntReward,
   requiredExperienceForLevel,
+  readRolledAffixes,
+  rollEquipmentAffixes,
   settleCultivation,
   sectContributionRequirement,
   shouldAutoLockEquipment,
@@ -81,6 +90,7 @@ import type { PlatformAdapter } from "../platform/PlatformAdapter";
 import {
   DROP_CONFIG_VERSION,
   GAME_CONFIG_VERSION,
+  GAME_CONFIG_VERSION_PRE_AFFIX_ROLL,
   GAME_CONFIG_VERSION_PRE_CAVE,
   GAME_CONFIG_VERSION_PRE_EQUIPMENT_MANAGEMENT,
   GAME_CONFIG_VERSION_PRE_EXPEDITION,
@@ -1471,6 +1481,162 @@ export class LocalGameService {
     });
   }
 
+  rerollEquipmentAffixes(equipmentInstanceId: string): LocalMutationResult {
+    return this.mutate((snapshot) => {
+      const target = snapshot.equipment.find(
+        (item) => item.id === equipmentInstanceId,
+      );
+      if (!target || target.location === "harvest") {
+        throw new LocalGameError("该法宝不在行囊中");
+      }
+      if (!isAssetQuality(target.quality)) {
+        throw new LocalGameError("法宝品质数据无效");
+      }
+      if (target.quality === "common") {
+        throw new LocalGameError(`${target.displayName}没有词条，无法洗练`);
+      }
+
+      const cost = equipmentRerollCost(target.quality);
+      const ownedEnhanceStone = decimal(
+        stackQuantity(snapshot, "enhance_stone"),
+      );
+      if (ownedEnhanceStone.lessThan(cost.enhanceStone)) {
+        throw new LocalGameError(
+          `强化石不足，还需 ${decimal(cost.enhanceStone).minus(ownedEnhanceStone).toFixed(0)} 枚`,
+        );
+      }
+      const spiritStone = decimal(snapshot.wallet.spiritStone);
+      if (spiritStone.lessThan(cost.spiritStone)) {
+        throw new LocalGameError(
+          `灵石不足，还需 ${decimal(cost.spiritStone).minus(spiritStone).toFixed(0)} 灵石`,
+        );
+      }
+
+      // Only the better roll is kept, so a reroll can never ruin a finished
+      // piece. The cost is charged either way, which is what keeps the sink
+      // from being free.
+      const currentScoreBp = equipmentAffixScoreBp(
+        target.quality,
+        readRolledAffixes(target.rolledAffixes),
+      );
+      const rolled = rollEquipmentAffixes(target.quality, randomInteger);
+      const rolledScoreBp = equipmentAffixScoreBp(target.quality, rolled);
+      const improved = rolledScoreBp > currentScoreBp;
+
+      return {
+        snapshot: refreshSnapshot({
+          ...snapshot,
+          equipment: improved
+            ? snapshot.equipment.map((item) =>
+                item.id === equipmentInstanceId
+                  ? { ...item, rolledAffixes: rolled }
+                  : item,
+              )
+            : snapshot.equipment,
+          inventory: setStackQuantity(
+            snapshot.inventory,
+            "enhance_stone",
+            ownedEnhanceStone.minus(cost.enhanceStone).toFixed(0),
+          ),
+          wallet: {
+            ...snapshot.wallet,
+            spiritStone: spiritStone.minus(cost.spiritStone).toFixed(0),
+          },
+        }),
+        events: [],
+        message: improved
+          ? `洗练完成：词条评分 ${formatAffixScore(currentScoreBp)} → ${formatAffixScore(rolledScoreBp)}`
+          : `洗练结果 ${formatAffixScore(rolledScoreBp)} 未超过当前 ${formatAffixScore(currentScoreBp)}，词条保持不变`,
+      };
+    });
+  }
+
+  ascendEquipment(equipmentInstanceId: string): LocalMutationResult {
+    return this.mutate((snapshot) => {
+      const target = snapshot.equipment.find(
+        (item) => item.id === equipmentInstanceId,
+      );
+      if (!target || target.location === "harvest") {
+        throw new LocalGameError("该法宝不在行囊中");
+      }
+      if (!isAssetQuality(target.quality)) {
+        throw new LocalGameError("法宝品质数据无效");
+      }
+      if (!nextAssetQuality(target.quality)) {
+        throw new LocalGameError(`${target.displayName}已是最高品质`);
+      }
+      if (!canAscendEquipmentQuality(target.quality)) {
+        throw new LocalGameError("只有传说与神话法宝可以升华");
+      }
+
+      const cost = equipmentAscendCost(target.quality);
+      const craftingRoomLevel = caveBuildingLevel(snapshot, "crafting_room");
+      if (craftingRoomLevel < cost.requiredCraftingRoomLevel) {
+        throw new LocalGameError(
+          `炼器室需达到 Lv.${cost.requiredCraftingRoomLevel}`,
+        );
+      }
+
+      // Materials must be spare copies: in the bag, unlocked and unequipped, so
+      // ascending can never eat the piece the player is wearing or protecting.
+      const materials = snapshot.equipment.filter(
+        (item) =>
+          item.id !== target.id &&
+          item.equipmentConfigId === target.equipmentConfigId &&
+          item.quality === target.quality &&
+          item.location === "bag" &&
+          item.equippedSlot === null &&
+          !item.isLocked,
+      );
+      if (materials.length < cost.duplicateCount) {
+        throw new LocalGameError(
+          `同款${qualityDisplayName(target.quality)}法宝不足，还需 ${cost.duplicateCount - materials.length} 件（须在行囊中且未锁定）`,
+        );
+      }
+      const spiritStone = decimal(snapshot.wallet.spiritStone);
+      if (spiritStone.lessThan(cost.spiritStone)) {
+        throw new LocalGameError(
+          `灵石不足，还需 ${decimal(cost.spiritStone).minus(spiritStone).toFixed(0)} 灵石`,
+        );
+      }
+
+      const consumed = new Set(
+        materials.slice(0, cost.duplicateCount).map((item) => item.id),
+      );
+      // The enhance level survives: quality scales both base power and the
+      // enhance multiplier, so clearing it would force a choice between
+      // ascending and keeping the investment.
+      const equipment = snapshot.equipment
+        .filter((item) => !consumed.has(item.id))
+        .map((item) =>
+          item.id === equipmentInstanceId
+            ? {
+                ...item,
+                quality: cost.targetQuality,
+                isLocked: shouldAutoLockEquipment(cost.targetQuality),
+                rolledAffixes: rollEquipmentAffixes(
+                  cost.targetQuality,
+                  randomInteger,
+                ),
+              }
+            : item,
+        );
+
+      return {
+        snapshot: refreshSnapshot({
+          ...snapshot,
+          equipment,
+          wallet: {
+            ...snapshot.wallet,
+            spiritStone: spiritStone.minus(cost.spiritStone).toFixed(0),
+          },
+        }),
+        events: [],
+        message: `消耗 ${cost.duplicateCount} 件同款法宝和 ${cost.spiritStone} 灵石，${target.displayName}升华为${qualityDisplayName(cost.targetQuality)}`,
+      };
+    });
+  }
+
   toggleEquipmentLock(equipmentInstanceId: string): LocalMutationResult {
     return this.mutate((snapshot) => {
       const target = snapshot.equipment.find(
@@ -1997,10 +2163,7 @@ function applyIdleDrops(
         slot: config.slot,
         powerBonusBp: 0,
         enhanceLevel: 0,
-        rolledAffixes:
-          quality === "uncommon"
-            ? [{ stat: "experience_bonus", valueBp: 100 }]
-            : [],
+        rolledAffixes: rollEquipmentAffixes(quality, randomInt),
         location: "harvest",
         equippedSlot: null,
         isLocked: shouldAutoLockEquipment(quality),
@@ -2235,28 +2398,6 @@ function createCraftedEquipment(
   quality: AssetQuality,
 ): BootstrapSnapshot["equipment"][number] {
   const config = getEquipmentConfig(equipmentConfigId);
-  const affixStats: ReadonlyArray<
-    "experience_bonus" | "spirit_stone_bonus" | "drop_bonus"
-  > = ["experience_bonus", "spirit_stone_bonus", "drop_bonus"];
-  const affixCount =
-    quality === "legendary"
-      ? 3
-      : quality === "epic"
-        ? 2
-        : quality === "rare" || quality === "uncommon"
-          ? 1
-          : 0;
-  const affixValueBp =
-    quality === "legendary"
-      ? 350
-      : quality === "epic"
-        ? 250
-        : quality === "rare"
-          ? 180
-          : 100;
-  const startIndex = ["weapon", "armor", "accessory", "mount", "pet"].indexOf(
-    config.slot,
-  );
   return {
     id: createLocalId(),
     equipmentConfigId,
@@ -2265,10 +2406,7 @@ function createCraftedEquipment(
     slot: config.slot,
     powerBonusBp: 0,
     enhanceLevel: 0,
-    rolledAffixes: Array.from({ length: affixCount }, (_, index) => ({
-      stat: affixStats[(startIndex + index) % affixStats.length]!,
-      valueBp: affixValueBp,
-    })),
+    rolledAffixes: rollEquipmentAffixes(quality, randomInteger),
     location: "bag",
     equippedSlot: null,
     isLocked: shouldAutoLockEquipment(quality),
@@ -2278,6 +2416,10 @@ function createCraftedEquipment(
 
 function qualityDisplayName(quality: AssetQuality): string {
   return ASSET_QUALITY_DISPLAY_NAMES[quality];
+}
+
+function formatAffixScore(scoreBp: number): string {
+  return `${affixScorePercent(scoreBp)}%`;
 }
 
 /**
@@ -2588,9 +2730,23 @@ function migrateSnapshot(snapshot: unknown): unknown {
       trialTower: { highestFloor: 0 },
       progressionTasks: padProgressionTasks(migrated.newcomerTasks),
       unlocks: seedTrialTowerUnlock(migrated.unlocks, migrated.progress),
-      config: { ...config, version: GAME_CONFIG_VERSION },
+      config: { ...config, version: GAME_CONFIG_VERSION_PRE_AFFIX_ROLL },
     };
     delete (migrated as Record<string, unknown>).newcomerTasks;
+    config = migrated.config;
+  }
+  if (
+    isRecord(config) &&
+    config.version === GAME_CONFIG_VERSION_PRE_AFFIX_ROLL
+  ) {
+    // Affixes became random, but stored ones are left exactly as they are: the
+    // old fixed values sit at the center of the new ranges and already satisfy
+    // the tightened validation, and rerolling on load would silently change an
+    // equipped piece's idle bonuses without the player doing anything.
+    migrated = {
+      ...migrated,
+      config: { ...config, version: GAME_CONFIG_VERSION },
+    };
   }
   return migrated;
 }
@@ -3223,18 +3379,23 @@ function hasConsistentInventory(snapshot: Record<string, unknown>): boolean {
 }
 
 function isRolledAffixes(value: unknown): boolean {
-  return (
-    Array.isArray(value) &&
-    value.length <= 16 &&
-    value.every(
-      (affix) =>
-        isRecord(affix) &&
-        (affix.stat === "experience_bonus" ||
-          affix.stat === "spirit_stone_bonus" ||
-          affix.stat === "drop_bonus") &&
-        isIntegerBetween(affix.valueBp, 0, 1_000_000),
-    )
-  );
+  if (!Array.isArray(value) || value.length > AFFIX_STATS.length) return false;
+  const seen = new Set<unknown>();
+  for (const affix of value) {
+    if (
+      !isRecord(affix) ||
+      !AFFIX_STATS.some((stat) => stat === affix.stat) ||
+      !isIntegerBetween(affix.valueBp, 0, 1_000_000) ||
+      seen.has(affix.stat)
+    ) {
+      return false;
+    }
+    seen.add(affix.stat);
+  }
+  // Deliberately not range-checked against the quality's roll table: that would
+  // make load validation depend on the value tables, so any later retune would
+  // condemn existing saves. Ranges constrain new rolls, not stored ones.
+  return true;
 }
 
 function isEquipmentSlotOrNull(value: unknown): value is EquippedEquipmentSlot | null {

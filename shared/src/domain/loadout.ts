@@ -131,7 +131,7 @@ export function calculateEquipmentContribution(
     10_000 + input.enhanceLevel * 1_000,
   );
 
-  for (const affix of parseAffixes(input.rolledAffixes)) {
+  for (const affix of readRolledAffixes(input.rolledAffixes)) {
     if (affix.stat === "experience_bonus") bonuses.experienceBonusBp += affix.valueBp;
     if (affix.stat === "spirit_stone_bonus") bonuses.spiritStoneBonusBp += affix.valueBp;
     if (affix.stat === "drop_bonus") bonuses.dropBonusBp += affix.valueBp;
@@ -209,6 +209,35 @@ export function equipmentAffixScoreBp(
   return Math.floor((rolled * 10_000) / best);
 }
 
+/** The score as the whole percent it is displayed and reported as. */
+export function affixScorePercent(scoreBp: number): number {
+  return Math.floor(scoreBp / 100);
+}
+
+/**
+ * Narrows stored affixes, which come from local storage and are therefore
+ * untrusted even after load validation. Unknown entries are dropped rather
+ * than thrown on: a single odd affix must not take the whole save down.
+ */
+export function readRolledAffixes(value: unknown): RolledAffix[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((candidate) => {
+    if (typeof candidate !== "object" || candidate === null) return [];
+    const stat = "stat" in candidate ? candidate.stat : null;
+    const valueBp = "valueBp" in candidate ? candidate.valueBp : null;
+    if (
+      (stat !== "experience_bonus" &&
+        stat !== "spirit_stone_bonus" &&
+        stat !== "drop_bonus") ||
+      !Number.isSafeInteger(valueBp) ||
+      Number(valueBp) < 0
+    ) {
+      return [];
+    }
+    return [{ stat, valueBp: Number(valueBp) }];
+  });
+}
+
 function emptyLoadoutBonuses(): LoadoutBonuses {
   return {
     powerBonusBp: 0,
@@ -245,26 +274,4 @@ function scaleByBasisPoints(value: number, ...multipliersBp: number[]): number {
     throw new RangeError("Calculated loadout value exceeds safe integer range");
   }
   return Number(result);
-}
-
-function parseAffixes(value: unknown): Array<{
-  stat: "experience_bonus" | "spirit_stone_bonus" | "drop_bonus";
-  valueBp: number;
-}> {
-  if (!Array.isArray(value)) return [];
-  return value.flatMap((candidate) => {
-    if (typeof candidate !== "object" || candidate === null) return [];
-    const stat = "stat" in candidate ? candidate.stat : null;
-    const valueBp = "valueBp" in candidate ? candidate.valueBp : null;
-    if (
-      (stat !== "experience_bonus" &&
-        stat !== "spirit_stone_bonus" &&
-        stat !== "drop_bonus") ||
-      !Number.isSafeInteger(valueBp) ||
-      Number(valueBp) < 0
-    ) {
-      return [];
-    }
-    return [{ stat, valueBp: Number(valueBp) }];
-  });
 }

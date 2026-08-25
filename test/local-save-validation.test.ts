@@ -344,6 +344,9 @@ describe("progress validation", () => {
 
     expect(
       corrupt((save) => {
+        // Emptying the chest keeps the accept case honest: a leftover chest
+        // entry points at an instance this list no longer holds.
+        save.snapshot.harvestChest = { pendingCount: 0, entries: [] };
         save.snapshot.techniques = [technique];
         save.snapshot.equipment = [equipment];
       }),
@@ -358,6 +361,89 @@ describe("progress validation", () => {
         save.snapshot.equipment = [{ ...equipment, powerBonusBp: -1 }];
       }),
     ).toBe(true);
+  });
+});
+
+describe("rolled affix validation", () => {
+  /** A legal legendary piece, so only the affix list can be the reason. */
+  function legendaryPiece(rolledAffixes: unknown): MutableSave {
+    return {
+      id: "00000000-0000-4000-8000-000000000401",
+      equipmentConfigId: "ironwood_sword",
+      displayName: "玄木剑",
+      quality: "legendary",
+      slot: "weapon",
+      powerBonusBp: 2_520,
+      enhanceLevel: 0,
+      rolledAffixes,
+      location: "bag",
+      equippedSlot: null,
+      isLocked: true,
+      configVersion: "local-idle-drop-v1",
+    };
+  }
+
+  function withAffixes(rolledAffixes: unknown): boolean {
+    return corrupt((save) => {
+      // The chest cross-references the pieces it holds, so replacing the
+      // equipment list means emptying the chest too, or the fixture reads as
+      // tampered for a reason that has nothing to do with affixes.
+      save.snapshot.harvestChest = { pendingCount: 0, entries: [] };
+      save.snapshot.equipment = [legendaryPiece(rolledAffixes)];
+    });
+  }
+
+  it("accepts three distinct stats", () => {
+    expect(
+      withAffixes([
+        { stat: "experience_bonus", valueBp: 210 },
+        { stat: "spirit_stone_bonus", valueBp: 386 },
+        { stat: "drop_bonus", valueBp: 490 },
+      ]),
+    ).toBe(false);
+  });
+
+  it("accepts a value outside the quality's current roll range", () => {
+    // Ranges constrain new rolls, not stored ones: a later retune must not
+    // condemn a save that was legal when it was written.
+    expect(withAffixes([{ stat: "drop_bonus", valueBp: 999_999 }])).toBe(false);
+  });
+
+  it("rejects more affixes than there are stats", () => {
+    expect(
+      withAffixes([
+        { stat: "experience_bonus", valueBp: 210 },
+        { stat: "spirit_stone_bonus", valueBp: 210 },
+        { stat: "drop_bonus", valueBp: 210 },
+        { stat: "experience_bonus", valueBp: 210 },
+      ]),
+    ).toBe(true);
+  });
+
+  it("rejects the same stat twice", () => {
+    expect(
+      withAffixes([
+        { stat: "drop_bonus", valueBp: 210 },
+        { stat: "drop_bonus", valueBp: 490 },
+      ]),
+    ).toBe(true);
+  });
+
+  it("rejects an unknown stat", () => {
+    expect(withAffixes([{ stat: "power_bonus", valueBp: 210 }])).toBe(true);
+  });
+
+  it("rejects a malformed value", () => {
+    expect(withAffixes([{ stat: "drop_bonus", valueBp: 210.5 }])).toBe(true);
+    expect(withAffixes([{ stat: "drop_bonus", valueBp: -1 }])).toBe(true);
+    expect(withAffixes([{ stat: "drop_bonus", valueBp: "210" }])).toBe(true);
+    expect(withAffixes([{ stat: "drop_bonus", valueBp: 1_000_001 }])).toBe(true);
+  });
+
+  it("rejects an affix list that is not a list", () => {
+    expect(withAffixes({ drop_bonus: 210 })).toBe(true);
+    expect(withAffixes(null)).toBe(true);
+    expect(withAffixes(["drop_bonus"])).toBe(true);
   });
 });
 
