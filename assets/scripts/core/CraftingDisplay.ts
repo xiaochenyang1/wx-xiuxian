@@ -1,15 +1,22 @@
 import {
   CRAFTING_QUALITY_WEIGHTS,
   craftingQualityWeight,
+  craftingSpiritStoneCost,
   decimal,
+  equipmentBandForLevel,
+  getEquipmentBandConfig,
   getItemConfig,
+  resolveCraftingEquipmentConfig,
   type BootstrapSnapshot,
   type CraftingRecipeConfig,
+  type EquipmentBand,
 } from "@cultivation-diary/shared";
 import { formatLargeNumber } from "./ClientNumber";
 
 export interface CraftingRecipeDisplay {
   readonly roomRequirementText: string;
+  /** What this recipe forges at the player's current band. */
+  readonly productText: string;
   readonly costText: string;
   readonly materialText: string;
   readonly affordable: boolean;
@@ -20,6 +27,9 @@ export function getCraftingRecipeDisplay(
   recipe: CraftingRecipeConfig,
 ): CraftingRecipeDisplay {
   const roomLevel = buildingLevel(snapshot, "crafting_room");
+  const band = equipmentBandForLevel(snapshot.progress.level);
+  const product = resolveCraftingEquipmentConfig(recipe.slot, snapshot.progress.level);
+  const spiritStoneCost = craftingSpiritStoneCost(recipe, band);
   const materials = recipe.materials.map((material) => {
     const owned = stackQuantity(snapshot, material.itemConfigId);
     return {
@@ -32,21 +42,27 @@ export function getCraftingRecipeDisplay(
     roomRequirementText: roomReady
       ? `炼器室 Lv.${roomLevel}`
       : `需炼器室 Lv.${recipe.requiredCraftingRoomLevel}`,
-    costText: `${formatLargeNumber(String(recipe.spiritStoneCost))} 灵石`,
+    productText: `${getEquipmentBandConfig(band).displayName} · ${product.displayName}`,
+    costText: `${formatLargeNumber(String(spiritStoneCost))} 灵石`,
     materialText: materials.map((material) => material.text).join("　"),
     affordable:
       roomReady &&
-      decimal(snapshot.wallet.spiritStone).greaterThanOrEqualTo(
-        recipe.spiritStoneCost,
-      ) &&
+      decimal(snapshot.wallet.spiritStone).greaterThanOrEqualTo(spiritStoneCost) &&
       materials.every((material) => material.sufficient),
   };
 }
 
-export function craftingOddsSummary(roomLevel: number): string {
+/** The panel's header: room level, the band being forged, and its odds. */
+export function getCraftingHeaderText(snapshot: BootstrapSnapshot): string {
+  const roomLevel = buildingLevel(snapshot, "crafting_room");
+  const band = equipmentBandForLevel(snapshot.progress.level);
+  return `炼器室 Lv.${roomLevel}　${getEquipmentBandConfig(band).displayName}　${craftingOddsSummary(roomLevel, band)}`;
+}
+
+export function craftingOddsSummary(roomLevel: number, band: EquipmentBand): string {
   const entries = CRAFTING_QUALITY_WEIGHTS.map(({ quality }) => ({
     quality,
-    weight: craftingQualityWeight(quality, roomLevel),
+    weight: craftingQualityWeight(quality, roomLevel, band),
   }));
   const total = entries.reduce((sum, entry) => sum + entry.weight, 0);
   const rareOrBetter = entries

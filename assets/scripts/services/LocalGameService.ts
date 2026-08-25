@@ -42,6 +42,7 @@ import {
   caveBuildingLevel,
   canAscendEquipmentQuality,
   craftingQualityWeight,
+  craftingSpiritStoneCost,
   completeBreakthrough,
   countOccupiedBagSlots,
   createEmptyCaveBuildings,
@@ -74,6 +75,7 @@ import {
   pickTreasureHuntReward,
   requiredExperienceForLevel,
   readRolledAffixes,
+  resolveCraftingEquipmentConfig,
   rollEquipmentAffixes,
   settleCultivation,
   sectContributionRequirement,
@@ -812,10 +814,15 @@ export class LocalGameService {
           `炼器室需达到 Lv.${recipe.requiredCraftingRoomLevel}`,
         );
       }
+      // Crafting produces the crafter's own band, at that band's spirit stone
+      // price. Materials are deliberately flat across bands.
+      const band = equipmentBandForLevel(snapshot.progress.level);
+      const product = resolveCraftingEquipmentConfig(recipe.slot, snapshot.progress.level);
+      const spiritStoneCost = craftingSpiritStoneCost(recipe, band);
       const stones = decimal(snapshot.wallet.spiritStone);
-      if (stones.lessThan(recipe.spiritStoneCost)) {
+      if (stones.lessThan(spiritStoneCost)) {
         throw new LocalGameError(
-          `灵石不足，还需 ${decimal(recipe.spiritStoneCost).minus(stones).toFixed(0)} 灵石`,
+          `灵石不足，还需 ${decimal(spiritStoneCost).minus(stones).toFixed(0)} 灵石`,
         );
       }
       for (const material of recipe.materials) {
@@ -836,7 +843,7 @@ export class LocalGameService {
             availableSlots,
             maxAffordableBatchCount(
               snapshot.wallet.spiritStone,
-              recipe.spiritStoneCost,
+              spiritStoneCost,
               recipe.materials.map((material) => ({
                 owned: stackQuantity(snapshot, material.itemConfigId),
                 cost: material.quantity,
@@ -859,9 +866,9 @@ export class LocalGameService {
       const craftedQualities: AssetQuality[] = [];
       const qualityCounts = new Map<AssetQuality, number>();
       for (let index = 0; index < batchCount; index += 1) {
-        const quality = rollCraftingQuality(craftingRoomLevel, randomInteger);
+        const quality = rollCraftingQuality(craftingRoomLevel, band, randomInteger);
         craftedQualities.push(quality);
-        equipment.push(createCraftedEquipment(recipe.equipmentConfigId, quality));
+        equipment.push(createCraftedEquipment(product.id, quality));
         qualityCounts.set(quality, (qualityCounts.get(quality) ?? 0) + 1);
       }
       return {
@@ -872,14 +879,14 @@ export class LocalGameService {
           wallet: {
             ...snapshot.wallet,
             spiritStone: stones
-              .minus(decimal(recipe.spiritStoneCost).times(batchCount))
+              .minus(decimal(spiritStoneCost).times(batchCount))
               .toFixed(0),
           },
         }),
         events: [],
         message: useAll
           ? `批量${recipe.displayName} x${batchCount}，品质：${formatQualityCounts(qualityCounts)}`
-          : `${recipe.displayName}成功，获得${qualityDisplayName(craftedQualities[0])}品质法宝`,
+          : `${recipe.displayName}成功，获得${qualityDisplayName(craftedQualities[0])}品质${product.displayName}`,
       };
     });
   }
@@ -2404,12 +2411,13 @@ function rollDropQuality(
 
 function rollCraftingQuality(
   craftingRoomLevel: number,
+  band: EquipmentBand,
   randomInt: (maxExclusive: number) => number,
 ): AssetQuality {
   return pickWeightedQuality(
     CRAFTING_QUALITY_WEIGHTS.map(({ quality }) => ({
       quality,
-      weight: craftingQualityWeight(quality, craftingRoomLevel),
+      weight: craftingQualityWeight(quality, craftingRoomLevel, band),
     })),
     randomInt,
   );

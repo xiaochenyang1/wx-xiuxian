@@ -1,4 +1,11 @@
-import type { AssetQuality, EquipmentBand, EquipmentSlot } from "./assets";
+import {
+  equipmentBandForLevel,
+  equipmentConfigForSlotAndBand,
+  type AssetQuality,
+  type EquipmentBand,
+  type EquipmentConfig,
+  type EquipmentSlot,
+} from "./assets";
 
 export type CraftingRecipeId =
   | "forge_weapon"
@@ -7,10 +14,14 @@ export type CraftingRecipeId =
   | "forge_mount"
   | "forge_pet";
 
+/**
+ * A recipe names a slot, not a piece. The product is resolved from the slot and
+ * the crafter's band, so one recipe keeps producing new equipment for all 1,000
+ * levels instead of forging the same 玄木剑 forever.
+ */
 export interface CraftingRecipeConfig {
   readonly id: CraftingRecipeId;
   readonly displayName: string;
-  readonly equipmentConfigId: string;
   readonly slot: EquipmentSlot;
   readonly spiritStoneCost: number;
   readonly materials: readonly {
@@ -23,8 +34,7 @@ export interface CraftingRecipeConfig {
 export const CRAFTING_RECIPE_CONFIGS: readonly CraftingRecipeConfig[] = [
   {
     id: "forge_weapon",
-    displayName: "锻造玄木剑",
-    equipmentConfigId: "ironwood_sword",
+    displayName: "锻造兵器",
     slot: "weapon",
     spiritStoneCost: 1_200,
     materials: [
@@ -35,8 +45,7 @@ export const CRAFTING_RECIPE_CONFIGS: readonly CraftingRecipeConfig[] = [
   },
   {
     id: "forge_armor",
-    displayName: "缝制流云法袍",
-    equipmentConfigId: "cloudweave_robe",
+    displayName: "缝制护甲",
     slot: "armor",
     spiritStoneCost: 1_500,
     materials: [
@@ -47,8 +56,7 @@ export const CRAFTING_RECIPE_CONFIGS: readonly CraftingRecipeConfig[] = [
   },
   {
     id: "forge_accessory",
-    displayName: "琢磨蕴灵玉环",
-    equipmentConfigId: "jade_spirit_ring",
+    displayName: "琢磨饰品",
     slot: "accessory",
     spiritStoneCost: 1_800,
     materials: [
@@ -59,8 +67,7 @@ export const CRAFTING_RECIPE_CONFIGS: readonly CraftingRecipeConfig[] = [
   },
   {
     id: "forge_mount",
-    displayName: "驯养踏雾灵鹤",
-    equipmentConfigId: "mist_crane_mount",
+    displayName: "驯养坐骑",
     slot: "mount",
     spiritStoneCost: 2_400,
     materials: [
@@ -71,8 +78,7 @@ export const CRAFTING_RECIPE_CONFIGS: readonly CraftingRecipeConfig[] = [
   },
   {
     id: "forge_pet",
-    displayName: "契约月影灵狐",
-    equipmentConfigId: "moonfox_companion",
+    displayName: "契约灵宠",
     slot: "pet",
     spiritStoneCost: 3_000,
     materials: [
@@ -82,6 +88,18 @@ export const CRAFTING_RECIPE_CONFIGS: readonly CraftingRecipeConfig[] = [
     requiredCraftingRoomLevel: 4,
   },
 ];
+
+/**
+ * What a recipe forges for a crafter at this level. Crafting only ever produces
+ * the crafter's own band — there is no band picker — so a 天阶 player cannot
+ * forge 凡阶 ascension fodder and has to rely on drops for that.
+ */
+export function resolveCraftingEquipmentConfig(
+  slot: EquipmentSlot,
+  level: number,
+): EquipmentConfig {
+  return equipmentConfigForSlotAndBand(slot, equipmentBandForLevel(level));
+}
 
 /**
  * Crafting odds per band. This is where a band pays off: the materials a recipe

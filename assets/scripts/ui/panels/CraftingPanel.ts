@@ -1,6 +1,6 @@
 import { CRAFTING_RECIPE_CONFIGS } from "@cultivation-diary/shared";
 import {
-  craftingOddsSummary,
+  getCraftingHeaderText,
   getCraftingRecipeDisplay,
 } from "../../core/CraftingDisplay";
 import type { AppState } from "../../core/ClientTypes";
@@ -15,13 +15,9 @@ export function drawCraftingPanel(
   actions: AppViewActions,
 ): void {
   const snapshot = state.bootstrap!;
-  const roomLevel =
-    snapshot.cave.buildings.find(
-      (building) => building.buildingConfigId === "crafting_room",
-    )?.level ?? 0;
   addLabel(
     overlay,
-    `炼器室 Lv.${roomLevel}　${craftingOddsSummary(roomLevel)}`,
+    getCraftingHeaderText(snapshot),
     0,
     397,
     590,
@@ -47,7 +43,7 @@ export function drawCraftingPanel(
       overlay,
       recipe.displayName,
       -190,
-      y + 35,
+      y + 40,
       240,
       30,
       18,
@@ -60,7 +56,7 @@ export function drawCraftingPanel(
       overlay,
       display.roomRequirementText,
       88,
-      y + 35,
+      y + 40,
       180,
       28,
       14,
@@ -68,9 +64,22 @@ export function drawCraftingPanel(
     );
     addLabel(
       overlay,
+      display.productText,
+      -190,
+      y + 15,
+      300,
+      22,
+      13,
+      COLORS.jade,
+      false,
+      1,
+      HorizontalTextAlignment.LEFT,
+    );
+    addLabel(
+      overlay,
       `${display.costText}　${display.materialText}`,
       -190,
-      y - 18,
+      y - 22,
       430,
       44,
       13,

@@ -309,7 +309,7 @@ describe("crafting", () => {
     expect(result.snapshot.wallet.spiritStone).toBe("2600");
     expect(quantityOf(service, "wood")).toBe("4");
     expect(quantityOf(service, "ore")).toBe("8");
-    expect(result.message).toBe("批量锻造玄木剑 x2，品质：普通 x1、史诗 x1");
+    expect(result.message).toBe("批量锻造兵器 x2，品质：普通 x1、史诗 x1");
   });
 
   it("limits a craft batch to the remaining bag slots", () => {
@@ -328,7 +328,7 @@ describe("crafting", () => {
     expect(result.snapshot.wallet.spiritStone).toBe("3800");
     expect(quantityOf(service, "wood")).toBe("12");
     expect(quantityOf(service, "ore")).toBe("14");
-    expect(result.message).toMatch(/^批量锻造玄木剑 x1，品质：\S+ x1$/);
+    expect(result.message).toMatch(/^批量锻造兵器 x1，品质：\S+ x1$/);
   });
 
   it("rejects crafting when the bag remains full without deducting costs", () => {
