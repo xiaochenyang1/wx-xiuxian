@@ -102,6 +102,7 @@ describe("harvest batch controls", () => {
 describe("harvest chest candidate detail line", () => {
   const candidate = {
     id: "00000000-0000-4000-8000-000000000001",
+    equipmentConfigId: "ironwood_sword",
     quality: "legendary",
     rolledAffixes: [
       { stat: "experience_bonus", valueBp: 490 },
@@ -110,7 +111,7 @@ describe("harvest chest candidate detail line", () => {
     ],
   } as never;
 
-  it("appends the affix score to an equipment candidate", () => {
+  it("names the band and the affix score on an equipment candidate", () => {
     expect(
       getHarvestEntryDetailText(
         { equipment: [candidate] },
@@ -119,7 +120,23 @@ describe("harvest chest candidate detail line", () => {
           equipmentInstanceId: "00000000-0000-4000-8000-000000000001",
         },
       ),
-    ).toBe("独立法宝 · 词条 71%");
+    ).toBe("凡阶法宝 · 词条 71%");
+  });
+
+  it("reads the band off the candidate, not off the player", () => {
+    expect(
+      getHarvestEntryDetailText(
+        {
+          equipment: [
+            { ...(candidate as object), equipmentConfigId: "void_immortal_sword" },
+          ] as never,
+        },
+        {
+          entryType: "equipment",
+          equipmentInstanceId: "00000000-0000-4000-8000-000000000001",
+        },
+      ),
+    ).toBe("天阶法宝 · 词条 40%");
   });
 
   it("keeps the score off a technique candidate, which has no affixes", () => {

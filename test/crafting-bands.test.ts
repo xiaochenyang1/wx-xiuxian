@@ -2,9 +2,12 @@ import {
   CAVE_BUILDING_CONFIGS,
   CRAFTING_RECIPE_CONFIGS,
   craftingSpiritStoneCost,
+  equipmentAffixRange,
   equipmentBandForConfig,
   getCraftingRecipeConfig,
+  readRolledAffixes,
   resolveCraftingEquipmentConfig,
+  type AssetQuality,
   type EquipmentBand,
 } from "@cultivation-diary/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -119,6 +122,23 @@ describe("crafting resolves its product from the band", () => {
     expect(crafted.equipmentConfigId).toBe("void_immortal_sword");
     expect(crafted.displayName).toBe("太虚斩仙剑");
     expect(crafted.location).toBe("bag");
+  });
+
+  it("rolls the forged piece's affixes in the forging band's range", () => {
+    for (const band of [1, 2, 3, 4] as const) {
+      const service = crafterAtLevel(BAND_LEVELS[band]);
+      const crafted = service.craftEquipmentBatch("forge_weapon").snapshot.equipment;
+      expect(crafted.length).toBeGreaterThan(0);
+      for (const piece of crafted) {
+        const range = equipmentAffixRange(piece.quality as AssetQuality, band);
+        const affixes = readRolledAffixes(piece.rolledAffixes);
+        expect(affixes).toHaveLength(range.count);
+        for (const affix of affixes) {
+          expect(affix.valueBp).toBeGreaterThanOrEqual(range.minValueBp);
+          expect(affix.valueBp).toBeLessThanOrEqual(range.maxValueBp);
+        }
+      }
+    }
   });
 
   it("names the slot in the recipe and the product in the message", () => {

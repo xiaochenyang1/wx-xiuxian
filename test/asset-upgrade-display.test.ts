@@ -5,6 +5,7 @@ import {
   getEquipmentAscendDisplay,
   getEquipmentEnhanceDisplay,
   getEquipmentRerollDisplay,
+  getEquipmentTitleText,
   getTechniqueUpgradeDisplay,
 } from "../assets/scripts/core/AssetUpgradeDisplay";
 import { LocalGameService } from "../assets/scripts/services/LocalGameService";
@@ -186,7 +187,9 @@ describe("equipment affix display", () => {
       ),
     ).toEqual({
       hasAffixes: true,
+      bandName: "凡阶",
       scoreText: "词条 71%",
+      bandScoreText: "凡阶 词条 71%",
       affixText: "修为 +3.50%  灵石 +3.50%  掉落 +3.50%",
     });
   });
@@ -219,15 +222,53 @@ describe("equipment affix display", () => {
   it("separates a quality that rolls nothing from a zero score", () => {
     expect(getEquipmentAffixDisplay(equipment(0))).toEqual({
       hasAffixes: false,
+      bandName: "凡阶",
       scoreText: "无词条",
+      bandScoreText: "无词条",
       affixText: "",
     });
+  });
+
+  it("measures a piece against its own band's ceiling", () => {
+    // The same three 4.90% rolls: a full 凡阶 roll, and a mediocre 天阶 one. The
+    // band has to lead the percentage or the two rows read as identical.
+    const display = getEquipmentAffixDisplay({
+      ...equipment(0, "legendary", [
+        { stat: "experience_bonus", valueBp: 490 },
+        { stat: "spirit_stone_bonus", valueBp: 490 },
+        { stat: "drop_bonus", valueBp: 490 },
+      ]),
+      equipmentConfigId: "void_immortal_sword",
+      displayName: "太虚斩仙剑",
+    });
+
+    expect(display.bandName).toBe("天阶");
+    expect(display.bandScoreText).toBe("天阶 词条 57%");
+    expect(display.affixText).toBe("修为 +4.90%  灵石 +4.90%  掉落 +4.90%");
   });
 
   it("rejects an unknown equipment quality", () => {
     expect(() => getEquipmentAffixDisplay(equipment(0, "unknown"))).toThrow(
       RangeError,
     );
+  });
+});
+
+describe("equipment title line", () => {
+  it("puts the band in front of the piece", () => {
+    expect(getEquipmentTitleText(equipment(0, "legendary"))).toBe("凡阶 · 玄木剑");
+    expect(
+      getEquipmentTitleText({
+        equipmentConfigId: "void_immortal_sword",
+        displayName: "太虚斩仙剑",
+      }),
+    ).toBe("天阶 · 太虚斩仙剑");
+  });
+
+  it("rejects a piece whose config is not in the game", () => {
+    expect(() =>
+      getEquipmentTitleText({ equipmentConfigId: "no_such_sword", displayName: "无" }),
+    ).toThrow(RangeError);
   });
 });
 

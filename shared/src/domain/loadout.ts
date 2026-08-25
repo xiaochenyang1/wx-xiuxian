@@ -6,6 +6,7 @@ import {
   getEquipmentConfig,
   getTechniqueConfig,
   type AssetQuality,
+  type EquipmentBand,
 } from "../config/assets";
 import {
   EQUIPMENT_MAX_ENHANCE_LEVEL,
@@ -163,9 +164,10 @@ export function calculateLoadoutBonuses(input: {
  */
 export function rollEquipmentAffixes(
   quality: AssetQuality,
+  band: EquipmentBand,
   randomInt: (maxExclusive: number) => number,
 ): RolledAffix[] {
-  const range = equipmentAffixRange(quality);
+  const range = equipmentAffixRange(quality, band);
   if (range.count === 0) return [];
 
   const candidates = [...AFFIX_STATS];
@@ -194,15 +196,20 @@ export function rollEquipmentAffixes(
 }
 
 /**
- * Scores a piece's affixes against the best roll its quality can produce, in
- * basis points. Derived on demand and never stored, which is the only way it
- * cannot drift away from the affixes it describes.
+ * Scores a piece's affixes against the best roll its quality can produce in its
+ * own band, in basis points. Derived on demand and never stored, which is the
+ * only way it cannot drift away from the affixes it describes.
+ *
+ * Because each band is measured against its own ceiling, a 天阶 100% is worth
+ * 75% more than a 凡阶 100%. The score compares two pieces of the same band and
+ * quality; it is not a cross-band ranking.
  */
 export function equipmentAffixScoreBp(
   quality: AssetQuality,
+  band: EquipmentBand,
   affixes: readonly RolledAffix[],
 ): number {
-  const range = equipmentAffixRange(quality);
+  const range = equipmentAffixRange(quality, band);
   if (range.count === 0) return 0;
   const best = range.count * range.maxValueBp;
   const rolled = affixes.reduce((total, affix) => total + affix.valueBp, 0);

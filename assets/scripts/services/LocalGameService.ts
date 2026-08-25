@@ -49,6 +49,7 @@ import {
   decimal,
   equipmentAffixScoreBp,
   equipmentAscendCost,
+  equipmentBandForConfig,
   equipmentBandForLevel,
   equipmentConfigsForBand,
   equipmentDropQualityWeights,
@@ -1526,13 +1527,16 @@ export class LocalGameService {
 
       // Only the better roll is kept, so a reroll can never ruin a finished
       // piece. The cost is charged either way, which is what keeps the sink
-      // from being free.
+      // from being free. Both rolls are measured in the piece's own band, so a
+      // 天阶 piece is compared against the 天阶 ceiling.
+      const band = equipmentBandForConfig(target.equipmentConfigId);
       const currentScoreBp = equipmentAffixScoreBp(
         target.quality,
+        band,
         readRolledAffixes(target.rolledAffixes),
       );
-      const rolled = rollEquipmentAffixes(target.quality, randomInteger);
-      const rolledScoreBp = equipmentAffixScoreBp(target.quality, rolled);
+      const rolled = rollEquipmentAffixes(target.quality, band, randomInteger);
+      const rolledScoreBp = equipmentAffixScoreBp(target.quality, band, rolled);
       const improved = rolledScoreBp > currentScoreBp;
 
       return {
@@ -1628,6 +1632,7 @@ export class LocalGameService {
                 isLocked: shouldAutoLockEquipment(cost.targetQuality),
                 rolledAffixes: rollEquipmentAffixes(
                   cost.targetQuality,
+                  equipmentBandForConfig(item.equipmentConfigId),
                   randomInteger,
                 ),
               }
@@ -2181,7 +2186,7 @@ function applyIdleDrops(
         slot: config.slot,
         powerBonusBp: 0,
         enhanceLevel: 0,
-        rolledAffixes: rollEquipmentAffixes(quality, randomInt),
+        rolledAffixes: rollEquipmentAffixes(quality, band, randomInt),
         location: "harvest",
         equippedSlot: null,
         isLocked: shouldAutoLockEquipment(quality),
@@ -2436,7 +2441,11 @@ function createCraftedEquipment(
     slot: config.slot,
     powerBonusBp: 0,
     enhanceLevel: 0,
-    rolledAffixes: rollEquipmentAffixes(quality, randomInteger),
+    rolledAffixes: rollEquipmentAffixes(
+      quality,
+      equipmentBandForConfig(equipmentConfigId),
+      randomInteger,
+    ),
     location: "bag",
     equippedSlot: null,
     isLocked: shouldAutoLockEquipment(quality),

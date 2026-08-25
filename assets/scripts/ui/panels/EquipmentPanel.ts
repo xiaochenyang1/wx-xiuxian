@@ -7,6 +7,7 @@ import {
   getEquipmentAscendDisplay,
   getEquipmentEnhanceDisplay,
   getEquipmentRerollDisplay,
+  getEquipmentTitleText,
   type AssetUpgradeDisplay,
 } from "../../core/AssetUpgradeDisplay";
 import { formatLargeNumber } from "../../core/ClientNumber";
@@ -85,7 +86,7 @@ export function drawEquipmentPanel(
     drawBand(overlay, `Equipment-${item.id}`, 0, y, 600, 112, COLORS.panel);
     addLabel(
       overlay,
-      item.displayName,
+      getEquipmentTitleText(item),
       -230,
       y + 41,
       125,
@@ -133,7 +134,9 @@ export function drawEquipmentPanel(
     // scored — so a player can judge a piece without opening anything.
     addLabel(
       overlay,
-      affix.affixText ? `${affix.scoreText} · ${affix.affixText}` : affix.scoreText,
+      affix.affixText
+        ? `${affix.bandScoreText} · ${affix.affixText}`
+        : affix.bandScoreText,
       0,
       y + 15,
       570,

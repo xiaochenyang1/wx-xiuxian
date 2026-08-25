@@ -8,8 +8,10 @@ import {
   decimal,
   equipmentAffixScoreBp,
   equipmentAscendCost,
+  equipmentBandForConfig,
   equipmentEnhanceCost,
   equipmentRerollCost,
+  getEquipmentBandConfig,
   isAssetQuality,
   nextAssetQuality,
   readRolledAffixes,
@@ -29,8 +31,12 @@ export interface AssetUpgradeDisplay {
 
 export interface EquipmentAffixDisplay {
   readonly hasAffixes: boolean;
+  /** The band this piece belongs to, e.g. `天阶`. */
+  readonly bandName: string;
   /** `词条 81%`, or `无词条` for a quality that rolls none. */
   readonly scoreText: string;
+  /** `天阶 词条 81%` — the score together with the ceiling it was measured against. */
+  readonly bandScoreText: string;
   /** The rolled stats in stored order, or an empty string when there are none. */
   readonly affixText: string;
 }
@@ -81,9 +87,13 @@ export function getEquipmentEnhanceDisplay(
 }
 
 /**
- * The affix line: a score against the best roll the quality can produce, then
- * the rolled stats themselves. Both are derived from the stored affixes, so the
- * row cannot disagree with the piece it describes.
+ * The affix line: a score against the best roll the quality can produce in this
+ * piece's band, then the rolled stats themselves. Both are derived from the
+ * stored affixes, so the row cannot disagree with the piece it describes.
+ *
+ * The band leads the combined score because the ceiling it is measured against
+ * is the band's: a 天阶 100% is a bigger number than a 凡阶 100%, and putting the
+ * two percentages side by side without the band would read as equivalent.
  */
 export function getEquipmentAffixDisplay(
   equipment: BootstrapSnapshot["equipment"][number],
@@ -91,20 +101,48 @@ export function getEquipmentAffixDisplay(
   if (!isAssetQuality(equipment.quality)) {
     throw new RangeError(`Unknown equipment quality: ${equipment.quality}`);
   }
+  const band = equipmentBandForConfig(equipment.equipmentConfigId);
+  const bandName = getEquipmentBandConfig(band).displayName;
   const affixes = readRolledAffixes(equipment.rolledAffixes);
   if (affixes.length === 0) {
-    return { hasAffixes: false, scoreText: "无词条", affixText: "" };
+    return {
+      hasAffixes: false,
+      bandName,
+      scoreText: "无词条",
+      bandScoreText: "无词条",
+      affixText: "",
+    };
   }
-  const scoreBp = equipmentAffixScoreBp(equipment.quality, affixes);
+  const scoreText = `词条 ${affixScorePercent(
+    equipmentAffixScoreBp(equipment.quality, band, affixes),
+  )}%`;
   return {
     hasAffixes: true,
-    scoreText: `词条 ${affixScorePercent(scoreBp)}%`,
+    bandName,
+    scoreText,
+    bandScoreText: `${bandName} ${scoreText}`,
     affixText: affixes
       .map(
         (affix) => `${AFFIX_LABELS[affix.stat]} +${formatBasisPoints(affix.valueBp)}`,
       )
       .join("  "),
   };
+}
+
+/**
+ * The 法宝页 name line: `天阶 · 太虚斩仙剑`. The band is shown on every row, not
+ * only on the ones with affixes, because it is the piece's identity — the four
+ * bands share a slot's base power, so the band is the only thing distinguishing
+ * two pieces that read the same everywhere else.
+ */
+export function getEquipmentTitleText(
+  equipment: Pick<
+    BootstrapSnapshot["equipment"][number],
+    "equipmentConfigId" | "displayName"
+  >,
+): string {
+  const band = equipmentBandForConfig(equipment.equipmentConfigId);
+  return `${getEquipmentBandConfig(band).displayName} · ${equipment.displayName}`;
 }
 
 export function getEquipmentRerollDisplay(
@@ -125,8 +163,15 @@ export function getEquipmentRerollDisplay(
     };
   }
   // A finished piece is a maxed piece: rerolling it can only ever return the
-  // same affixes, so the button stops asking for the materials.
-  if (equipmentAffixScoreBp(equipment.quality, affixes) >= 10_000) {
+  // same affixes, so the button stops asking for the materials. The ceiling is
+  // the piece's own band, so a 凡阶 piece maxes out at the 凡阶 ceiling.
+  if (
+    equipmentAffixScoreBp(
+      equipment.quality,
+      equipmentBandForConfig(equipment.equipmentConfigId),
+      affixes,
+    ) >= 10_000
+  ) {
     return {
       maxed: true,
       affordable: false,

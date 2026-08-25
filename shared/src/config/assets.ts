@@ -130,23 +130,52 @@ export const EQUIPMENT_AFFIX_ROLL: Readonly<
 /** Affixes roll within 40% of their quality's center value. */
 export const EQUIPMENT_AFFIX_SPREAD_BP = 4_000;
 
+/**
+ * How much each band stretches the affix centers. Affixes only feed the idle
+ * bonuses (experience per second, spirit stone per minute, drop efficiency) and
+ * never combat power, so this is the one axis a band is allowed to grow along
+ * without disturbing the power calibration.
+ *
+ * Band 1 is exactly 10,000, which is what keeps every stored affix and every
+ * score on an old save byte-identical.
+ */
+export const EQUIPMENT_AFFIX_BAND_MULTIPLIER_BP: Readonly<
+  Record<EquipmentBand, number>
+> = {
+  1: 10_000,
+  2: 12_000,
+  3: 14_500,
+  4: 17_500,
+};
+
 export interface EquipmentAffixRange {
   readonly count: number;
   readonly minValueBp: number;
   readonly maxValueBp: number;
 }
 
-export function equipmentAffixRange(quality: AssetQuality): EquipmentAffixRange {
+/**
+ * The window one affix of this quality rolls in, on a piece of this band. The
+ * band scales the center and the spread is taken from the scaled center, so a
+ * 天阶 legendary rolls 368..856 where a 凡阶 one rolls 210..490.
+ */
+export function equipmentAffixRange(
+  quality: AssetQuality,
+  band: EquipmentBand,
+): EquipmentAffixRange {
   const roll = EQUIPMENT_AFFIX_ROLL[quality];
   if (!roll) throw new RangeError(`Unknown equipment quality: ${quality}`);
+  const multiplierBp = EQUIPMENT_AFFIX_BAND_MULTIPLIER_BP[band];
+  if (!multiplierBp) throw new RangeError(`Unknown equipment band: ${band}`);
   if (roll.count === 0) {
     return { count: 0, minValueBp: 0, maxValueBp: 0 };
   }
-  const spread = (roll.centerBp * EQUIPMENT_AFFIX_SPREAD_BP) / 10_000;
+  const centerBp = Math.floor((roll.centerBp * multiplierBp) / 10_000);
+  const spread = (centerBp * EQUIPMENT_AFFIX_SPREAD_BP) / 10_000;
   return {
     count: roll.count,
-    minValueBp: Math.ceil(roll.centerBp - spread),
-    maxValueBp: Math.floor(roll.centerBp + spread),
+    minValueBp: Math.ceil(centerBp - spread),
+    maxValueBp: Math.floor(centerBp + spread),
   };
 }
 

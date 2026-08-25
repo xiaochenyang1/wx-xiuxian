@@ -45,9 +45,10 @@ export function getHarvestBatchDisplay(
 }
 
 /**
- * The second line of a chest row. An equipment candidate carries its affix score
- * and nothing else from the roll: the score answers "is this worth a bag slot",
- * and the values behind it are one tap away on the 法宝页 once it is collected.
+ * The second line of a chest row. An equipment candidate carries its band and
+ * affix score and nothing else from the roll: together they answer "is this
+ * worth a bag slot", and the values behind them are one tap away on the 法宝页
+ * once it is collected.
  */
 export function getHarvestEntryDetailText(
   snapshot: Pick<BootstrapSnapshot, "equipment">,
@@ -57,7 +58,7 @@ export function getHarvestEntryDetailText(
   const candidate = snapshot.equipment.find(
     (item) => item.id === entry.equipmentInstanceId,
   );
-  return candidate
-    ? `独立法宝 · ${getEquipmentAffixDisplay(candidate).scoreText}`
-    : "独立法宝";
+  if (!candidate) return "独立法宝";
+  const affixes = getEquipmentAffixDisplay(candidate);
+  return `${affixes.bandName}法宝 · ${affixes.scoreText}`;
 }

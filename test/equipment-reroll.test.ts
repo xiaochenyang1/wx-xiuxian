@@ -1,6 +1,8 @@
 import {
+  equipmentAffixRange,
   equipmentAffixScoreBp,
   equipmentRerollCost,
+  getEquipmentConfig,
   readRolledAffixes,
 } from "@cultivation-diary/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -32,6 +34,7 @@ interface SeedOptions {
   readonly quality: string;
   readonly affixes: readonly MutableSave[];
   readonly location: "bag" | "equipped";
+  readonly equipmentConfigId: string;
 }
 
 const DEFAULTS: SeedOptions = {
@@ -40,6 +43,7 @@ const DEFAULTS: SeedOptions = {
   quality: "legendary",
   affixes: LEGACY_LEGENDARY_AFFIXES,
   location: "bag",
+  equipmentConfigId: "ironwood_sword",
 };
 
 function serviceWithPiece(overrides: Partial<SeedOptions> = {}): LocalGameService {
@@ -69,8 +73,8 @@ function serviceWithPiece(overrides: Partial<SeedOptions> = {}): LocalGameServic
   save.snapshot.equipment = [
     {
       id: EQUIPMENT_ID,
-      equipmentConfigId: "ironwood_sword",
-      displayName: "玄木剑",
+      equipmentConfigId: options.equipmentConfigId,
+      displayName: getEquipmentConfig(options.equipmentConfigId).displayName,
       quality: options.quality,
       slot: "weapon",
       powerBonusBp: 0,
@@ -253,12 +257,14 @@ describe("rerollEquipmentAffixes", () => {
 
     let bestBp = equipmentAffixScoreBp(
       "legendary",
+      1,
       readRolledAffixes(pieceOf(service).rolledAffixes),
     );
     for (let attempt = 0; attempt < 12; attempt += 1) {
       service.rerollEquipmentAffixes(EQUIPMENT_ID);
       const scoreBp = equipmentAffixScoreBp(
         "legendary",
+        1,
         readRolledAffixes(pieceOf(service).rolledAffixes),
       );
       expect(scoreBp).toBeGreaterThanOrEqual(bestBp);
@@ -266,5 +272,33 @@ describe("rerollEquipmentAffixes", () => {
       expect(pieceOf(service).enhanceLevel).toBe(4);
       expect(pieceOf(service).quality).toBe("legendary");
     }
+  });
+
+  it("rerolls a 天阶 piece into the 天阶 range, not the 凡阶 one", () => {
+    // A 凡阶 legendary tops out at 490 per affix. The 天阶 window starts at 368
+    // and reaches 856, so the first reroll almost certainly replaces the legacy
+    // 350s outright — which is the late-game exit the reroll sink gains.
+    const service = serviceWithPiece({
+      equipmentConfigId: "void_immortal_sword",
+      enhanceStone: 400,
+      spiritStone: 200_000,
+    });
+    const range = equipmentAffixRange("legendary", 4);
+    let observedAbove490 = false;
+
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      service.rerollEquipmentAffixes(EQUIPMENT_ID);
+      for (const affix of readRolledAffixes(pieceOf(service).rolledAffixes)) {
+        // Below the floor means a legacy 凡阶 value survived, which only happens
+        // while the 天阶 roll scored worse against its own ceiling.
+        if (affix.valueBp >= range.minValueBp) {
+          expect(affix.valueBp).toBeLessThanOrEqual(range.maxValueBp);
+        }
+        if (affix.valueBp > 490) observedAbove490 = true;
+      }
+    }
+
+    expect(observedAbove490).toBe(true);
+    expect(pieceOf(service).displayName).toBe("太虚斩仙剑");
   });
 });

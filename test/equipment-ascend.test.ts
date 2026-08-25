@@ -148,6 +148,39 @@ describe("ascendEquipment", () => {
     expect(
       equipmentAffixScoreBp(
         "mythic",
+        1,
+        readRolledAffixes(targetOf(service).rolledAffixes),
+      ),
+    ).toBe(10_000);
+  });
+
+  it("rerolls at the ascended piece's own band, not at band 1", () => {
+    const voidSword = {
+      equipmentConfigId: "void_immortal_sword",
+      displayName: "太虚斩仙剑",
+    };
+    const service = serviceWith({
+      equipment: [
+        piece({ id: TARGET_ID, quality: "legendary", enhanceLevel: 5, ...voidSword }),
+        piece({ id: MATERIAL_IDS[0]!, quality: "legendary", ...voidSword }),
+        piece({ id: MATERIAL_IDS[1]!, quality: "legendary", ...voidSword }),
+      ],
+    });
+    rollHighest();
+
+    service.ascendEquipment(TARGET_ID);
+
+    // 神话 centers on 500, so band 4 tops out at floor(500 * 1.75) * 1.4 = 1,225
+    // where band 1 stopped at 700.
+    expect(targetOf(service).rolledAffixes).toEqual([
+      { stat: "experience_bonus", valueBp: 1_225 },
+      { stat: "spirit_stone_bonus", valueBp: 1_225 },
+      { stat: "drop_bonus", valueBp: 1_225 },
+    ]);
+    expect(
+      equipmentAffixScoreBp(
+        "mythic",
+        4,
         readRolledAffixes(targetOf(service).rolledAffixes),
       ),
     ).toBe(10_000);

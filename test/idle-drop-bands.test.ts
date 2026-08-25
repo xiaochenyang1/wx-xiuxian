@@ -1,8 +1,11 @@
 import {
+  equipmentAffixRange,
   equipmentBandForConfig,
   equipmentConfigsForBand,
+  readRolledAffixes,
   type AssetQuality,
   type EquipmentBand,
+  type RolledAffix,
 } from "@cultivation-diary/shared";
 import { describe, expect, it } from "vitest";
 import { CLIENT_CONFIG } from "../assets/scripts/core/ClientConfig";
@@ -41,6 +44,7 @@ function serviceAtLevel(level: number): LocalGameService {
 interface DroppedPiece {
   readonly equipmentConfigId: string;
   readonly quality: AssetQuality;
+  readonly rolledAffixes: readonly RolledAffix[];
 }
 
 /** Every equipment piece a seeded idle stretch put in the harvest chest. */
@@ -56,6 +60,7 @@ function droppedEquipment(level: number, days = 8): readonly DroppedPiece[] {
       seen.push({
         equipmentConfigId: item.equipmentConfigId,
         quality: item.quality as AssetQuality,
+        rolledAffixes: readRolledAffixes(item.rolledAffixes),
       });
     }
   }
@@ -179,6 +184,34 @@ describe("idle drop quality grows with the band", () => {
         Math.floor(bases[configId!]! * multipliers[quality!]!),
       );
     }
+  });
+});
+
+describe("dropped affixes come out of the dropped band's range", () => {
+  it("rolls every affix inside its own band's window", () => {
+    for (const band of [1, 2, 3, 4] as const) {
+      for (const piece of droppedEquipment(BAND_LEVELS[band], 12)) {
+        const range = equipmentAffixRange(piece.quality, band);
+        expect(piece.rolledAffixes).toHaveLength(range.count);
+        for (const affix of piece.rolledAffixes) {
+          expect(affix.valueBp).toBeGreaterThanOrEqual(range.minValueBp);
+          expect(affix.valueBp).toBeLessThanOrEqual(range.maxValueBp);
+        }
+      }
+    }
+  });
+
+  it("puts a 天阶 优秀 above the 凡阶 优秀 ceiling", () => {
+    // 凡阶 优秀 tops out at 140bp and 天阶 优秀 starts at 105, so the windows
+    // overlap; what has to be visible over a long run is a value no 凡阶 piece
+    // could have rolled.
+    const band4 = droppedEquipment(BAND_LEVELS[4], 12).flatMap((piece) =>
+      piece.rolledAffixes.map((affix) => affix.valueBp),
+    );
+    expect(band4.length).toBeGreaterThan(0);
+    expect(Math.max(...band4)).toBeGreaterThan(
+      equipmentAffixRange("uncommon", 1).maxValueBp,
+    );
   });
 });
 
