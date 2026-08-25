@@ -99,6 +99,7 @@ import {
   DROP_CONFIG_VERSION,
   GAME_CONFIG_VERSION,
   GAME_CONFIG_VERSION_PRE_AFFIX_ROLL,
+  GAME_CONFIG_VERSION_PRE_EQUIPMENT_BANDS,
   GAME_CONFIG_VERSION_PRE_CAVE,
   GAME_CONFIG_VERSION_PRE_EQUIPMENT_MANAGEMENT,
   GAME_CONFIG_VERSION_PRE_EXPEDITION,
@@ -2782,6 +2783,20 @@ function migrateSnapshot(snapshot: unknown): unknown {
     // old fixed values sit at the center of the new ranges and already satisfy
     // the tightened validation, and rerolling on load would silently change an
     // equipped piece's idle bonuses without the player doing anything.
+    migrated = {
+      ...migrated,
+      config: { ...config, version: GAME_CONFIG_VERSION_PRE_EQUIPMENT_BANDS },
+    };
+    config = migrated.config;
+  }
+  if (
+    isRecord(config) &&
+    config.version === GAME_CONFIG_VERSION_PRE_EQUIPMENT_BANDS
+  ) {
+    // Bands only bump the version. Every id an old save can hold is a band 1 id
+    // and all five survive; the band itself is derived from the id, never
+    // stored; and band 1's affix window is unchanged, so stored affixes and the
+    // scores read off them stay byte-identical.
     migrated = {
       ...migrated,
       config: { ...config, version: GAME_CONFIG_VERSION },

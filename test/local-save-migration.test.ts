@@ -7,6 +7,7 @@ import {
   NEWCOMER_REACH_LEVEL_8_TASK_ID,
   PROGRESSION_TASK_CONFIGS,
   TRIAL_TOWER_UNLOCK_LEVEL,
+  equipmentBandForConfig,
 } from "@cultivation-diary/shared";
 import { describe, expect, it } from "vitest";
 import { CLIENT_CONFIG } from "../assets/scripts/core/ClientConfig";
@@ -265,7 +266,7 @@ describe("local-1.0.0 migration", () => {
   it("chains through both migrations and backfills every new subsystem", () => {
     const service = load(legacySave());
 
-    expect(service.snapshot.config.version).toBe("local-2.6.0");
+    expect(service.snapshot.config.version).toBe("local-2.7.0");
     expect(service.snapshot.cave.buildings).toEqual(
       CAVE_BUILDING_CONFIGS.map((config) => ({
         buildingConfigId: config.id,
@@ -298,7 +299,7 @@ describe("local-1.1.0 migration", () => {
 
     const service = load(legacy);
 
-    expect(service.snapshot.config.version).toBe("local-2.6.0");
+    expect(service.snapshot.config.version).toBe("local-2.7.0");
     expect(service.snapshot.cave.buildings[0].level).toBe(4);
     expect(service.snapshot.cave.buildings[3].level).toBe(CAVE_MAX_LEVEL);
     expect(service.snapshot.expedition.clearedStageIds).toEqual([]);
@@ -341,7 +342,7 @@ describe("local-1.2.0 to local-2.0.0 migration", () => {
 
     const service = load(legacy);
 
-    expect(service.snapshot.config.version).toBe("local-2.6.0");
+    expect(service.snapshot.config.version).toBe("local-2.7.0");
     expect(service.snapshot.cave.buildings[0].level).toBe(6);
     expect(service.snapshot.expedition.clearedStageIds).toEqual(
       legacy.snapshot.expedition.clearedStageIds,
@@ -379,7 +380,7 @@ describe("local-2.0.0 to local-2.1.0 migration", () => {
 
     const service = load(legacy);
 
-    expect(service.snapshot.config.version).toBe("local-2.6.0");
+    expect(service.snapshot.config.version).toBe("local-2.7.0");
     expect(
       service.snapshot.inventory.stacks.some(
         (stack) => stack.itemConfigId === "protection_talisman",
@@ -403,7 +404,7 @@ describe("local-2.1.0 to local-2.2.0 migration", () => {
 
     const service = load(legacy);
 
-    expect(service.snapshot.config.version).toBe("local-2.6.0");
+    expect(service.snapshot.config.version).toBe("local-2.7.0");
     expect(service.snapshot.expedition.clearedStageIds).toEqual(
       legacy.snapshot.expedition.clearedStageIds,
     );
@@ -428,7 +429,7 @@ describe("local-2.2.0 to local-2.3.0 migration", () => {
     const legacy = preEquipmentManagementSave();
     const service = load(legacy);
 
-    expect(service.snapshot.config.version).toBe("local-2.6.0");
+    expect(service.snapshot.config.version).toBe("local-2.7.0");
     expect(service.snapshot.equipment[0]!.isLocked).toBe(false);
     expect(service.snapshot.equipment[1]!.isLocked).toBe(true);
     expect(service.snapshot.player.id).toBe(legacy.snapshot.player.id);
@@ -449,7 +450,7 @@ describe("local-2.3.0 to local-2.4.0 migration", () => {
     const service = load(legacy);
     const progress = service.snapshot.progress as Record<string, unknown>;
 
-    expect(service.snapshot.config.version).toBe("local-2.6.0");
+    expect(service.snapshot.config.version).toBe("local-2.7.0");
     expect(progress.loadoutFixedPower).toBeUndefined();
     expect(typeof progress.loadoutPowerBonusBp).toBe("number");
     for (const item of [
@@ -483,14 +484,14 @@ describe("local-2.3.0 to local-2.4.0 migration", () => {
     expect(service.initialize(LATER).created).toBe(false);
   });
 
-  it("chains a local-1.0.0 save all the way to local-2.6.0", () => {
+  it("chains a local-1.0.0 save all the way to local-2.7.0", () => {
     const legacy = legacySave();
     legacy.snapshot.progress.loadoutFixedPower = "625";
     delete legacy.snapshot.progress.loadoutPowerBonusBp;
     const service = load(legacy);
     const progress = service.snapshot.progress as Record<string, unknown>;
 
-    expect(service.snapshot.config.version).toBe("local-2.6.0");
+    expect(service.snapshot.config.version).toBe("local-2.7.0");
     expect(progress.loadoutFixedPower).toBeUndefined();
     expect(typeof progress.loadoutPowerBonusBp).toBe("number");
     expect(service.snapshot.player.id).toBe(legacy.snapshot.player.id);
@@ -512,7 +513,7 @@ describe("local-2.4.0 to local-2.5.0 migration", () => {
     const service = load(legacy);
     const snapshot = service.snapshot as unknown as MutableSave;
 
-    expect(service.snapshot.config.version).toBe("local-2.6.0");
+    expect(service.snapshot.config.version).toBe("local-2.7.0");
     expect(service.snapshot.trialTower).toEqual({ highestFloor: 0 });
     expect(snapshot.newcomerTasks).toBeUndefined();
     expect(service.snapshot.progressionTasks).toHaveLength(
@@ -567,7 +568,7 @@ describe("local-2.4.0 to local-2.5.0 migration", () => {
     legacy.snapshot.unlocks = { partner: false, cave: false };
     const service = load(legacy);
 
-    expect(service.snapshot.config.version).toBe("local-2.6.0");
+    expect(service.snapshot.config.version).toBe("local-2.7.0");
     expect(service.snapshot.trialTower).toEqual({ highestFloor: 0 });
     expect(service.snapshot.progressionTasks).toHaveLength(
       PROGRESSION_TASK_CONFIGS.length,
@@ -580,15 +581,15 @@ describe("local-2.4.0 to local-2.5.0 migration", () => {
   });
 });
 
-describe("local-2.5.0 to local-2.6.0 migration", () => {
-  it("bumps the version and leaves the stored affixes byte-identical", () => {
+describe("local-2.5.0 migration", () => {
+  it("carries a pre-affix-roll save to head with its affixes byte-identical", () => {
     const legacy = preAffixRollSave();
     const before = JSON.parse(
       JSON.stringify(legacy.snapshot.equipment),
     ) as MutableSave[];
     const service = load(legacy);
 
-    expect(service.snapshot.config.version).toBe("local-2.6.0");
+    expect(service.snapshot.config.version).toBe("local-2.7.0");
     // The roll ranges are centred on the values old pieces already hold, so the
     // step is a pure version bump: nothing is rerolled on load.
     expect(
@@ -610,6 +611,54 @@ describe("local-2.5.0 to local-2.6.0 migration", () => {
 
   it("does not discard a valid pre-affix-roll save", () => {
     expect(rejected(preAffixRollSave())).toBe(false);
+  });
+});
+
+describe("local-2.6.0 to local-2.7.0 migration", () => {
+  /** The same save one version on: bands changed nothing a save can hold. */
+  function preEquipmentBandsSave(): MutableSave {
+    const save = preAffixRollSave();
+    save.snapshot.config.version = "local-2.6.0";
+    return save;
+  }
+
+  it("bumps the version and leaves every band 1 piece exactly as it was", () => {
+    const legacy = preEquipmentBandsSave();
+    const before = JSON.parse(
+      JSON.stringify(legacy.snapshot.equipment),
+    ) as MutableSave[];
+    const service = load(legacy);
+
+    expect(service.snapshot.config.version).toBe("local-2.7.0");
+    // Bands are derived from the config id, and the five ids an old save can
+    // hold are all band 1 ids that survived. Band 1's affix window is unchanged,
+    // so there is nothing to rewrite.
+    expect(
+      service.snapshot.equipment.map((item) => ({
+        equipmentConfigId: item.equipmentConfigId,
+        displayName: item.displayName,
+        quality: item.quality,
+        rolledAffixes: item.rolledAffixes,
+      })),
+    ).toEqual(
+      before.map((item) => ({
+        equipmentConfigId: item.equipmentConfigId,
+        displayName: item.displayName,
+        quality: item.quality,
+        rolledAffixes: item.rolledAffixes,
+      })),
+    );
+  });
+
+  it("still resolves every stored piece to band 1", () => {
+    const service = load(preEquipmentBandsSave());
+    for (const item of service.snapshot.equipment) {
+      expect(equipmentBandForConfig(item.equipmentConfigId)).toBe(1);
+    }
+  });
+
+  it("does not discard a valid pre-band save", () => {
+    expect(rejected(preEquipmentBandsSave())).toBe(false);
   });
 });
 
