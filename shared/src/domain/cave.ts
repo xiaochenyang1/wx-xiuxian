@@ -56,3 +56,18 @@ export function createEmptyCaveBuildings(): CaveBuildingInput[] {
     level: 0,
   }));
 }
+
+/**
+ * A building the save has never recorded reads as level 0, which is what makes
+ * a room's level usable as a gate without every caller handling the absence.
+ */
+export function caveBuildingLevel(
+  buildings: readonly CaveBuildingInput[],
+  buildingConfigId: string,
+): number {
+  return (
+    buildings.find(
+      (building) => building.buildingConfigId === buildingConfigId,
+    )?.level ?? 0
+  );
+}

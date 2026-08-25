@@ -4,7 +4,10 @@ import {
   getInventoryItemUseDisplay,
   isDirectlyUsableInventoryItem,
 } from "../assets/scripts/core/InventoryDisplay";
-import { getHarvestBatchDisplay } from "../assets/scripts/core/HarvestBatchDisplay";
+import {
+  getHarvestBatchDisplay,
+  getHarvestEntryDetailText,
+} from "../assets/scripts/core/HarvestBatchDisplay";
 
 describe("inventory item actions", () => {
   it("offers a direct use button for both experience pill sizes", () => {
@@ -93,5 +96,47 @@ describe("harvest batch controls", () => {
       blockedEquipmentCount: 1,
       salvageableCount: 2,
     });
+  });
+});
+
+describe("harvest chest candidate detail line", () => {
+  const candidate = {
+    id: "00000000-0000-4000-8000-000000000001",
+    quality: "legendary",
+    rolledAffixes: [
+      { stat: "experience_bonus", valueBp: 490 },
+      { stat: "spirit_stone_bonus", valueBp: 350 },
+      { stat: "drop_bonus", valueBp: 210 },
+    ],
+  } as never;
+
+  it("appends the affix score to an equipment candidate", () => {
+    expect(
+      getHarvestEntryDetailText(
+        { equipment: [candidate] },
+        {
+          entryType: "equipment",
+          equipmentInstanceId: "00000000-0000-4000-8000-000000000001",
+        },
+      ),
+    ).toBe("独立法宝 · 词条 71%");
+  });
+
+  it("keeps the score off a technique candidate, which has no affixes", () => {
+    expect(
+      getHarvestEntryDetailText(
+        { equipment: [candidate] },
+        { entryType: "technique", equipmentInstanceId: null },
+      ),
+    ).toBe("功法本体");
+  });
+
+  it("still labels the row when the instance cannot be found", () => {
+    expect(
+      getHarvestEntryDetailText(
+        { equipment: [] },
+        { entryType: "equipment", equipmentInstanceId: "missing" },
+      ),
+    ).toBe("独立法宝");
   });
 });

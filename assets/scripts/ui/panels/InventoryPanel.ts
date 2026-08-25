@@ -3,7 +3,7 @@ import { formatLargeNumber } from "../../core/ClientNumber";
 import type { AppState } from "../../core/ClientTypes";
 import { canRunLocalMutation } from "../../core/ClientTypes";
 import { getAutoSalvageControls } from "../../core/AutoSalvageDisplay";
-import { getHarvestBatchDisplay } from "../../core/HarvestBatchDisplay";
+import { getHarvestBatchDisplay, getHarvestEntryDetailText } from "../../core/HarvestBatchDisplay";
 import { getInventoryItemUseDisplay } from "../../core/InventoryDisplay";
 import type { AppViewActions, PanelPaging } from "../AppView";
 import { COLORS } from "../primitives/Colors";
@@ -304,7 +304,7 @@ export function drawInventoryPanel(
       );
       addLabel(
         overlay,
-        entry.entryType === "equipment" ? "独立法宝" : "功法本体",
+        getHarvestEntryDetailText(data, entry),
         -165,
         y - 16,
         300,

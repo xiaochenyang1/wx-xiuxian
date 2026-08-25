@@ -39,6 +39,7 @@ import {
   calculateTechniqueContribution,
   calculateTotalPower,
   caveUpgradeCost,
+  caveBuildingLevel,
   canAscendEquipmentQuality,
   craftingQualityWeight,
   completeBreakthrough,
@@ -714,7 +715,7 @@ export class LocalGameService {
       } catch {
         throw new LocalGameError("未知的炼丹配方");
       }
-      const alchemyRoomLevel = caveBuildingLevel(snapshot, "alchemy_room");
+      const alchemyRoomLevel = caveBuildingLevel(snapshot.cave.buildings, "alchemy_room");
       if (alchemyRoomLevel < recipe.requiredAlchemyRoomLevel) {
         throw new LocalGameError(
           `炼丹房需达到 Lv.${recipe.requiredAlchemyRoomLevel}`,
@@ -801,7 +802,7 @@ export class LocalGameService {
       } catch {
         throw new LocalGameError("未知的炼器图谱");
       }
-      const craftingRoomLevel = caveBuildingLevel(snapshot, "crafting_room");
+      const craftingRoomLevel = caveBuildingLevel(snapshot.cave.buildings, "crafting_room");
       if (craftingRoomLevel < recipe.requiredCraftingRoomLevel) {
         throw new LocalGameError(
           `炼器室需达到 Lv.${recipe.requiredCraftingRoomLevel}`,
@@ -1570,7 +1571,7 @@ export class LocalGameService {
       }
 
       const cost = equipmentAscendCost(target.quality);
-      const craftingRoomLevel = caveBuildingLevel(snapshot, "crafting_room");
+      const craftingRoomLevel = caveBuildingLevel(snapshot.cave.buildings, "crafting_room");
       if (craftingRoomLevel < cost.requiredCraftingRoomLevel) {
         throw new LocalGameError(
           `炼器室需达到 Lv.${cost.requiredCraftingRoomLevel}`,
@@ -2318,17 +2319,6 @@ function createTechniqueSnapshot(
     dropBonusBp: config.dropBonusBp,
     configVersion: DROP_CONFIG_VERSION,
   };
-}
-
-function caveBuildingLevel(
-  snapshot: BootstrapSnapshot,
-  buildingConfigId: string,
-): number {
-  return (
-    snapshot.cave.buildings.find(
-      (building) => building.buildingConfigId === buildingConfigId,
-    )?.level ?? 0
-  );
 }
 
 function ensureStackOutputCapacity(

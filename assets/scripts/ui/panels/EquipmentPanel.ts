@@ -2,7 +2,13 @@ import {
   getStoredEquipment,
   type EquippedEquipmentSlot,
 } from "@cultivation-diary/shared";
-import { getEquipmentEnhanceDisplay } from "../../core/AssetUpgradeDisplay";
+import {
+  getEquipmentAffixDisplay,
+  getEquipmentAscendDisplay,
+  getEquipmentEnhanceDisplay,
+  getEquipmentRerollDisplay,
+  type AssetUpgradeDisplay,
+} from "../../core/AssetUpgradeDisplay";
 import { formatLargeNumber } from "../../core/ClientNumber";
 import { getEquipmentManagementDisplay } from "../../core/EquipmentManagementDisplay";
 import type { AppState } from "../../core/ClientTypes";
@@ -26,7 +32,7 @@ export function drawEquipmentPanel(
 ): void {
   const equipment = getStoredEquipment(state.bootstrap!);
   const mutationsEnabled = canRunLocalMutation(state);
-  const equipmentWindow = paging.window("equipment", equipment.length, 5);
+  const equipmentWindow = paging.window("equipment", equipment.length, 4);
   addLabel(
     overlay,
     `法宝 ${equipment.length} 件 · 强化石 ${formatLargeNumber(
@@ -70,18 +76,21 @@ export function drawEquipmentPanel(
     return;
   }
   equipment.slice(equipmentWindow.start, equipmentWindow.end).forEach((item, index) => {
-    const y = 172 - index * 91;
+    const y = 150 - index * 120;
     const enhance = getEquipmentEnhanceDisplay(state.bootstrap!, item);
+    const affix = getEquipmentAffixDisplay(item);
+    const reroll = getEquipmentRerollDisplay(state.bootstrap!, item);
+    const ascend = getEquipmentAscendDisplay(state.bootstrap!, item);
     const management = getEquipmentManagementDisplay(item);
-    drawBand(overlay, `Equipment-${item.id}`, 0, y, 600, 82, COLORS.panel);
+    drawBand(overlay, `Equipment-${item.id}`, 0, y, 600, 112, COLORS.panel);
     addLabel(
       overlay,
       item.displayName,
       -230,
-      y + 18,
+      y + 41,
       125,
-      34,
-      17,
+      30,
+      16,
       qualityColor(item.quality),
       true,
       1,
@@ -91,10 +100,10 @@ export function drawEquipmentPanel(
       overlay,
       `战力 +${formatBasisPoints(item.powerBonusBp)} · +${item.enhanceLevel}`,
       -95,
-      y + 18,
+      y + 41,
       150,
-      32,
-      15,
+      28,
+      14,
       COLORS.gold,
       false,
       1,
@@ -104,29 +113,62 @@ export function drawEquipmentPanel(
       overlay,
       management.protectionText,
       82,
-      y + 18,
+      y + 41,
       92,
-      28,
-      14,
+      26,
+      13,
       item.isLocked ? COLORS.gold : COLORS.textMuted,
     );
     addLabel(
       overlay,
       enhance.costText.replace("\n", " · "),
       207,
-      y + 18,
+      y + 41,
       154,
-      28,
-      13,
+      26,
+      12,
       enhance.affordable || enhance.maxed ? COLORS.textMuted : COLORS.red,
+    );
+    // The affix line reads as one sentence — the score first, then the rolls it
+    // scored — so a player can judge a piece without opening anything.
+    addLabel(
+      overlay,
+      affix.affixText ? `${affix.scoreText} · ${affix.affixText}` : affix.scoreText,
+      0,
+      y + 15,
+      570,
+      22,
+      12,
+      affix.hasAffixes ? COLORS.jade : COLORS.textMuted,
+      false,
+      1,
+      HorizontalTextAlignment.LEFT,
+    );
+    drawUpgradeAction(
+      overlay,
+      reroll,
+      -196,
+      -84,
+      y - 11,
+      mutationsEnabled,
+      () => actions.rerollEquipmentAffixes(item.id),
+    );
+    drawUpgradeAction(
+      overlay,
+      ascend,
+      100,
+      212,
+      y - 11,
+      mutationsEnabled,
+      () => actions.ascendEquipment(item.id),
     );
     createButton(
       overlay,
       enhance.actionText,
       -205,
-      y - 22,
+      y - 41,
       86,
-      34,
+      30,
       {
         fill: enhance.affordable ? COLORS.inkGreenLight : COLORS.panel,
         stroke: enhance.affordable ? COLORS.gold : COLORS.goldMuted,
@@ -139,9 +181,9 @@ export function drawEquipmentPanel(
       overlay,
       management.lockActionText,
       -106,
-      y - 22,
+      y - 41,
       86,
-      34,
+      30,
       {
         fill: item.isLocked ? COLORS.goldMuted : COLORS.panelStrong,
         stroke: COLORS.goldMuted,
@@ -155,9 +197,9 @@ export function drawEquipmentPanel(
       overlay,
       management.salvageActionText,
       20,
-      y - 22,
+      y - 41,
       150,
-      34,
+      30,
       {
         fill: management.salvageEnabled ? COLORS.red : COLORS.panel,
         stroke: COLORS.goldMuted,
@@ -171,9 +213,9 @@ export function drawEquipmentPanel(
         overlay,
         "卸下",
         230,
-        y - 22,
+        y - 41,
         100,
-        34,
+        30,
         {
           fill: COLORS.red,
           stroke: COLORS.goldMuted,
@@ -187,9 +229,9 @@ export function drawEquipmentPanel(
         overlay,
         "装左",
         202,
-        y - 22,
+        y - 41,
         48,
-        34,
+        30,
         {
           fill: COLORS.inkGreenLight,
           stroke: COLORS.goldMuted,
@@ -202,9 +244,9 @@ export function drawEquipmentPanel(
         overlay,
         "装右",
         258,
-        y - 22,
+        y - 41,
         48,
-        34,
+        30,
         {
           fill: COLORS.inkGreenLight,
           stroke: COLORS.goldMuted,
@@ -222,9 +264,9 @@ export function drawEquipmentPanel(
             ? "替换"
             : "装备",
           230,
-          y - 22,
+          y - 41,
           100,
-          34,
+          30,
           {
             fill: COLORS.inkGreenLight,
             stroke: COLORS.goldMuted,
@@ -245,6 +287,52 @@ export function drawEquipmentPanel(
     equipmentWindow.pageCount,
     () => paging.show("equipment", equipmentWindow.page - 1),
     () => paging.show("equipment", equipmentWindow.page + 1),
+  );
+}
+
+/**
+ * The cost sits beside the button rather than inside it: the two sinks price
+ * themselves in two currencies, and a player deciding between them needs to read
+ * both prices without tapping either.
+ */
+function drawUpgradeAction(
+  overlay: Node,
+  display: AssetUpgradeDisplay,
+  costX: number,
+  buttonX: number,
+  y: number,
+  mutationsEnabled: boolean,
+  onClick: () => void,
+): void {
+  addLabel(
+    overlay,
+    display.costText,
+    costX,
+    y,
+    120,
+    26,
+    11,
+    display.actionEnabled && !display.affordable
+      ? COLORS.red
+      : COLORS.textMuted,
+    false,
+    2,
+    HorizontalTextAlignment.LEFT,
+  );
+  createButton(
+    overlay,
+    display.actionText,
+    buttonX,
+    y,
+    84,
+    28,
+    {
+      fill: display.affordable ? COLORS.inkGreenLight : COLORS.panel,
+      stroke: display.affordable ? COLORS.gold : COLORS.goldMuted,
+      fontSize: 12,
+      enabled: mutationsEnabled && display.actionEnabled,
+    },
+    onClick,
   );
 }
 

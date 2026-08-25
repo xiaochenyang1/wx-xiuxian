@@ -153,6 +153,17 @@ export class GameBootstrap extends Component {
             () => this.localGame.enhanceEquipment(equipmentInstanceId),
             "power_change",
           ),
+        // Rerolling never touches power, so it takes the default trigger: the
+        // affix line and the toast carry the whole result.
+        rerollEquipmentAffixes: (equipmentInstanceId) =>
+          this.runMutation(() =>
+            this.localGame.rerollEquipmentAffixes(equipmentInstanceId),
+          ),
+        ascendEquipment: (equipmentInstanceId) =>
+          this.runMutation(
+            () => this.localGame.ascendEquipment(equipmentInstanceId),
+            "power_change",
+          ),
         toggleEquipmentLock: (equipmentInstanceId) =>
           this.runMutation(() =>
             this.localGame.toggleEquipmentLock(equipmentInstanceId),

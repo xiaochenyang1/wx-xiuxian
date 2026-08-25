@@ -2,7 +2,7 @@ import type {
   AssetQuality,
   ChosenAvatarVariant,
 } from "@cultivation-diary/shared";
-import { formatLargeNumber } from "../../core/ClientNumber";
+import { formatBasisPoints, formatLargeNumber } from "../../core/ClientNumber";
 import type { Color } from "cc";
 import { color, COLORS } from "./Colors";
 
@@ -32,10 +32,9 @@ export function formatSignedPowerDelta(value: string): string {
     : `+${formatLargeNumber(value)}`;
 }
 
-export function formatBasisPoints(value: number): string {
-  const percent = value / 100;
-  return `${Number.isInteger(percent) ? percent.toFixed(0) : percent.toFixed(2)}%`;
-}
+// Re-exported so panels keep a single formatting import, while the rule itself
+// lives in the core layer that the display models can also reach.
+export { formatBasisPoints };
 
 export function avatarVariantName(variant: ChosenAvatarVariant): string {
   return variant === "male" ? "男修形象" : "女修形象";
