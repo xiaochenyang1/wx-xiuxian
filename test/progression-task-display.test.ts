@@ -210,4 +210,60 @@ describe("progression task window", () => {
       countPendingProgressionTasks(freshChain(), VISIBLE_PROGRESSION_TASK_COUNT),
     ).toBe(3);
   });
+
+  it("skips a settled row rather than letting it pin the window", () => {
+    // The chain interleaves level and tower milestones, so a player who ignores
+    // the tower leaves settled and open rows mixed together. An anchor on the
+    // first open row would show that one plus the two settled rows behind it;
+    // the panel instead collects the first three rows still worth looking at.
+    const tasks = freshChain();
+    const settle = (index: number) => {
+      tasks[index] = task({
+        taskConfigId: tasks[index]!.taskConfigId,
+        completedAt: "2026-08-14T08:00:00.000Z",
+        claimedAt: "2026-08-14T08:00:00.000Z",
+      });
+    };
+    for (const index of [0, 1, 2, 3, 5]) settle(index);
+
+    const visible = selectVisibleProgressionTasks(
+      tasks,
+      VISIBLE_PROGRESSION_TASK_COUNT,
+    );
+
+    expect(visible.map((entry) => entry.taskConfigId)).toEqual([
+      PROGRESSION_TASK_CONFIGS[4]!.id,
+      PROGRESSION_TASK_CONFIGS[6]!.id,
+      PROGRESSION_TASK_CONFIGS[7]!.id,
+    ]);
+    expect(countPendingProgressionTasks(tasks, VISIBLE_PROGRESSION_TASK_COUNT)).toBe(
+      3,
+    );
+  });
+
+  it("keeps an unclaimed tower nudge visible without hiding what comes after it", () => {
+    // The load-bearing case for skipping: a level task the chain places after an
+    // unclimbed floor still reaches the panel, so the player can see the rewards
+    // that keep arriving on their own.
+    const tasks = freshChain().map((entry, index) =>
+      index === 5
+        ? task({ taskConfigId: entry.taskConfigId, progress: "0" })
+        : task({
+            taskConfigId: entry.taskConfigId,
+            completedAt: "2026-08-14T08:00:00.000Z",
+            claimedAt: "2026-08-14T08:00:00.000Z",
+          }),
+    );
+    // Index 5 is the floor 1 milestone, the first tower row in the chain.
+    expect(PROGRESSION_TASK_CONFIGS[5]!.id).toBe("progression.trial_tower_floor_1");
+
+    const visible = selectVisibleProgressionTasks(
+      tasks,
+      VISIBLE_PROGRESSION_TASK_COUNT,
+    );
+
+    expect(visible.map((entry) => entry.taskConfigId)).toEqual([
+      "progression.trial_tower_floor_1",
+    ]);
+  });
 });

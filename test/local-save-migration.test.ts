@@ -268,7 +268,7 @@ describe("local-1.0.0 migration", () => {
   it("chains through both migrations and backfills every new subsystem", () => {
     const service = load(legacySave());
 
-    expect(service.snapshot.config.version).toBe("local-2.8.0");
+    expect(service.snapshot.config.version).toBe("local-2.9.0");
     expect(service.snapshot.cave.buildings).toEqual(
       CAVE_BUILDING_CONFIGS.map((config) => ({
         buildingConfigId: config.id,
@@ -301,7 +301,7 @@ describe("local-1.1.0 migration", () => {
 
     const service = load(legacy);
 
-    expect(service.snapshot.config.version).toBe("local-2.8.0");
+    expect(service.snapshot.config.version).toBe("local-2.9.0");
     expect(service.snapshot.cave.buildings[0].level).toBe(4);
     expect(service.snapshot.cave.buildings[3].level).toBe(CAVE_MAX_LEVEL);
     expect(service.snapshot.expedition.clearedStageIds).toEqual([]);
@@ -344,7 +344,7 @@ describe("local-1.2.0 to local-2.0.0 migration", () => {
 
     const service = load(legacy);
 
-    expect(service.snapshot.config.version).toBe("local-2.8.0");
+    expect(service.snapshot.config.version).toBe("local-2.9.0");
     expect(service.snapshot.cave.buildings[0].level).toBe(6);
     expect(service.snapshot.expedition.clearedStageIds).toEqual(
       legacy.snapshot.expedition.clearedStageIds,
@@ -382,7 +382,7 @@ describe("local-2.0.0 to local-2.1.0 migration", () => {
 
     const service = load(legacy);
 
-    expect(service.snapshot.config.version).toBe("local-2.8.0");
+    expect(service.snapshot.config.version).toBe("local-2.9.0");
     expect(
       service.snapshot.inventory.stacks.some(
         (stack) => stack.itemConfigId === "protection_talisman",
@@ -406,7 +406,7 @@ describe("local-2.1.0 to local-2.2.0 migration", () => {
 
     const service = load(legacy);
 
-    expect(service.snapshot.config.version).toBe("local-2.8.0");
+    expect(service.snapshot.config.version).toBe("local-2.9.0");
     expect(service.snapshot.expedition.clearedStageIds).toEqual(
       legacy.snapshot.expedition.clearedStageIds,
     );
@@ -431,7 +431,7 @@ describe("local-2.2.0 to local-2.3.0 migration", () => {
     const legacy = preEquipmentManagementSave();
     const service = load(legacy);
 
-    expect(service.snapshot.config.version).toBe("local-2.8.0");
+    expect(service.snapshot.config.version).toBe("local-2.9.0");
     expect(service.snapshot.equipment[0]!.isLocked).toBe(false);
     expect(service.snapshot.equipment[1]!.isLocked).toBe(true);
     expect(service.snapshot.player.id).toBe(legacy.snapshot.player.id);
@@ -452,7 +452,7 @@ describe("local-2.3.0 to local-2.4.0 migration", () => {
     const service = load(legacy);
     const progress = service.snapshot.progress as Record<string, unknown>;
 
-    expect(service.snapshot.config.version).toBe("local-2.8.0");
+    expect(service.snapshot.config.version).toBe("local-2.9.0");
     expect(progress.loadoutFixedPower).toBeUndefined();
     expect(typeof progress.loadoutPowerBonusBp).toBe("number");
     for (const item of [
@@ -486,14 +486,14 @@ describe("local-2.3.0 to local-2.4.0 migration", () => {
     expect(service.initialize(LATER).created).toBe(false);
   });
 
-  it("chains a local-1.0.0 save all the way to local-2.8.0", () => {
+  it("chains a local-1.0.0 save all the way to local-2.9.0", () => {
     const legacy = legacySave();
     legacy.snapshot.progress.loadoutFixedPower = "625";
     delete legacy.snapshot.progress.loadoutPowerBonusBp;
     const service = load(legacy);
     const progress = service.snapshot.progress as Record<string, unknown>;
 
-    expect(service.snapshot.config.version).toBe("local-2.8.0");
+    expect(service.snapshot.config.version).toBe("local-2.9.0");
     expect(progress.loadoutFixedPower).toBeUndefined();
     expect(typeof progress.loadoutPowerBonusBp).toBe("number");
     expect(service.snapshot.player.id).toBe(legacy.snapshot.player.id);
@@ -515,7 +515,7 @@ describe("local-2.4.0 to local-2.5.0 migration", () => {
     const service = load(legacy);
     const snapshot = service.snapshot as unknown as MutableSave;
 
-    expect(service.snapshot.config.version).toBe("local-2.8.0");
+    expect(service.snapshot.config.version).toBe("local-2.9.0");
     expect(service.snapshot.trialTower).toEqual({ highestFloor: 0 });
     expect(snapshot.newcomerTasks).toBeUndefined();
     expect(service.snapshot.progressionTasks).toHaveLength(
@@ -570,7 +570,7 @@ describe("local-2.4.0 to local-2.5.0 migration", () => {
     legacy.snapshot.unlocks = { partner: false, cave: false };
     const service = load(legacy);
 
-    expect(service.snapshot.config.version).toBe("local-2.8.0");
+    expect(service.snapshot.config.version).toBe("local-2.9.0");
     expect(service.snapshot.trialTower).toEqual({ highestFloor: 0 });
     expect(service.snapshot.progressionTasks).toHaveLength(
       PROGRESSION_TASK_CONFIGS.length,
@@ -591,7 +591,7 @@ describe("local-2.5.0 migration", () => {
     ) as MutableSave[];
     const service = load(legacy);
 
-    expect(service.snapshot.config.version).toBe("local-2.8.0");
+    expect(service.snapshot.config.version).toBe("local-2.9.0");
     // The roll ranges are centred on the values old pieces already hold, so the
     // step is a pure version bump: nothing is rerolled on load.
     expect(
@@ -631,7 +631,7 @@ describe("local-2.6.0 migration", () => {
     ) as MutableSave[];
     const service = load(legacy);
 
-    expect(service.snapshot.config.version).toBe("local-2.8.0");
+    expect(service.snapshot.config.version).toBe("local-2.9.0");
     // Bands are derived from the config id, and the five ids an old save can
     // hold are all band 1 ids that survived. Band 1's affix window is unchanged,
     // so there is nothing to rewrite.
@@ -692,7 +692,7 @@ describe("local-2.7.0 migration", () => {
 
     const migrated = load(legacy).snapshot;
 
-    expect(migrated.config.version).toBe("local-2.8.0");
+    expect(migrated.config.version).toBe("local-2.9.0");
     // The band multiplier is read off `progress.level` at settlement time and
     // never stored, so the eleventh step has nothing to rewrite. Same bytes in,
     // same bytes out.
@@ -732,6 +732,139 @@ describe("local-2.7.0 migration", () => {
 
   it("does not discard a valid pre-material-curve save", () => {
     expect(rejected(preMaterialCurveSave())).toBe(false);
+  });
+});
+
+describe("local-2.8.0 migration", () => {
+  /** The 22 rows a `local-2.8.0` save could hold, in that version's own order. */
+  const TASK_IDS_AT_2_8_0: readonly string[] = [
+    NEWCOMER_REACH_LEVEL_3_TASK_ID,
+    NEWCOMER_REACH_LEVEL_5_TASK_ID,
+    NEWCOMER_REACH_LEVEL_8_TASK_ID,
+    ...[12, 15, 20, 25, 30, 40, 50, 60, 70, 80, 90, 100].map(
+      (level) => `progression.reach_level_${level}`,
+    ),
+    ...[1, 5, 10, 15, 20, 25, 30].map(
+      (floor) => `progression.trial_tower_floor_${floor}`,
+    ),
+  ];
+
+  function preTaskChainSave(): MutableSave {
+    const save = authenticSaveWithProgress();
+    save.savedAt = LATER.toISOString();
+    save.snapshot.progress.settledAt = LATER.toISOString();
+    save.snapshot.config.version = "local-2.8.0";
+    const stored = new Map<string, MutableSave>(
+      save.snapshot.progressionTasks.map((task: MutableSave) => [
+        task.taskConfigId,
+        task,
+      ]),
+    );
+    save.snapshot.progressionTasks = TASK_IDS_AT_2_8_0.map((id) => {
+      const task = stored.get(id);
+      if (task === undefined) throw new Error(`missing task ${id}`);
+      return task;
+    });
+    return save;
+  }
+
+  it("pads the chain to its new length in config order", () => {
+    const legacy = preTaskChainSave();
+    expect(legacy.snapshot.progressionTasks).toHaveLength(22);
+
+    const migrated = load(legacy).snapshot;
+
+    expect(migrated.config.version).toBe("local-2.9.0");
+    // Mandatory, not cosmetic: `isProgressionTaskList` demands the stored count
+    // equal the config length exactly, so without this step a 22-row save would
+    // be condemned as corrupt and replaced with a fresh character.
+    expect(migrated.progressionTasks).toHaveLength(PROGRESSION_TASK_CONFIGS.length);
+    expect(PROGRESSION_TASK_CONFIGS.length).toBe(42);
+    expect(migrated.progressionTasks.map((task) => task.taskConfigId)).toEqual(
+      PROGRESSION_TASK_CONFIGS.map((config) => config.id),
+    );
+    // The padding also reorders the stored rows into the interleaved order, which
+    // is lawful because validation never compares positions.
+    expect(migrated.progressionTasks.map((task) => task.taskConfigId)).not.toEqual(
+      TASK_IDS_AT_2_8_0,
+    );
+  });
+
+  it("carries every claim mark across by id, not by position", () => {
+    const legacy = preTaskChainSave();
+    for (const task of legacy.snapshot.progressionTasks as MutableSave[]) {
+      if (task.taskConfigId !== NEWCOMER_REACH_LEVEL_8_TASK_ID) continue;
+      task.progress = "8";
+      task.completedAt = START.toISOString();
+      task.claimedAt = START.toISOString();
+    }
+    const pills = legacy.snapshot.inventory.stacks.find(
+      (stack: MutableSave) => stack.itemConfigId === "breakthrough_pill",
+    )?.quantity;
+
+    const migrated = load(legacy).snapshot;
+    const settled = migrated.progressionTasks.find(
+      (task) => task.taskConfigId === NEWCOMER_REACH_LEVEL_8_TASK_ID,
+    );
+
+    expect(settled?.claimedAt).toBe(START.toISOString());
+    expect(settled?.completedAt).toBe(START.toISOString());
+    // Re-granting is the failure this guards: the pill was handed over once.
+    expect(
+      migrated.inventory.stacks.find(
+        (stack) => stack.itemConfigId === "breakthrough_pill",
+      )?.quantity,
+    ).toBe(pills);
+    // Everything new arrives open, so nothing is marked claimed without payment.
+    for (const task of migrated.progressionTasks) {
+      if (TASK_IDS_AT_2_8_0.includes(task.taskConfigId)) continue;
+      expect(task.claimedAt, task.taskConfigId).toBeNull();
+      expect(task.completedAt, task.taskConfigId).toBeNull();
+    }
+  });
+
+  it("pays the new milestones a high save has already passed", () => {
+    const legacy = atLevel(preTaskChainSave(), 300);
+    // A genuine Lv.300 save has long since claimed every milestone the 22-row
+    // chain had, so the delta below is only what the new rows pay.
+    for (const task of legacy.snapshot.progressionTasks as MutableSave[]) {
+      if (!task.taskConfigId.startsWith("progression.reach_level_")) continue;
+      task.completedAt = START.toISOString();
+      task.claimedAt = START.toISOString();
+    }
+    const before = Number(
+      legacy.snapshot.inventory.stacks.find(
+        (stack: MutableSave) => stack.itemConfigId === "enhance_stone",
+      )?.quantity ?? 0,
+    );
+
+    const service = load(legacy);
+    service.checkpoint(new Date(LATER.getTime() + 1_000));
+    const tasks = service.snapshot.progressionTasks;
+    const claimed = (id: string) =>
+      tasks.find((task) => task.taskConfigId === id)?.claimedAt;
+
+    // A Lv.300 character did reach Lv.120..300, and the task says so. This is
+    // `syncProgressionTasks`'s standing behaviour, and the precedent the same
+    // padding step set at `local-2.5.0`; the alternative would be for the
+    // migration to forge a claim timestamp for a reward it never granted.
+    expect(claimed("progression.reach_level_120")).not.toBeNull();
+    expect(claimed("progression.reach_level_300")).not.toBeNull();
+    expect(claimed("progression.reach_level_350")).toBeNull();
+    // 12 + 15 + 18 + 22 + 25 + 30 for the six new milestones at or under Lv.300.
+    expect(
+      Number(
+        service.snapshot.inventory.stacks.find(
+          (stack) => stack.itemConfigId === "enhance_stone",
+        )?.quantity ?? 0,
+      ) - before,
+    ).toBe(122);
+    // Tower milestones are not levelled into: the condition is the floor.
+    expect(claimed("progression.trial_tower_floor_40")).toBeNull();
+  });
+
+  it("does not discard a valid pre-task-chain save", () => {
+    expect(rejected(preTaskChainSave())).toBe(false);
   });
 });
 

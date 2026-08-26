@@ -118,6 +118,7 @@ import {
   GAME_CONFIG_VERSION_PRE_FEATURE_COMPLETION,
   GAME_CONFIG_VERSION_PRE_ITEM_COMPLETION,
   GAME_CONFIG_VERSION_PRE_POWER_MODEL,
+  GAME_CONFIG_VERSION_PRE_TASK_CHAIN,
   GAME_CONFIG_VERSION_PRE_TRIAL_TOWER,
   LOCAL_SAVE_SCHEMA_VERSION,
   createInitialSave,
@@ -2825,6 +2826,24 @@ function migrateSnapshot(snapshot: unknown): unknown {
     // next settlement. No back-pay, in line with every migration before it.
     migrated = {
       ...migrated,
+      config: { ...config, version: GAME_CONFIG_VERSION_PRE_TASK_CHAIN },
+    };
+    config = migrated.config;
+  }
+  if (isRecord(config) && config.version === GAME_CONFIG_VERSION_PRE_TASK_CHAIN) {
+    // Same mandatory padding as the trial-tower step, for the same reason: the
+    // chain grew from 22 rows to 42, and `isProgressionTaskList` demands the
+    // stored count equal the config length exactly. Padding also reorders the
+    // stored rows into the interleaved config order, which is lawful because
+    // validation never compares positions and claim marks travel by id.
+    //
+    // Milestones the player already passed complete on the next settlement and
+    // pay out then. That is `syncProgressionTasks`'s standing behaviour and the
+    // precedent this same step set at `local-2.5.0`; the alternative would have
+    // the migration forge a claim timestamp for a reward it never granted.
+    migrated = {
+      ...migrated,
+      progressionTasks: padProgressionTasks(migrated.progressionTasks),
       config: { ...config, version: GAME_CONFIG_VERSION },
     };
   }

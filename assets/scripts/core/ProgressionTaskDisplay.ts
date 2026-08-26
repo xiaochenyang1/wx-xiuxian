@@ -54,27 +54,31 @@ export function getProgressionTaskDisplay(
 }
 
 /**
- * The chain runs to Lv.100 but the panel has room for three rows, so it shows a
- * window starting at the first task still worth looking at: one awaiting a bag
- * slot, or the next one not yet finished. Once everything is settled it holds on
- * the tail rather than going blank.
+ * The chain runs to Lv.1000 but the panel has room for three rows, so it shows
+ * the first three tasks still worth looking at: awaiting a bag slot, or not yet
+ * finished. Once everything is settled it holds on the tail rather than going
+ * blank.
+ *
+ * Skipping settled rows matters because the chain interleaves level and tower
+ * milestones. A window anchored at the *first* unsettled row would let one
+ * ignored tower task pin the panel forever, hiding every level milestone behind
+ * it — and level rewards auto-grant, so the player would think they had stopped
+ * arriving. The cost is that a player who never climbs sees saved-up tower rows
+ * crowd all three slots, which is exactly what those rows are for.
  */
 export function selectVisibleProgressionTasks(
   tasks: readonly BootstrapSnapshot["progressionTasks"][number][],
   count: number,
 ): readonly BootstrapSnapshot["progressionTasks"][number][] {
   if (tasks.length <= count) return tasks;
-  const firstOpen = tasks.findIndex((task) => !isSettled(task));
-  const start =
-    firstOpen === -1
-      ? tasks.length - count
-      : Math.min(firstOpen, tasks.length - count);
-  return tasks.slice(start, start + count);
+  const open = tasks.filter((task) => !isSettled(task));
+  if (open.length === 0) return tasks.slice(tasks.length - count);
+  return open.slice(0, count);
 }
 
 /**
  * The rail badge counts the same window the panel draws, not the whole chain:
- * with 22 milestones a raw "unfinished" tally would read 19 at Lv.1 and mean
+ * with 42 milestones a raw "unfinished" tally would read 39 at Lv.1 and mean
  * nothing. Bounded by `count`, it reads as "rows waiting for you in there".
  */
 export function countPendingProgressionTasks(

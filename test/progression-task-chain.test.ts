@@ -1,7 +1,17 @@
 import {
+  MAX_LEVEL,
+  MIN_LEVEL,
+  NEWCOMER_REACH_LEVEL_3_TASK_ID,
+  NEWCOMER_REACH_LEVEL_5_TASK_ID,
+  NEWCOMER_REACH_LEVEL_8_TASK_ID,
   PROGRESSION_TASK_CONFIGS,
+  TRIAL_TOWER_MAX_FLOOR,
+  TRIAL_TOWER_TASK_ACHIEVABLE_LEVELS,
+  calculateTotalPower,
   getProgressionTaskConfig,
+  getRealmConfigForLevel,
   progressionTaskTarget,
+  trialFloorRequiredPower,
 } from "@cultivation-diary/shared";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CLIENT_CONFIG } from "../assets/scripts/core/ClientConfig";
@@ -95,7 +105,88 @@ describe("progression task chain", () => {
     );
     expect(
       Math.max(...levels.map((config) => progressionTaskTarget(config))),
-    ).toBe(100);
+    ).toBe(1000);
+    // Both endpoints sit on their own system's real endpoint: the level cap and
+    // the top of the tower, not somewhere in the first few percent of the climb.
+    expect(
+      Math.max(...floors.map((config) => progressionTaskTarget(config))),
+    ).toBe(TRIAL_TOWER_MAX_FLOOR);
+  });
+
+  it("orders the chain by the level each milestone becomes reachable at", () => {
+    // The table in the config is hand-written so the order stays auditable, so
+    // rederive every entry here: bare power where it can reach the floor at all,
+    // a full loadout otherwise. A power change makes this fail instead of
+    // quietly leaving the chain sorted by a stale ladder.
+    const FULL_LOADOUT_BP = 71774;
+    const firstLevelClearing = (floor: number, bonusBp: number): number | null => {
+      const threshold = BigInt(trialFloorRequiredPower(floor));
+      for (let level = MIN_LEVEL; level <= MAX_LEVEL; level += 1) {
+        if (BigInt(calculateTotalPower(level, { percentBonusBp: bonusBp })) >= threshold) {
+          return level;
+        }
+      }
+      return null;
+    };
+
+    for (const [floor, declared] of Object.entries(
+      TRIAL_TOWER_TASK_ACHIEVABLE_LEVELS,
+    )) {
+      const bare = firstLevelClearing(Number(floor), 0);
+      expect(bare ?? firstLevelClearing(Number(floor), FULL_LOADOUT_BP), floor).toBe(
+        declared,
+      );
+    }
+    // Floors 80 and 90 are the two the tower only ever opens to gear: no level,
+    // not even the cap, clears them bare.
+    expect(firstLevelClearing(80, 0)).toBeNull();
+    expect(firstLevelClearing(90, 0)).toBeNull();
+    expect(firstLevelClearing(70, 0)).not.toBeNull();
+
+    const keyOf = (config: (typeof PROGRESSION_TASK_CONFIGS)[number]): number =>
+      config.condition.kind === "level"
+        ? config.condition.level
+        : TRIAL_TOWER_TASK_ACHIEVABLE_LEVELS[config.condition.floor]!;
+    // The opening three are a hard prefix; everything after them is sorted, so
+    // level and tower rows alternate instead of arriving in two blocks.
+    const keys = PROGRESSION_TASK_CONFIGS.slice(3).map(keyOf);
+    expect(keys).toEqual([...keys].sort((left, right) => left - right));
+    expect(PROGRESSION_TASK_CONFIGS.slice(0, 3).map((config) => config.id)).toEqual([
+      NEWCOMER_REACH_LEVEL_3_TASK_ID,
+      NEWCOMER_REACH_LEVEL_5_TASK_ID,
+      NEWCOMER_REACH_LEVEL_8_TASK_ID,
+    ]);
+    const kinds = PROGRESSION_TASK_CONFIGS.map((config) => config.condition.kind);
+    expect(kinds.lastIndexOf("level")).toBeGreaterThan(
+      kinds.indexOf("trial_tower_floor"),
+    );
+  });
+
+  it("stops paying breakthrough pills where a breakthrough no longer costs any", () => {
+    for (const config of PROGRESSION_TASK_CONFIGS) {
+      if (config.condition.kind !== "trial_tower_floor") continue;
+      const pill = config.reward?.items.find(
+        (item) => item.itemConfigId === "breakthrough_pill",
+      );
+      const realm = getRealmConfigForLevel(
+        TRIAL_TOWER_TASK_ACHIEVABLE_LEVELS[config.condition.floor]!,
+      );
+      // A pill is only worth granting while the realm the achiever is standing
+      // in still charges for a breakthrough. 真仙期 charges nothing, so the top
+      // floors pay experience pills instead of dead weight.
+      if (pill !== undefined) {
+        expect(realm.breakthroughPillCost, config.id).not.toBeNull();
+      }
+    }
+    expect(
+      getProgressionTaskConfig("progression.trial_tower_floor_60")?.reward?.items,
+    ).toEqual([
+      { itemConfigId: "exp_pill_large", quantity: 4 },
+      { itemConfigId: "breakthrough_pill", quantity: 1 },
+    ]);
+    expect(
+      getProgressionTaskConfig("progression.trial_tower_floor_90")?.reward?.items,
+    ).toEqual([{ itemConfigId: "exp_pill_large", quantity: 7 }]);
   });
 
   it("settles every level milestone the save has already passed", () => {
