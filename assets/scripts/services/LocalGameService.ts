@@ -77,6 +77,7 @@ import {
   getRealmTitle,
   getTechniqueConfig,
   getSectConfig,
+  idleStackDropBandMultiplier,
   idleStackDropQuantitySpan,
   isAssetQuality,
   nextAssetQuality,
@@ -109,6 +110,7 @@ import {
   GAME_CONFIG_VERSION,
   GAME_CONFIG_VERSION_PRE_AFFIX_ROLL,
   GAME_CONFIG_VERSION_PRE_EQUIPMENT_BANDS,
+  GAME_CONFIG_VERSION_PRE_MATERIAL_CURVE,
   GAME_CONFIG_VERSION_PRE_CAVE,
   GAME_CONFIG_VERSION_PRE_EQUIPMENT_MANAGEMENT,
   GAME_CONFIG_VERSION_PRE_EXPEDITION,
@@ -2144,10 +2146,15 @@ function applyIdleDrops(
           ? stackDrop.itemConfigIds[0]!
           : stackDrop.itemConfigIds[randomInt(stackDrop.itemConfigIds.length)]!;
       const quantitySpan = idleStackDropQuantitySpan(stackDrop);
-      const quantity =
+      // The band multiplies the quantity *after* it is drawn. Folding it into
+      // the table's min/max would widen `randomInt(quantitySpan)` and hand the
+      // same seed a different day's loot from this attempt onward.
+      const rolledQuantity =
         quantitySpan === 1
           ? stackDrop.minQuantity
           : stackDrop.minQuantity + randomInt(quantitySpan);
+      const quantity =
+        rolledQuantity * idleStackDropBandMultiplier(stackDrop, band);
       stackRewards.set(
         itemConfigId,
         (stackRewards.get(itemConfigId) ?? 0) + quantity,
@@ -2801,6 +2808,21 @@ function migrateSnapshot(snapshot: unknown): unknown {
     // and all five survive; the band itself is derived from the id, never
     // stored; and band 1's affix window is unchanged, so stored affixes and the
     // scores read off them stay byte-identical.
+    migrated = {
+      ...migrated,
+      config: { ...config, version: GAME_CONFIG_VERSION_PRE_MATERIAL_CURVE },
+    };
+    config = migrated.config;
+  }
+  if (
+    isRecord(config) &&
+    config.version === GAME_CONFIG_VERSION_PRE_MATERIAL_CURVE
+  ) {
+    // The material band multiplier only bumps the version. It is read off
+    // `progress.level` at settlement time and never stored, stack quantities
+    // have no upper bound in validation, and nothing already in the bag changes
+    // meaning — so an old save simply starts earning its own band's rate on the
+    // next settlement. No back-pay, in line with every migration before it.
     migrated = {
       ...migrated,
       config: { ...config, version: GAME_CONFIG_VERSION },

@@ -32,18 +32,21 @@ describe("the idle drop table", () => {
         minQuantity: 1,
         maxQuantity: 3,
         weight: 350_000,
+        scalesWithBand: true,
       },
       {
         itemConfigIds: ["technique_page"],
         minQuantity: 1,
         maxQuantity: 1,
         weight: 5_000,
+        scalesWithBand: false,
       },
       {
         itemConfigIds: ["treasure_token"],
         minQuantity: 1,
         maxQuantity: 1,
         weight: 1_000,
+        scalesWithBand: false,
       },
     ]);
     expect(IDLE_ITEM_DROPS).toEqual([

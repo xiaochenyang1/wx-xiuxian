@@ -1,4 +1,4 @@
-import type { AssetQuality } from "./assets";
+import type { AssetQuality, EquipmentBand } from "./assets";
 
 /**
  * The idle drop table. One attempt is granted per minute of effective idle time
@@ -29,6 +29,13 @@ export interface IdleStackDrop {
   readonly minQuantity: number;
   readonly maxQuantity: number;
   readonly weight: number;
+  /**
+   * Whether the rolled quantity is multiplied by the holder's band. Declared on
+   * the row rather than inferred from the ids so the table states which rewards
+   * scale: only the materials do. Pages fund a finite lifetime cost and tokens
+   * gate the sweep tables, so both stay flat on purpose.
+   */
+  readonly scalesWithBand: boolean;
 }
 
 /**
@@ -42,20 +49,63 @@ export const IDLE_STACK_DROPS: readonly IdleStackDrop[] = [
     minQuantity: 1,
     maxQuantity: 3,
     weight: 350_000,
+    scalesWithBand: true,
   },
   {
     itemConfigIds: ["technique_page"],
     minQuantity: 1,
     maxQuantity: 1,
     weight: 5_000,
+    scalesWithBand: false,
   },
   {
     itemConfigIds: ["treasure_token"],
     minQuantity: 1,
     maxQuantity: 1,
     weight: 1_000,
+    scalesWithBand: false,
   },
 ];
+
+/**
+ * How much a band multiplies a material drop's quantity. Materials are the one
+ * income in the game that never grew with progress, while every level of a
+ * band's demand did: 977 breakthrough pills cost 19,540 spiritual herb, and a
+ * full 洪荒 loadout costs 2,250 crafts on top. At the flat rate the 灵阶 bill
+ * (2,150 herb) needs 256 hours inside a band the player clears in 206 — and
+ * experience bonuses only shorten the band, never the bill, so optimising for
+ * levels was what made the wall arrive sooner.
+ *
+ * The curve decelerates (×3, ×2, ×1.67) on purpose: materials are the mid-game
+ * pacing axis, and the late game hands pacing back to cultivation time. It also
+ * stays below crafting's ×30 spirit stone so materials remain the scarce side.
+ *
+ * Band 1 is exactly 1, which is what keeps early-game pacing and every seeded
+ * drop test byte-identical.
+ */
+export const IDLE_MATERIAL_BAND_MULTIPLIER: Readonly<
+  Record<EquipmentBand, number>
+> = {
+  1: 1,
+  2: 3,
+  3: 6,
+  4: 10,
+};
+
+/**
+ * Applied to the quantity *after* it is drawn. Never fold this into
+ * `minQuantity` / `maxQuantity`: that widens the draw and a seeded stream turns
+ * a different draw width into a different day's loot.
+ */
+export function idleStackDropBandMultiplier(
+  drop: IdleStackDrop,
+  band: EquipmentBand,
+): number {
+  if (!drop.scalesWithBand) return 1;
+  const multiplier = IDLE_MATERIAL_BAND_MULTIPLIER[band];
+  if (!multiplier) throw new RangeError(`Unknown equipment band: ${band}`);
+  return multiplier;
+}
 
 /** `null` when the draw fell in the span's unweighted remainder. */
 export function pickIdleStackDrop(roll: number): IdleStackDrop | null {

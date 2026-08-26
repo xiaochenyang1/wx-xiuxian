@@ -1,6 +1,7 @@
 import {
   CAVE_BUILDING_CONFIGS,
   CRAFTING_RECIPE_CONFIGS,
+  IDLE_MATERIAL_BAND_MULTIPLIER,
   craftingSpiritStoneCost,
   equipmentAffixRange,
   equipmentBandForConfig,
@@ -246,11 +247,21 @@ describe("crafting panel display", () => {
 
   it("puts the band and its odds in the header", () => {
     expect(getCraftingHeaderText(crafterAtLevel(1).snapshot)).toBe(
-      "炼器室 Lv.10　凡阶　当前稀有及以上概率 23.0%",
+      "炼器室 Lv.10　凡阶　当前稀有及以上概率 23.0%　挂机材料 ×1",
     );
     expect(getCraftingHeaderText(crafterAtLevel(BAND_LEVELS[4]).snapshot)).toBe(
-      "炼器室 Lv.10　天阶　当前稀有及以上概率 52.0%",
+      "炼器室 Lv.10　天阶　当前稀有及以上概率 52.0%　挂机材料 ×10",
     );
+  });
+
+  it("names the idle material rate of every band it can be read at", () => {
+    // The header is the only surface that states the multiplier, so a band whose
+    // rate went unsaid would leave the player guessing why the bill got easier.
+    for (const band of [1, 2, 3, 4] as const) {
+      expect(
+        getCraftingHeaderText(crafterAtLevel(BAND_LEVELS[band]).snapshot),
+      ).toContain(`挂机材料 ×${IDLE_MATERIAL_BAND_MULTIPLIER[band]}`);
+    }
   });
 });
 

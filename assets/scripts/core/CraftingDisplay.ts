@@ -1,5 +1,6 @@
 import {
   CRAFTING_QUALITY_WEIGHTS,
+  IDLE_MATERIAL_BAND_MULTIPLIER,
   craftingQualityWeight,
   craftingSpiritStoneCost,
   decimal,
@@ -52,11 +53,15 @@ export function getCraftingRecipeDisplay(
   };
 }
 
-/** The panel's header: room level, the band being forged, and its odds. */
+/**
+ * The panel's header: room level, the band being forged, its odds, and the rate
+ * the band pays back in idle materials. The last one lives here because this is
+ * the page where materials are spent, and the only place a band is already named.
+ */
 export function getCraftingHeaderText(snapshot: BootstrapSnapshot): string {
   const roomLevel = buildingLevel(snapshot, "crafting_room");
   const band = equipmentBandForLevel(snapshot.progress.level);
-  return `炼器室 Lv.${roomLevel}　${getEquipmentBandConfig(band).displayName}　${craftingOddsSummary(roomLevel, band)}`;
+  return `炼器室 Lv.${roomLevel}　${getEquipmentBandConfig(band).displayName}　${craftingOddsSummary(roomLevel, band)}　挂机材料 ×${IDLE_MATERIAL_BAND_MULTIPLIER[band]}`;
 }
 
 export function craftingOddsSummary(roomLevel: number, band: EquipmentBand): string {
