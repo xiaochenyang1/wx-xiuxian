@@ -27,6 +27,28 @@ export function getExpeditionSummary(snapshot: BootstrapSnapshot): string {
   return `首通 ${snapshot.expedition.clearedStageIds.length}/${EXPEDITION_STAGE_CONFIGS.length} · 扫荡 ${formatLargeNumber(String(totalSweeps))} · 战力 ${formatLargeNumber(snapshot.progress.totalPower)}`;
 }
 
+/** How many stage rows the panel has vertical room for. */
+export const VISIBLE_EXPEDITION_STAGE_COUNT = 6;
+
+/**
+ * The window *ends* at the next stage to clear, which is the opposite of the
+ * tower's window. A cleared floor is dead, but a cleared stage is the thing the
+ * player sweeps — and the richest sweep is always the one just unlocked, so the
+ * rows worth keeping on screen are the recent history plus the next challenge.
+ * Below six clears the window is the whole first screen, so the early game looks
+ * exactly like it did before the campaign grew past one screen.
+ */
+export function selectVisibleExpeditionStages(
+  clearedCount: number,
+  count = VISIBLE_EXPEDITION_STAGE_COUNT,
+): readonly ExpeditionStageConfig[] {
+  const start = Math.min(
+    Math.max(0, clearedCount - (count - 1)),
+    Math.max(0, EXPEDITION_STAGE_CONFIGS.length - count),
+  );
+  return EXPEDITION_STAGE_CONFIGS.slice(start, start + count);
+}
+
 export function getExpeditionStageDisplay(
   snapshot: BootstrapSnapshot,
   config: ExpeditionStageConfig,

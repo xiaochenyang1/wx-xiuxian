@@ -6,7 +6,10 @@ import { FakePlatformAdapter } from "./support/fake-platform-adapter";
 
 const SAVE_KEY = CLIENT_CONFIG.localSaveStorageKey;
 const FUTURE = new Date("2099-01-01T00:00:00.000Z");
-const STAGE_LEVELS = [1, 4, 8, 11, 18, 31] as const;
+// The lowest level whose bare power clears each stage. Past the sixth the jumps
+// are realm boundaries: the three band-entry stages land exactly on Lv.61, 151
+// and 301, and each band's second stage becomes bare-clearable partway in.
+const STAGE_LEVELS = [1, 4, 8, 11, 18, 31, 61, 101, 151, 221, 301, 401] as const;
 
 type MutableSave = Record<string, any>;
 

@@ -2,6 +2,7 @@ import { EXPEDITION_STAGE_CONFIGS } from "@cultivation-diary/shared";
 import {
   getExpeditionStageDisplay,
   getExpeditionSummary,
+  selectVisibleExpeditionStages,
 } from "../../core/ExpeditionDisplay";
 import type { AppState } from "../../core/ClientTypes";
 import { canRunLocalMutation } from "../../core/ClientTypes";
@@ -48,9 +49,15 @@ export function drawExpeditionPanel(
     () => actions.huntTreasure(),
   );
 
-  EXPEDITION_STAGE_CONFIGS.forEach((config, index) => {
+  const visible = selectVisibleExpeditionStages(
+    snapshot.expedition.clearedStageIds.length,
+  );
+  visible.forEach((config, row) => {
     const display = getExpeditionStageDisplay(snapshot, config);
-    const y = 320 - index * 122;
+    const y = 320 - row * 122;
+    // The row keeps the stage's number in the whole campaign, not in the window,
+    // so scrolling past the first screen does not renumber 白骨荒原 as "1".
+    const stageNumber = EXPEDITION_STAGE_CONFIGS.indexOf(config) + 1;
     const active =
       display.status === "ready" ||
       display.status === "underpowered" ||
@@ -67,7 +74,7 @@ export function drawExpeditionPanel(
     );
     addLabel(
       overlay,
-      `${index + 1}. ${config.displayName}`,
+      `${stageNumber}. ${config.displayName}`,
       -194,
       y + 27,
       206,

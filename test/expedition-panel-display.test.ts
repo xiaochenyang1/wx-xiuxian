@@ -5,8 +5,10 @@ import {
 } from "@cultivation-diary/shared";
 import { describe, expect, it } from "vitest";
 import {
+  VISIBLE_EXPEDITION_STAGE_COUNT,
   getExpeditionStageDisplay,
   getExpeditionSummary,
+  selectVisibleExpeditionStages,
 } from "../assets/scripts/core/ExpeditionDisplay";
 import { LocalGameService } from "../assets/scripts/services/LocalGameService";
 import { FakePlatformAdapter } from "./support/fake-platform-adapter";
@@ -94,9 +96,9 @@ describe("expedition stage display", () => {
       finalStage,
     );
 
-    expect(display.requirementText).toBe("战力 6,500");
+    expect(display.requirementText).toBe("战力 1.2亿");
     expect(display.rewardText).toBe(
-      "灵石 1.2万 · 木材x20 · 石材x20 · 灵土x20 · 灵草x20 · 矿石x20 · 强化石x8 · 功法残页x20 · 寻宝令x5",
+      "灵石 500万 · 木材x594 · 石材x330 · 灵土x462 · 灵草x1584 · 矿石x1188 · 强化石x200 · 功法残页x60 · 寻宝令x20",
     );
   });
 });
@@ -104,7 +106,7 @@ describe("expedition stage display", () => {
 describe("expedition summary", () => {
   it("shows cleared count and formatted current power", () => {
     expect(getExpeditionSummary(snapshotWith())).toBe(
-      "首通 0/6 · 扫荡 0 · 战力 100",
+      "首通 0/12 · 扫荡 0 · 战力 100",
     );
     expect(
       getExpeditionSummary(
@@ -114,6 +116,48 @@ describe("expedition summary", () => {
           [{ stageConfigId: EXPEDITION_STAGE_CONFIGS[0]!.id, count: 12 }],
         ),
       ),
-    ).toBe("首通 1/6 · 扫荡 12 · 战力 1.23万");
+    ).toBe("首通 1/12 · 扫荡 12 · 战力 1.23万");
+  });
+});
+
+describe("the visible stage window", () => {
+  const ids = (clearedCount: number): readonly string[] =>
+    selectVisibleExpeditionStages(clearedCount).map((stage) => stage.id);
+
+  it("shows the whole first screen until six stages are cleared", () => {
+    const firstScreen = EXPEDITION_STAGE_CONFIGS.slice(0, 6).map(
+      (stage) => stage.id,
+    );
+    for (let cleared = 0; cleared <= 5; cleared += 1) {
+      expect(ids(cleared)).toEqual(firstScreen);
+    }
+  });
+
+  it("ends the window on the next stage once the campaign outgrows a screen", () => {
+    expect(ids(6)).toEqual([
+      "mistwood_forest",
+      "blackwater_marsh",
+      "swordscar_valley",
+      "red_sand_mine",
+      "ancient_cultivator_ruins",
+      "bonecrypt_wastes",
+    ]);
+    expect(ids(6).at(-1)).toBe(EXPEDITION_STAGE_CONFIGS[6]!.id);
+    expect(ids(9).at(-1)).toBe(EXPEDITION_STAGE_CONFIGS[9]!.id);
+  });
+
+  it("stops sliding at the end so the last screen stays full", () => {
+    const lastScreen = EXPEDITION_STAGE_CONFIGS.slice(-6).map((stage) => stage.id);
+    expect(ids(11)).toEqual(lastScreen);
+    expect(ids(12)).toEqual(lastScreen);
+    // A save that somehow claims more clears than there are stages still gets a
+    // full screen rather than an empty panel.
+    expect(ids(99)).toEqual(lastScreen);
+  });
+
+  it("never returns more rows than the panel can draw", () => {
+    for (let cleared = 0; cleared <= EXPEDITION_STAGE_CONFIGS.length; cleared += 1) {
+      expect(ids(cleared)).toHaveLength(VISIBLE_EXPEDITION_STAGE_COUNT);
+    }
   });
 });

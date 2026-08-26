@@ -1,6 +1,7 @@
 import {
   EXPEDITION_STAGE_CONFIGS,
   EXPEDITION_SWEEP_TOKEN_COST,
+  calculateTotalPower,
   evaluateExpeditionStage,
   evaluateExpeditionSweep,
   getExpeditionStageConfig,
@@ -9,7 +10,7 @@ import {
 import { describe, expect, it } from "vitest";
 
 describe("expedition configuration", () => {
-  it("defines a strictly increasing six-stage campaign", () => {
+  it("defines a strictly increasing twelve-stage campaign", () => {
     expect(EXPEDITION_STAGE_CONFIGS.map((stage) => stage.id)).toEqual([
       "greenstone_path",
       "mistwood_forest",
@@ -17,6 +18,12 @@ describe("expedition configuration", () => {
       "swordscar_valley",
       "red_sand_mine",
       "ancient_cultivator_ruins",
+      "bonecrypt_wastes",
+      "netherfall_abyss",
+      "skyfire_sea",
+      "myriad_sword_mound",
+      "starfall_battlefield",
+      "voidrift_expanse",
     ]);
     for (let index = 1; index < EXPEDITION_STAGE_CONFIGS.length; index += 1) {
       expect(
@@ -117,5 +124,88 @@ describe("expedition stage evaluation", () => {
     expect(
       evaluateExpeditionStage(second.id, [first.id], second.requiredPower),
     ).toEqual({ status: "ready", powerDeficit: "0" });
+  });
+});
+
+describe("the band stages are priced off the band, not off a hunch", () => {
+  it("lets bare power open each band's first stage the level the band opens", () => {
+    // The entry stage is the band's ticket: reaching the band is enough, gear is
+    // not. Its neighbour one stage up is not — that one is the loadout's exit.
+    const entries = [
+      { level: 61, stageId: "bonecrypt_wastes", nextId: "netherfall_abyss" },
+      { level: 151, stageId: "skyfire_sea", nextId: "myriad_sword_mound" },
+      { level: 301, stageId: "starfall_battlefield", nextId: "voidrift_expanse" },
+    ] as const;
+    for (const entry of entries) {
+      const bare = BigInt(calculateTotalPower(entry.level));
+      expect(bare).toBeGreaterThanOrEqual(
+        BigInt(getExpeditionStageConfig(entry.stageId).requiredPower),
+      );
+      expect(bare).toBeLessThan(
+        BigInt(getExpeditionStageConfig(entry.nextId).requiredPower),
+      );
+      // And the level just below the band cannot reach it bare, so the stage is
+      // gated on the band rather than on the level happening to be high enough.
+      expect(BigInt(calculateTotalPower(entry.level - 1))).toBeLessThan(
+        BigInt(getExpeditionStageConfig(entry.stageId).requiredPower),
+      );
+    }
+  });
+
+  it("pays sweeps in the ratio crafting consumes, scaled per stage", () => {
+    // The load-bearing shape of the tier: idle drops spread evenly over the five
+    // materials, sweeps pay the bill's own shape. Every new stage is one integer
+    // multiple of the same vector, which is what makes a token worth a fixed
+    // number of that band's idle hours instead of a flat pile.
+    const ratio: Readonly<Record<string, number>> = {
+      spiritual_herb: 24,
+      ore: 18,
+      wood: 9,
+      spiritual_soil: 7,
+      stone: 5,
+    };
+    const bandStageIds = EXPEDITION_STAGE_CONFIGS.slice(6).map((stage) => stage.id);
+    expect(bandStageIds).toHaveLength(6);
+    const multiples = bandStageIds.map((id) => {
+      const config = getExpeditionStageConfig(id);
+      const herb = config.sweepItemRewards.find(
+        (reward) => reward.itemConfigId === "spiritual_herb",
+      )!.quantity;
+      const multiple = herb / ratio.spiritual_herb!;
+      for (const [itemConfigId, share] of Object.entries(ratio)) {
+        expect(
+          config.sweepItemRewards.find(
+            (reward) => reward.itemConfigId === itemConfigId,
+          )!.quantity,
+        ).toBe(share * multiple);
+      }
+      return multiple;
+    });
+    // 2.5 / 4 hours of the band's own material income, and 3 / 5 at 天阶, where a
+    // player banks tokens faster than any other band.
+    expect(multiples).toEqual([5, 8, 10, 16, 20, 33]);
+  });
+
+  it("pays first clears twice the sweep, plus the tokens that start it", () => {
+    for (const stage of EXPEDITION_STAGE_CONFIGS.slice(6)) {
+      for (const sweep of stage.sweepItemRewards) {
+        const firstClear = stage.itemRewards.find(
+          (reward) => reward.itemConfigId === sweep.itemConfigId,
+        );
+        if (sweep.itemConfigId === "technique_page") continue;
+        expect(firstClear?.quantity).toBe(sweep.quantity * 2);
+      }
+      expect(
+        stage.itemRewards.find(
+          (reward) => reward.itemConfigId === "treasure_token",
+        )!.quantity,
+      ).toBeGreaterThan(0);
+    }
+    expect(
+      EXPEDITION_STAGE_CONFIGS.slice(6)
+        .flatMap((stage) => stage.itemRewards)
+        .filter((reward) => reward.itemConfigId === "treasure_token")
+        .reduce((total, reward) => total + reward.quantity, 0),
+    ).toBe(71);
   });
 });
