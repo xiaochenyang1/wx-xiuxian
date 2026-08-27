@@ -172,8 +172,9 @@ describe("progression task chain", () => {
         TRIAL_TOWER_TASK_ACHIEVABLE_LEVELS[config.condition.floor]!,
       );
       // A pill is only worth granting while the realm the achiever is standing
-      // in still charges for a breakthrough. 真仙期 charges nothing, so the top
-      // floors pay experience pills instead of dead weight.
+      // in still charges for a breakthrough. 道祖期 is the version's last realm
+      // and sells none, so the top floor pays experience pills instead of dead
+      // weight — the same rule that used to exclude 真仙期 before it was split.
       if (pill !== undefined) {
         expect(realm.breakthroughPillCost, config.id).not.toBeNull();
       }
@@ -182,6 +183,14 @@ describe("progression task chain", () => {
       getProgressionTaskConfig("progression.trial_tower_floor_60")?.reward?.items,
     ).toEqual([
       { itemConfigId: "exp_pill_large", quantity: 4 },
+      { itemConfigId: "breakthrough_pill", quantity: 1 },
+    ]);
+    // Floor 80's earliest achiever is Lv.501, deep inside 真仙期's 700-pill
+    // breakthrough, so the split turned this row from dead weight into a grant.
+    expect(
+      getProgressionTaskConfig("progression.trial_tower_floor_80")?.reward?.items,
+    ).toEqual([
+      { itemConfigId: "exp_pill_large", quantity: 6 },
       { itemConfigId: "breakthrough_pill", quantity: 1 },
     ]);
     expect(

@@ -142,10 +142,13 @@ export interface IdleItemDrop {
  * Independent of the stack table and of each other: an attempt can pay both.
  *
  * Enhance stones scale with the band, breakthrough pills do not. The pill's
- * lifetime demand has a hard ceiling — 977 across every breakthrough, and
- * 真仙期 asks for none at all since its `breakthroughPillCost` is `null` — so a
- * flat rate is the correct curve for it. Stones have no ceiling: reroll keeps
- * only improvements, so the cost of chasing an affix score runs away.
+ * lifetime demand has a hard ceiling — 6,077 across every breakthrough, of
+ * which the four added by the realm split account for 5,100 — and its real
+ * supply channel is the alchemy recipe, whose 灵草 and 矿石 inputs already scale
+ * with the band. Scaling the drop too would compound the same curve twice. This
+ * trickle is 0.03 pills an hour either way: worth having, never the plan.
+ * Stones have no ceiling: reroll keeps only improvements, so the cost of
+ * chasing an affix score runs away.
  */
 export const IDLE_ITEM_DROPS: readonly IdleItemDrop[] = [
   {

@@ -10,7 +10,11 @@ export type RealmId =
   | "body_integration"
   | "mahayana"
   | "tribulation"
-  | "true_immortal";
+  | "true_immortal"
+  | "golden_immortal"
+  | "taiyi"
+  | "daluo"
+  | "daozu";
 
 export type RealmStage = "early" | "middle" | "late" | "perfect";
 
@@ -137,6 +141,71 @@ export const REALM_CONFIGS: readonly RealmConfig[] = [
     id: "true_immortal",
     displayName: "真仙期",
     minLevel: 501,
+    maxLevel: 600,
+    expMultiplier: 60,
+    powerMultiplier: "10000",
+    expRequirementCoefficientBp: 6_200_000,
+    breakthroughPillCost: 700,
+    nextRealmId: "golden_immortal",
+  },
+  /**
+   * The last five realms deliberately share 真仙期's three numeric knobs. They
+   * exist to put a breakthrough back into Lv.501-1000 — one realm there covered
+   * 63% of the game's idle hours and half its levels with no breakthrough at
+   * all, which also left 突破丹 with no remaining use after Lv.500.
+   *
+   * Holding `powerMultiplier`, `expRequirementCoefficientBp` and
+   * `expMultiplier` equal keeps `calculateTotalPower`,
+   * `requiredExperienceForLevel` and `calculateOnlineExperiencePerSecond`
+   * byte-identical at every level, so the trial tower's threshold ladder,
+   * `TOWER_TASK_FLOORS.achievableAtLevel` and the expedition gates all stay
+   * put. The cost is that these four breakthroughs pay no numeric bonus: the
+   * only two axes available would each cost more than the bonus is worth — a
+   * higher `powerMultiplier` would eat the margin that keeps tower floor 80
+   * (1.4315e9) out of bare reach at Lv.1000, and a higher `expMultiplier`
+   * would shorten the endgame it is meant to pace.
+   *
+   * Pill costs are anchored on 渡劫期's precedent, which spends 15.5% of its
+   * own idle herb income on 500 pills. These spend 24.8% / 32.5% / 42.4% /
+   * 56.9% of theirs, so the last one is meant to be a two-realm project.
+   */
+  {
+    id: "golden_immortal",
+    displayName: "金仙期",
+    minLevel: 601,
+    maxLevel: 700,
+    expMultiplier: 60,
+    powerMultiplier: "10000",
+    expRequirementCoefficientBp: 6_200_000,
+    breakthroughPillCost: 1_000,
+    nextRealmId: "taiyi",
+  },
+  {
+    id: "taiyi",
+    displayName: "太乙期",
+    minLevel: 701,
+    maxLevel: 800,
+    expMultiplier: 60,
+    powerMultiplier: "10000",
+    expRequirementCoefficientBp: 6_200_000,
+    breakthroughPillCost: 1_400,
+    nextRealmId: "daluo",
+  },
+  {
+    id: "daluo",
+    displayName: "大罗期",
+    minLevel: 801,
+    maxLevel: 900,
+    expMultiplier: 60,
+    powerMultiplier: "10000",
+    expRequirementCoefficientBp: 6_200_000,
+    breakthroughPillCost: 2_000,
+    nextRealmId: "daozu",
+  },
+  {
+    id: "daozu",
+    displayName: "道祖期",
+    minLevel: 901,
     maxLevel: 1000,
     expMultiplier: 60,
     powerMultiplier: "10000",

@@ -67,7 +67,7 @@
 
 - 把 Lv.501-1000 拆成 5 个各 100 级的境界，在 Lv.600 / 700 / 800 / 900 各安排一次突破。
 - 给这四次突破定突破丹价格，让炼丹房、挂机掉落和塔奖励在终局仍有意义。
-- 撤掉 `TOWER_BREAKTHROUGH_PILL_TO_FLOOR`，它唯一的存在理由被这次修掉了。
+- 把塔任务的突破丹条件从硬编码的层数上限改成由境界推导，`TOWER_BREAKTHROUGH_PILL_TO_FLOOR` 这个常量随之消失。
 - 称号密度回到每 25 级一次。
 
 不做：
@@ -145,11 +145,23 @@
 
 `REALM_CONFIGS` 在 `config/realms.ts` 之外没有任何消费者依赖它是 10 条——`getRealmConfigForLevel` 按区间查找，`getRealmConfig` 按 id 查找，都与条数无关。
 
-### 5.2 撤掉试炼塔的突破丹上限
+### 5.2 塔任务的突破丹条件改为由境界推导
 
-`TOWER_BREAKTHROUGH_PILL_TO_FLOOR` 直接删掉，第 15 层起每条塔任务都发一枚。这多发 3 枚（第 70/80/90 层），在 5,100 枚的账单里是 0.06%，经济上可以忽略；做这件事是为了消掉一个特例和一句已经不成立的注释。
+`TOWER_BREAKTHROUGH_PILL_TO_FLOOR = 60` 这个上限不是简单删掉就完事——第 90 层的达成等级是 Lv.917，落在道祖期，而道祖期是版本最后一个境界、`breakthroughPillCost` 仍是 `null`，那里发丹依旧是死物。死区没有消失，只是从 500 级缩到 100 级。
 
-`test/progression-task-chain.test.ts:165` 的不变式（"发了丹，则该层达成者所在境界的 `breakthroughPillCost` 非空"）继续成立，并从此成为唯一的守卫；同一个测试里钉住第 60 层和第 90 层具体奖励的两条断言要跟着改。
+所以把条件换成它本来想表达的那句话：**该层最早达成者所在的境界还在为突破收费**。
+
+```ts
+if (
+  floor >= TOWER_BREAKTHROUGH_PILL_FROM_FLOOR &&
+  getRealmConfigForLevel(TRIAL_TOWER_TASK_ACHIEVABLE_LEVELS[floor]!)
+    .breakthroughPillCost !== null
+) {
+```
+
+结果是第 70 层（Lv.501，真仙期，700 枚）和第 80 层（同样 Lv.501）开始发丹，第 90 层照旧不发。净增 2 枚，在 5,100 枚的账单里可以忽略；做这件事是为了让规则跟着境界表走，而不是靠一个每次改表都要重算的层数常量。
+
+`test/progression-task-chain.test.ts:165` 的不变式（"发了丹，则该层达成者所在境界的 `breakthroughPillCost` 非空"）不变，并且正是它逼出了上面这个修正——第一版实现直接去掉上限，它立刻在第 90 层上报错。同一个测试里钉住具体奖励的断言从两条变三条（第 60、80、90 层）。
 
 ### 5.3 称号自动跟随，不需要改代码
 
@@ -208,12 +220,12 @@
 任务链：
 
 - 既有的"从战力反推每一层达成等级"测试必须**在不修改期望值的情况下继续通过**——这是 4.2 的验收标准。
-- 第 60 层与第 90 层的奖励断言更新为都含一枚突破丹。
+- 第 60 / 80 / 90 层的奖励断言：前两条含一枚突破丹，第 90 层仍然只有经验丹。
 
 ## 10 实施顺序
 
 1. `shared/src/config/realms.ts`：`RealmId` 加四个成员，`REALM_CONFIGS` 改末条并追加四条。
-2. `shared/src/config/progression-tasks.ts`：删掉 `TOWER_BREAKTHROUGH_PILL_TO_FLOOR` 及其注释与判断分支。
+2. `shared/src/config/progression-tasks.ts`：突破丹条件改为由 `getRealmConfigForLevel` 推导，删掉 `TOWER_BREAKTHROUGH_PILL_TO_FLOOR`。
 3. `pnpm build:shared`，然后 `pnpm typecheck` —— `RealmId` 是联合类型，任何穷举分支会在这里暴露。
 4. 新增 `test/realm-split.test.ts` 覆盖第 9 节的 `shared` 侧与老档条目；更新 `test/progression-task-chain.test.ts` 的两条奖励断言。
 5. `assets/scripts/services/local-game-snapshot.ts`：`GAME_CONFIG_VERSION` 升到 `local-2.11.0`，加 `GAME_CONFIG_VERSION_PRE_REALM_SPLIT = "local-2.10.0"`。

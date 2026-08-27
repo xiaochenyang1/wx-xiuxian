@@ -1,3 +1,5 @@
+import { getRealmConfigForLevel } from "./realms";
+
 /**
  * The opening three ids keep their `newcomer.` prefix even though the chain now
  * runs to Lv.1000. Renaming them would force the migration to rewrite existing
@@ -81,13 +83,17 @@ export const TRIAL_TOWER_TASK_ACHIEVABLE_LEVELS: Readonly<
   TOWER_TASK_FLOORS.map((entry) => [entry.floor, entry.achievableAtLevel]),
 );
 
-const TOWER_BREAKTHROUGH_PILL_FROM_FLOOR = 15;
 /**
- * Floor 70's earliest achiever is Lv.501, already in 真仙期, whose
- * `breakthroughPillCost` is `null` — a pill there is dead weight. Floor 60's
- * Lv.401 still owes 500 pills for the Lv.500 breakthrough, so it keeps its.
+ * Every floor from here up pays a pill, as long as the realm the floor's
+ * earliest achiever is standing in still charges for a breakthrough. That
+ * condition used to be a hard floor ceiling of 60, because 真仙期 spanned
+ * Lv.501-1000 and charged nothing; the realm split moved the dead zone to
+ * 道祖期 (Lv.901-1000), which is the version's last realm and has no
+ * breakthrough to sell. Deriving it from the realm rather than pinning a floor
+ * keeps the rule true the next time the realm table moves: floors 70 and 80
+ * (Lv.501, 真仙期, 700 pills) now pay, floor 90 (Lv.917, 道祖期) still does not.
  */
-const TOWER_BREAKTHROUGH_PILL_TO_FLOOR = 60;
+const TOWER_BREAKTHROUGH_PILL_FROM_FLOOR = 15;
 /** One large pill at floor 30, then one more per ten floors above it. */
 const TOWER_EXP_PILL_BASE_FLOOR = 30;
 const TOWER_EXP_PILL_FLOORS_PER_EXTRA = 10;
@@ -168,7 +174,8 @@ function towerRewardItems(floor: number): readonly ProgressionTaskRewardItem[] {
   ];
   if (
     floor >= TOWER_BREAKTHROUGH_PILL_FROM_FLOOR &&
-    floor <= TOWER_BREAKTHROUGH_PILL_TO_FLOOR
+    getRealmConfigForLevel(TRIAL_TOWER_TASK_ACHIEVABLE_LEVELS[floor]!)
+      .breakthroughPillCost !== null
   ) {
     items.push({ itemConfigId: "breakthrough_pill", quantity: 1 });
   }

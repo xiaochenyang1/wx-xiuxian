@@ -112,6 +112,7 @@ import {
   GAME_CONFIG_VERSION_PRE_AFFIX_ROLL,
   GAME_CONFIG_VERSION_PRE_EQUIPMENT_BANDS,
   GAME_CONFIG_VERSION_PRE_ENHANCE_STONE_CURVE,
+  GAME_CONFIG_VERSION_PRE_REALM_SPLIT,
   GAME_CONFIG_VERSION_PRE_MATERIAL_CURVE,
   GAME_CONFIG_VERSION_PRE_CAVE,
   GAME_CONFIG_VERSION_PRE_EQUIPMENT_MANAGEMENT,
@@ -2860,6 +2861,23 @@ function migrateSnapshot(snapshot: unknown): unknown {
     // stone band multiplier is derived from `progress.level` at settlement time
     // and never stored, and a stone already in the bag does not change meaning.
     // No back-pay for the stones an old save would have earned at its band.
+    migrated = {
+      ...migrated,
+      config: { ...config, version: GAME_CONFIG_VERSION_PRE_REALM_SPLIT },
+    };
+    config = migrated.config;
+  }
+  if (isRecord(config) && config.version === GAME_CONFIG_VERSION_PRE_REALM_SPLIT) {
+    // Version only. Splitting Lv.501-1000 into five realms moves no stored
+    // field: `realmId`, `realmName`, `stage` and `title` are shape-checked and
+    // then rebuilt from the level by `refreshSnapshot` on every load, and the
+    // three numeric knobs are equal across the split, so `requiredExperience`
+    // is unchanged at every level and no save can exceed its own bar.
+    //
+    // A save already past Lv.600 is not credited with the breakthroughs it
+    // "should" have had, and keeps whatever pills it holds: crediting them would
+    // either gift a breakthrough or debit a resource the player may have spent.
+    // Its first new breakthrough is the next hundred it reaches.
     migrated = {
       ...migrated,
       config: { ...config, version: GAME_CONFIG_VERSION },
