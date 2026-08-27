@@ -2438,9 +2438,14 @@ export class AppView {
       650,
       hasBackground ? withAlpha(COLORS.panel, 208) : COLORS.panel,
     );
-    entries.slice(0, 5).forEach((entry, index) => {
+    // All six rows, not the top five: with the benchmarks recalibrated the
+    // player sits mid-board for most of the run and last on a new save, and
+    // last was exactly the row the slice used to cut — "我的排名 6 / 6" with
+    // nobody by that name in the list. y=360 down to −140 with the separator
+    // at −188 all stay inside this band's −225…425.
+    entries.forEach((entry, index) => {
       const rank = index + 1;
-      const y = 355 - index * 105;
+      const y = 360 - index * 100;
       addLabel(this.root, String(rank), -285, y, 62, 38, 21, rank <= 3 ? COLORS.gold : COLORS.text);
       addLabel(this.root, entry.displayName, -110, y, 240, 38, 20, entry.player ? COLORS.gold : COLORS.text);
       addLabel(this.root, formatLargeNumber(entry.value), 180, y, 120, 38, 19, entry.player ? COLORS.jade : COLORS.textMuted);
@@ -2468,7 +2473,7 @@ export class AppView {
       featureMessageDisplay?.surface !== "main" ||
       featureMessageDisplay.tab !== "ranking"
     ) {
-      addLabel(this.root, "本地试炼榜 · NPC 标杆固定，玩家数据来自本地存档", 0, -350, 580, 32, 14, COLORS.textMuted);
+      addLabel(this.root, "本地试炼榜 · 标杆是按等级与装备换算的虚构修士，玩家数据来自本地存档", 0, -350, 580, 32, 14, COLORS.textMuted);
     }
   }
 

@@ -1,4 +1,8 @@
-import type { BootstrapSnapshot } from "@cultivation-diary/shared";
+import {
+  calculateTotalPower,
+  type BigNumberString,
+  type BootstrapSnapshot,
+} from "@cultivation-diary/shared";
 
 export type RankingCategory = "power" | "level" | "wealth" | "cave" | "partner";
 
@@ -9,15 +13,77 @@ export interface RankingEntry {
   readonly player: boolean;
 }
 
-const NPC_VALUES: Readonly<Record<RankingCategory, readonly string[]>> = {
-  power: ["12000", "5000", "2000", "800", "300"],
-  level: ["60", "45", "30", "18", "10"],
-  wealth: ["2000000", "800000", "300000", "80000", "20000"],
-  cave: ["45", "32", "20", "12", "5"],
-  partner: ["10", "8", "6", "4", "2"],
-};
+/**
+ * One fictional rival, defined once and read by all five boards.
+ *
+ * The point of holding a `level` rather than five unrelated numbers is that
+ * the power column is *derived* from it. The table this replaced was written
+ * when the cap was Lv.60 and never moved again, so by Lv.31 the player owned
+ * the power board permanently; deriving from `calculateTotalPower` means a
+ * future realm-multiplier or level-cap change carries the benchmarks with it.
+ *
+ * Anchors and the accounting behind every number:
+ * `docs/superpowers/specs/2026-08-27-local-ranking-benchmark-design.md`.
+ */
+interface RankingBenchmark {
+  readonly displayName: string;
+  readonly level: number;
+  /** Gear the rival is wearing. Only the first and last carry any. */
+  readonly powerBonusBp: number;
+  /**
+   * Bare idle spirit stone accumulated by `level`, the top rival's figure
+   * additionally scaled for the bonus a fully geared cultivator would hold.
+   * A literal rather than a derivation: the cumulative curve needs a
+   * level-by-level integral that `shared` has no reason to carry for five
+   * numbers. Derivation in §4.3 of the design, re-checked by the tests.
+   */
+  readonly wealth: BigNumberString;
+  readonly caveTotal: number;
+  readonly partnerLevel: number;
+}
 
-const NPC_NAMES = ["玄霄真人", "丹霞散人", "万象客", "青竹居士", "云游道人"];
+const BENCHMARKS: readonly RankingBenchmark[] = [
+  {
+    displayName: "玄霄真人",
+    level: 920,
+    powerBonusBp: 71_774,
+    wealth: "364000000",
+    caveTotal: 45,
+    partnerLevel: 10,
+  },
+  {
+    displayName: "丹霞散人",
+    level: 580,
+    powerBonusBp: 0,
+    wealth: "61000000",
+    caveTotal: 32,
+    partnerLevel: 8,
+  },
+  {
+    displayName: "万象客",
+    level: 290,
+    powerBonusBp: 0,
+    wealth: "11000000",
+    caveTotal: 20,
+    partnerLevel: 6,
+  },
+  {
+    displayName: "青竹居士",
+    level: 140,
+    powerBonusBp: 0,
+    wealth: "1230000",
+    caveTotal: 12,
+    partnerLevel: 4,
+  },
+  {
+    displayName: "云游道人",
+    level: 40,
+    powerBonusBp: 2_000,
+    wealth: "43000",
+    caveTotal: 5,
+    partnerLevel: 2,
+  },
+];
 
 export function buildLocalRanking(
   snapshot: BootstrapSnapshot,
@@ -25,10 +91,10 @@ export function buildLocalRanking(
 ): readonly RankingEntry[] {
   const playerValue = rankingValue(snapshot, category);
   return [
-    ...NPC_NAMES.map((displayName, index) => ({
+    ...BENCHMARKS.map((benchmark, index) => ({
       id: `npc-${index}`,
-      displayName,
-      value: NPC_VALUES[category][index]!,
+      displayName: benchmark.displayName,
+      value: benchmarkValue(benchmark, category),
       player: false,
     })),
     {
@@ -40,8 +106,29 @@ export function buildLocalRanking(
   ].sort((left, right) => {
     const comparison = compareDecimalStrings(left.value, right.value);
     if (comparison !== 0) return comparison;
+    // Matching a benchmark counts as passing it. The middle three rivals wear
+    // no gear, so their power is exactly the bare power of their own level and
+    // the player lands on it precisely — as they do on every level anchor. The
+    // nickname tiebreak below would otherwise decide those ranks, which is how
+    // a maxed partner's rank used to depend on how their name sorted.
+    if (left.player !== right.player) return left.player ? -1 : 1;
     return left.displayName.localeCompare(right.displayName, "zh-CN");
   });
+}
+
+function benchmarkValue(
+  benchmark: RankingBenchmark,
+  category: RankingCategory,
+): string {
+  if (category === "power") {
+    return calculateTotalPower(benchmark.level, {
+      percentBonusBp: benchmark.powerBonusBp,
+    });
+  }
+  if (category === "level") return String(benchmark.level);
+  if (category === "wealth") return benchmark.wealth;
+  if (category === "cave") return String(benchmark.caveTotal);
+  return String(benchmark.partnerLevel);
 }
 
 function rankingValue(
