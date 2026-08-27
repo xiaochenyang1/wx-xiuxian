@@ -1,5 +1,6 @@
 import {
   EQUIPMENT_MAX_ENHANCE_LEVEL,
+  IDLE_ENHANCE_STONE_BAND_MULTIPLIER,
   TECHNIQUE_MAX_STAR,
   TECHNIQUE_PAGES_PER_DUPLICATE,
   affixScorePercent,
@@ -9,6 +10,7 @@ import {
   equipmentAffixScoreBp,
   equipmentAscendCost,
   equipmentBandForConfig,
+  equipmentBandForLevel,
   equipmentEnhanceCost,
   equipmentRerollCost,
   getEquipmentBandConfig,
@@ -143,6 +145,24 @@ export function getEquipmentTitleText(
 ): string {
   const band = equipmentBandForConfig(equipment.equipmentConfigId);
   return `${getEquipmentBandConfig(band).displayName} · ${equipment.displayName}`;
+}
+
+/**
+ * The 法宝页 header: how many pieces are stored, the enhance stone stock, and the
+ * rate the current band pays back in idle stones. The last one lives here for
+ * the same reason the material rate lives on the crafting page — this is where
+ * stones are spent, and the band is already the page's organising idea.
+ */
+export function getEquipmentHeaderText(
+  snapshot: BootstrapSnapshot,
+  equipmentCount: number,
+): string {
+  const band = equipmentBandForLevel(snapshot.progress.level);
+  const stones =
+    snapshot.inventory.stacks.find(
+      (stack) => stack.itemConfigId === "enhance_stone",
+    )?.quantity ?? "0";
+  return `法宝 ${equipmentCount} 件 · 强化石 ${formatLargeNumber(stones)}（挂机 ×${IDLE_ENHANCE_STONE_BAND_MULTIPLIER[band]}） · 装备影响战力与挂机效率`;
 }
 
 export function getEquipmentRerollDisplay(

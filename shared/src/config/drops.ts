@@ -134,13 +134,71 @@ export interface IdleItemDrop {
   readonly quantity: number;
   /** Out of `IDLE_DROP_ROLL_SPAN`, drawn independently of every other entry. */
   readonly chance: number;
+  /** Same meaning as on `IdleStackDrop`: whether the band multiplies the payout. */
+  readonly scalesWithBand: boolean;
 }
 
-/** Independent of the stack table and of each other: an attempt can pay both. */
+/**
+ * Independent of the stack table and of each other: an attempt can pay both.
+ *
+ * Enhance stones scale with the band, breakthrough pills do not. The pill's
+ * lifetime demand has a hard ceiling — 977 across every breakthrough, and
+ * 真仙期 asks for none at all since its `breakthroughPillCost` is `null` — so a
+ * flat rate is the correct curve for it. Stones have no ceiling: reroll keeps
+ * only improvements, so the cost of chasing an affix score runs away.
+ */
 export const IDLE_ITEM_DROPS: readonly IdleItemDrop[] = [
-  { itemConfigId: "enhance_stone", quantity: 1, chance: 10_000 },
-  { itemConfigId: "breakthrough_pill", quantity: 1, chance: 500 },
+  {
+    itemConfigId: "enhance_stone",
+    quantity: 1,
+    chance: 10_000,
+    scalesWithBand: true,
+  },
+  {
+    itemConfigId: "breakthrough_pill",
+    quantity: 1,
+    chance: 500,
+    scalesWithBand: false,
+  },
 ];
+
+/**
+ * How much a band multiplies the idle enhance stone payout. Deliberately the
+ * same shape as `IDLE_MATERIAL_BAND_MULTIPLIER` so the player learns one curve,
+ * but a separate constant so either can be tuned without dragging the other.
+ *
+ * The gap this closes is composition, not volume. At the flat rate a 天阶 player
+ * draws only 9% of their stones from idle and ~85% from 寻宝令-gated sweeps,
+ * inverting the "idle carries the baseline, sweeps top it up" rule the material
+ * curve settled on — and 寻宝令 accrues at a frozen 1.44/day that idling cannot
+ * accelerate. At ×10 idle and sweeps land at roughly half each.
+ *
+ * Band 1 is exactly 1 to keep early-game pacing and old saves unchanged.
+ */
+export const IDLE_ENHANCE_STONE_BAND_MULTIPLIER: Readonly<
+  Record<EquipmentBand, number>
+> = {
+  1: 1,
+  2: 3,
+  3: 6,
+  4: 10,
+};
+
+/**
+ * Applied to `quantity` *after* the chance check. Unlike the stack table there
+ * is no draw to widen here — `roll` spends exactly one `randomInt` whatever it
+ * returns, and `quantity` is a constant — so every band produces a
+ * byte-identical draw sequence and only the payout differs.
+ */
+export function idleItemDropBandMultiplier(
+  drop: IdleItemDrop,
+  band: EquipmentBand,
+): number {
+  if (!drop.scalesWithBand) return 1;
+  const multiplier = IDLE_ENHANCE_STONE_BAND_MULTIPLIER[band];
+  if (!multiplier) throw new RangeError(`Unknown equipment band: ${band}`);
+  return multiplier;
+}
 
 /**
  * Which band an equipment drop comes from and the quality it rolls are decided

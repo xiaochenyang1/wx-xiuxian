@@ -1,10 +1,13 @@
 import {
+  IDLE_ENHANCE_STONE_BAND_MULTIPLIER,
+  IDLE_ITEM_DROPS,
   IDLE_MATERIAL_BAND_MULTIPLIER,
   IDLE_MATERIAL_ITEM_IDS,
   IDLE_STACK_DROPS,
   equipmentAffixRange,
   equipmentBandForConfig,
   equipmentConfigsForBand,
+  idleItemDropBandMultiplier,
   idleStackDropBandMultiplier,
   idleStackDropQuantitySpan,
   readRolledAffixes,
@@ -225,6 +228,19 @@ function sampledStacks(level: number, samples = 80): readonly SampledStack[] {
 }
 
 const MATERIAL_IDS: ReadonlySet<string> = new Set(IDLE_MATERIAL_ITEM_IDS);
+/** Materials and 强化石 both ride the band; 功法残页 and 寻宝令 do not. */
+const BAND_SCALED_IDS: ReadonlySet<string> = new Set([
+  ...IDLE_MATERIAL_ITEM_IDS,
+  "enhance_stone",
+]);
+
+function bandMultiplierFor(itemConfigId: string, band: EquipmentBand): number {
+  if (MATERIAL_IDS.has(itemConfigId)) return IDLE_MATERIAL_BAND_MULTIPLIER[band];
+  if (itemConfigId === "enhance_stone") {
+    return IDLE_ENHANCE_STONE_BAND_MULTIPLIER[band];
+  }
+  return 1;
+}
 
 describe("material drops scale with the band", () => {
   it("multiplies the same draw instead of drawing differently", () => {
@@ -236,14 +252,11 @@ describe("material drops scale with the band", () => {
     for (const band of [2, 3, 4] as const) {
       const scaled = sampledStacks(BAND_LEVELS[band]);
       expect(scaled).toHaveLength(reference.length);
-      const multiplier = IDLE_MATERIAL_BAND_MULTIPLIER[band];
       for (const [index, sample] of scaled.entries()) {
         const base = reference[index]!;
         expect(sample.itemConfigId).toBe(base.itemConfigId);
         expect(sample.quantity).toBe(
-          MATERIAL_IDS.has(base.itemConfigId)
-            ? base.quantity * multiplier
-            : base.quantity,
+          base.quantity * bandMultiplierFor(base.itemConfigId, band),
         );
       }
     }
@@ -262,31 +275,32 @@ describe("material drops scale with the band", () => {
     }
   });
 
-  it("leaves 强化石 at one per hit in every band", () => {
+  it("pays 强化石 the band's rate per hit, always as a whole multiple", () => {
     for (const band of [1, 2, 3, 4] as const) {
       const stones = sampledStacks(BAND_LEVELS[band]).filter(
         (sample) => sample.itemConfigId === "enhance_stone",
       );
       expect(stones.length).toBeGreaterThan(0);
-      for (const stone of stones) expect(stone.quantity).toBe(1);
+      for (const stone of stones) {
+        expect(stone.quantity).toBe(IDLE_ENHANCE_STONE_BAND_MULTIPLIER[band]);
+      }
     }
   });
 
   it("switches multiplier on the band boundary, not one level early or late", () => {
     const reference = sampledStacks(1);
-    const scale = (multiplier: number): readonly SampledStack[] =>
+    const scale = (band: EquipmentBand): readonly SampledStack[] =>
       reference.map((sample) => ({
         itemConfigId: sample.itemConfigId,
-        quantity: MATERIAL_IDS.has(sample.itemConfigId)
-          ? sample.quantity * multiplier
-          : sample.quantity,
+        quantity:
+          sample.quantity * bandMultiplierFor(sample.itemConfigId, band),
       }));
     expect(sampledStacks(60)).toEqual(scale(1));
-    expect(sampledStacks(61)).toEqual(scale(3));
-    expect(sampledStacks(150)).toEqual(scale(3));
-    expect(sampledStacks(151)).toEqual(scale(6));
-    expect(sampledStacks(300)).toEqual(scale(6));
-    expect(sampledStacks(301)).toEqual(scale(10));
+    expect(sampledStacks(61)).toEqual(scale(2));
+    expect(sampledStacks(150)).toEqual(scale(2));
+    expect(sampledStacks(151)).toEqual(scale(3));
+    expect(sampledStacks(300)).toEqual(scale(3));
+    expect(sampledStacks(301)).toEqual(scale(4));
   });
 });
 
@@ -407,6 +421,91 @@ describe("idleStackDropBandMultiplier", () => {
     expect(() =>
       idleStackDropBandMultiplier(IDLE_STACK_DROPS[0]!, 5 as EquipmentBand),
     ).toThrow(RangeError);
+  });
+});
+
+describe("IDLE_ENHANCE_STONE_BAND_MULTIPLIER", () => {
+  it("starts at exactly 1, which is what keeps 凡阶 byte-identical", () => {
+    expect(IDLE_ENHANCE_STONE_BAND_MULTIPLIER[1]).toBe(1);
+  });
+
+  it("covers every band and never decreases", () => {
+    expect(IDLE_ENHANCE_STONE_BAND_MULTIPLIER).toEqual({
+      1: 1,
+      2: 3,
+      3: 6,
+      4: 10,
+    });
+    const bands = [1, 2, 3, 4] as const;
+    for (const band of bands.slice(1)) {
+      expect(IDLE_ENHANCE_STONE_BAND_MULTIPLIER[band]).toBeGreaterThan(
+        IDLE_ENHANCE_STONE_BAND_MULTIPLIER[(band - 1) as EquipmentBand],
+      );
+    }
+  });
+
+  it("keeps the same shape as the material curve, so one curve is learned once", () => {
+    expect(IDLE_ENHANCE_STONE_BAND_MULTIPLIER).toEqual(
+      IDLE_MATERIAL_BAND_MULTIPLIER,
+    );
+  });
+});
+
+describe("idleItemDropBandMultiplier", () => {
+  it("scales only the row that asks to be scaled", () => {
+    const [stones, pills] = IDLE_ITEM_DROPS;
+    expect(stones!.itemConfigId).toBe("enhance_stone");
+    expect(stones!.scalesWithBand).toBe(true);
+    expect(pills!.itemConfigId).toBe("breakthrough_pill");
+    expect(pills!.scalesWithBand).toBe(false);
+    for (const band of [1, 2, 3, 4] as const) {
+      expect(idleItemDropBandMultiplier(stones!, band)).toBe(
+        IDLE_ENHANCE_STONE_BAND_MULTIPLIER[band],
+      );
+      // Breakthrough pills have a hard lifetime ceiling and 真仙期 needs none, so
+      // a flat rate is the right curve for them.
+      expect(idleItemDropBandMultiplier(pills!, band)).toBe(1);
+    }
+  });
+
+  it("never spends a draw, so the payout is the only thing a band changes", () => {
+    // Unlike the stack table there is no min/max window here: `quantity` is a
+    // constant, and `roll` spends one `randomInt` whatever it returns. That is
+    // why the sequence assertion below can be exact at *every* band, not just 1.
+    for (const drop of IDLE_ITEM_DROPS) expect(drop.quantity).toBe(1);
+  });
+
+  it("rejects a band that is not in the table", () => {
+    expect(() =>
+      idleItemDropBandMultiplier(IDLE_ITEM_DROPS[0]!, 5 as EquipmentBand),
+    ).toThrow(RangeError);
+  });
+});
+
+describe("the enhance stone curve leaves the seeded stream alone", () => {
+  it("draws the identical sequence at every band, only paying more", () => {
+    // The stronger guarantee the item table allows and the stack table does not.
+    // Materials can only promise band 1 is unchanged; here the *draw order* is
+    // identical across all four bands, so any divergence means a stray draw.
+    const reference = sampledStacks(1);
+    for (const band of [2, 3, 4] as const) {
+      const scaled = sampledStacks(BAND_LEVELS[band]);
+      expect(scaled.map((sample) => sample.itemConfigId)).toEqual(
+        reference.map((sample) => sample.itemConfigId),
+      );
+    }
+  });
+
+  it("does not touch how often a stone lands, only how many it pays", () => {
+    const hits = (level: number): number =>
+      sampledStacks(level).filter(
+        (sample) => sample.itemConfigId === "enhance_stone",
+      ).length;
+    const reference = hits(1);
+    expect(reference).toBeGreaterThan(0);
+    for (const band of [2, 3, 4] as const) {
+      expect(hits(BAND_LEVELS[band])).toBe(reference);
+    }
   });
 });
 

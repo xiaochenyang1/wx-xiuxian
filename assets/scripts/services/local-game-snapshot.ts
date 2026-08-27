@@ -31,7 +31,8 @@ import {
 } from "@cultivation-diary/shared";
 
 export const LOCAL_SAVE_SCHEMA_VERSION = 1 as const;
-export const GAME_CONFIG_VERSION = "local-2.9.0";
+export const GAME_CONFIG_VERSION = "local-2.10.0";
+export const GAME_CONFIG_VERSION_PRE_ENHANCE_STONE_CURVE = "local-2.9.0";
 export const GAME_CONFIG_VERSION_PRE_TASK_CHAIN = "local-2.8.0";
 export const GAME_CONFIG_VERSION_PRE_MATERIAL_CURVE = "local-2.7.0";
 export const GAME_CONFIG_VERSION_PRE_EQUIPMENT_BANDS = "local-2.6.0";

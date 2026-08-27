@@ -50,8 +50,18 @@ describe("the idle drop table", () => {
       },
     ]);
     expect(IDLE_ITEM_DROPS).toEqual([
-      { itemConfigId: "enhance_stone", quantity: 1, chance: 10_000 },
-      { itemConfigId: "breakthrough_pill", quantity: 1, chance: 500 },
+      {
+        itemConfigId: "enhance_stone",
+        quantity: 1,
+        chance: 10_000,
+        scalesWithBand: true,
+      },
+      {
+        itemConfigId: "breakthrough_pill",
+        quantity: 1,
+        chance: 500,
+        scalesWithBand: false,
+      },
     ]);
     expect(IDLE_EQUIPMENT_DROP_CHANCE).toBe(4_000);
     expect(IDLE_TECHNIQUE_DROP_CHANCE).toBe(1_200);

@@ -6,11 +6,11 @@ import {
   getEquipmentAffixDisplay,
   getEquipmentAscendDisplay,
   getEquipmentEnhanceDisplay,
+  getEquipmentHeaderText,
   getEquipmentRerollDisplay,
   getEquipmentTitleText,
   type AssetUpgradeDisplay,
 } from "../../core/AssetUpgradeDisplay";
-import { formatLargeNumber } from "../../core/ClientNumber";
 import { getEquipmentManagementDisplay } from "../../core/EquipmentManagementDisplay";
 import type { AppState } from "../../core/ClientTypes";
 import { canRunLocalMutation } from "../../core/ClientTypes";
@@ -36,11 +36,7 @@ export function drawEquipmentPanel(
   const equipmentWindow = paging.window("equipment", equipment.length, 4);
   addLabel(
     overlay,
-    `法宝 ${equipment.length} 件 · 强化石 ${formatLargeNumber(
-      state.bootstrap!.inventory.stacks.find(
-        (stack) => stack.itemConfigId === "enhance_stone",
-      )?.quantity ?? "0",
-    )} · 装备影响战力与挂机效率`,
+    getEquipmentHeaderText(state.bootstrap!, equipment.length),
     0,
     393,
     590,

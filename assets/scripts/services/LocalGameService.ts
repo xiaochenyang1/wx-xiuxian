@@ -77,6 +77,7 @@ import {
   getRealmTitle,
   getTechniqueConfig,
   getSectConfig,
+  idleItemDropBandMultiplier,
   idleStackDropBandMultiplier,
   idleStackDropQuantitySpan,
   isAssetQuality,
@@ -110,6 +111,7 @@ import {
   GAME_CONFIG_VERSION,
   GAME_CONFIG_VERSION_PRE_AFFIX_ROLL,
   GAME_CONFIG_VERSION_PRE_EQUIPMENT_BANDS,
+  GAME_CONFIG_VERSION_PRE_ENHANCE_STONE_CURVE,
   GAME_CONFIG_VERSION_PRE_MATERIAL_CURVE,
   GAME_CONFIG_VERSION_PRE_CAVE,
   GAME_CONFIG_VERSION_PRE_EQUIPMENT_MANAGEMENT,
@@ -2163,9 +2165,11 @@ function applyIdleDrops(
     }
     for (const itemDrop of IDLE_ITEM_DROPS) {
       if (roll(itemDrop.chance, randomInt)) {
+        const quantity =
+          itemDrop.quantity * idleItemDropBandMultiplier(itemDrop, band);
         stackRewards.set(
           itemDrop.itemConfigId,
-          (stackRewards.get(itemDrop.itemConfigId) ?? 0) + itemDrop.quantity,
+          (stackRewards.get(itemDrop.itemConfigId) ?? 0) + quantity,
         );
       }
     }
@@ -2844,6 +2848,20 @@ function migrateSnapshot(snapshot: unknown): unknown {
     migrated = {
       ...migrated,
       progressionTasks: padProgressionTasks(migrated.progressionTasks),
+      config: { ...config, version: GAME_CONFIG_VERSION_PRE_ENHANCE_STONE_CURVE },
+    };
+    config = migrated.config;
+  }
+  if (
+    isRecord(config) &&
+    config.version === GAME_CONFIG_VERSION_PRE_ENHANCE_STONE_CURVE
+  ) {
+    // Version only, for the same reasons as the material curve step: the enhance
+    // stone band multiplier is derived from `progress.level` at settlement time
+    // and never stored, and a stone already in the bag does not change meaning.
+    // No back-pay for the stones an old save would have earned at its band.
+    migrated = {
+      ...migrated,
       config: { ...config, version: GAME_CONFIG_VERSION },
     };
   }

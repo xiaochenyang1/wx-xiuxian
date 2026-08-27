@@ -4,6 +4,7 @@ import {
   getEquipmentAffixDisplay,
   getEquipmentAscendDisplay,
   getEquipmentEnhanceDisplay,
+  getEquipmentHeaderText,
   getEquipmentRerollDisplay,
   getEquipmentTitleText,
   getTechniqueUpgradeDisplay,
@@ -269,6 +270,42 @@ describe("equipment title line", () => {
     expect(() =>
       getEquipmentTitleText({ equipmentConfigId: "no_such_sword", displayName: "无" }),
     ).toThrow(RangeError);
+  });
+});
+
+describe("equipment page header", () => {
+  /** The header reads the band off the level, so only the level has to move. */
+  function atLevel(level: number): BootstrapSnapshot {
+    const snapshot = snapshotWithBalances(0, 240);
+    return { ...snapshot, progress: { ...snapshot.progress, level } };
+  }
+
+  it("names the idle stone rate the current band pays", () => {
+    expect(getEquipmentHeaderText(atLevel(1), 3)).toBe(
+      "法宝 3 件 · 强化石 240（挂机 ×1） · 装备影响战力与挂机效率",
+    );
+    expect(getEquipmentHeaderText(atLevel(301), 3)).toBe(
+      "法宝 3 件 · 强化石 240（挂机 ×10） · 装备影响战力与挂机效率",
+    );
+  });
+
+  it("moves the rate on the band boundary, not one level early or late", () => {
+    const rate = (level: number): string =>
+      getEquipmentHeaderText(atLevel(level), 0).replace(/^.*挂机 ×(\d+).*$/, "$1");
+    expect([60, 61, 150, 151, 300, 301].map(rate)).toEqual([
+      "1",
+      "3",
+      "3",
+      "6",
+      "6",
+      "10",
+    ]);
+  });
+
+  it("reads zero stones as zero rather than dropping the segment", () => {
+    expect(getEquipmentHeaderText(snapshotWithBalances(0, 0), 0)).toBe(
+      "法宝 0 件 · 强化石 0（挂机 ×1） · 装备影响战力与挂机效率",
+    );
   });
 });
 
