@@ -10,6 +10,7 @@ import type {
 } from "@cultivation-diary/shared";
 import { loadMainBackgroundArt, loadSupplementalArt } from "../core/AppArt";
 import { CLIENT_CONFIG } from "../core/ClientConfig";
+import type { MainTab } from "../core/ClientTypes";
 import {
   planCultivationPresentation,
   type CultivationPresentationTrigger,
@@ -66,7 +67,7 @@ export class GameBootstrap extends Component {
         importProgressBackup: () => void this.importProgressBackup(),
         restoreImportRecovery: () => this.restoreImportRecovery(),
         hasImportRecovery: () => this.localGame.hasImportRecovery(),
-        selectTab: (tab) => this.store.selectTab(tab),
+        selectTab: (tab) => this.selectTab(tab),
         openFeature: (feature) => this.store.openFeature(feature),
         closeFeature: () => this.store.closeFeature(),
         breakthrough: () =>
@@ -352,6 +353,17 @@ export class GameBootstrap extends Component {
     } finally {
       this.mutationInFlight = false;
     }
+  }
+
+  /**
+   * The store moves first so the page swaps on the tap's own frame; recording
+   * it is best effort. If the write is skipped or fails the view is already
+   * right and only this one switch goes unremembered.
+   */
+  private selectTab(tab: MainTab): void {
+    if (this.store.snapshot.selectedTab === tab) return;
+    this.store.selectTab(tab);
+    this.runMutation(() => this.localGame.selectTab(tab));
   }
 
   private chooseAvatar(avatarVariant: ChosenAvatarVariant): void {

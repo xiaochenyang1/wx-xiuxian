@@ -108,6 +108,7 @@ import {
   type ProgressionEvent,
 } from "@cultivation-diary/shared";
 import { CLIENT_CONFIG } from "../core/ClientConfig";
+import { isMainTab, type MainTab } from "../core/ClientTypes";
 import type { PlatformAdapter } from "../platform/PlatformAdapter";
 import {
   DROP_CONFIG_VERSION,
@@ -338,6 +339,23 @@ export class LocalGameService {
         message: "道号已保存到本地",
       };
     });
+  }
+
+  /**
+   * Records the tab the player is on so the next launch opens there.
+   *
+   * Same shape as the two settings writes below it, for the same reason: the
+   * alternative — keep it in memory and let the next checkpoint carry it —
+   * loses the last switch before a quit, which is the one case worth fixing.
+   */
+  selectTab(tab: MainTab): LocalMutationResult {
+    return this.mutate((snapshot) => ({
+      snapshot: {
+        ...snapshot,
+        settings: { ...snapshot.settings, selectedTab: tab },
+      },
+      events: [],
+    }));
   }
 
   markPartnerUnlockNoticeSeen(): LocalMutationResult {
@@ -3618,15 +3636,6 @@ function isEquipmentSlotOrNull(value: unknown): value is EquippedEquipmentSlot |
     value === "accessory_right" ||
     value === "mount" ||
     value === "pet"
-  );
-}
-
-function isMainTab(value: unknown): boolean {
-  return (
-    value === "cultivation" ||
-    value === "partner" ||
-    value === "ranking" ||
-    value === "cave"
   );
 }
 

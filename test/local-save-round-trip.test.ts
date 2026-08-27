@@ -50,6 +50,21 @@ describe("local save round-trip", () => {
     expect(after.expedition).toEqual(before.expedition);
   });
 
+  it("remembers the main tab the player left off on", () => {
+    const platform = new FakePlatformAdapter();
+    const first = new LocalGameService(platform);
+    first.initialize(START);
+    expect(first.snapshot.settings.selectedTab).toBe("cultivation");
+
+    const result = first.selectTab("ranking");
+    expect(result.snapshot.settings.selectedTab).toBe("ranking");
+    expect(result.events).toEqual([]);
+
+    const second = new LocalGameService(platform);
+    expect(second.initialize(at(5)).created).toBe(false);
+    expect(second.snapshot.settings.selectedTab).toBe("ranking");
+  });
+
   it("creates a new save when storage holds unparseable text", () => {
     const platform = new FakePlatformAdapter();
     platform.seedRaw(SAVE_KEY, "{ not json");
