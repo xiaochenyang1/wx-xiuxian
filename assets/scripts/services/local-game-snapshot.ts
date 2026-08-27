@@ -6,6 +6,7 @@ import {
   TRIAL_TOWER_UNLOCK_LEVEL,
   addLoadoutBonuses,
   calculateCaveBonuses,
+  calculateDaoBonuses,
   calculateEquipmentContribution,
   calculateLoadoutBonuses,
   calculateOnlineExperiencePerSecond,
@@ -31,7 +32,8 @@ import {
 } from "@cultivation-diary/shared";
 
 export const LOCAL_SAVE_SCHEMA_VERSION = 1 as const;
-export const GAME_CONFIG_VERSION = "local-2.11.0";
+export const GAME_CONFIG_VERSION = "local-2.12.0";
+export const GAME_CONFIG_VERSION_PRE_DAO = "local-2.11.0";
 export const GAME_CONFIG_VERSION_PRE_REALM_SPLIT = "local-2.10.0";
 export const GAME_CONFIG_VERSION_PRE_ENHANCE_STONE_CURVE = "local-2.9.0";
 export const GAME_CONFIG_VERSION_PRE_TASK_CHAIN = "local-2.8.0";
@@ -101,6 +103,7 @@ export function createInitialSave(now: Date): LocalGameSave {
     trialTower: { highestFloor: 0 },
     partner: { partnerId: null, level: 0, bond: 0 },
     sect: { sectId: null, level: 0, contribution: 0 },
+    dao: { level: 0 },
     progressionTasks: PROGRESSION_TASK_CONFIGS.map((task) => ({
       taskConfigId: task.id,
       progress: task.condition.kind === "level" ? "1" : "0",
@@ -170,6 +173,7 @@ export function refreshSnapshot(snapshot: BootstrapSnapshot): BootstrapSnapshot 
   );
   bonuses = addLoadoutBonuses(bonuses, calculatePartnerBonuses(snapshot.partner));
   bonuses = addLoadoutBonuses(bonuses, calculateSectBonuses(snapshot.sect));
+  bonuses = addLoadoutBonuses(bonuses, calculateDaoBonuses(snapshot.dao));
   const level = snapshot.progress.level;
   const realm = getRealmConfigForLevel(level);
   return {

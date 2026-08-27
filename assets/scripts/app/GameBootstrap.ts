@@ -71,6 +71,8 @@ export class GameBootstrap extends Component {
         closeFeature: () => this.store.closeFeature(),
         breakthrough: () =>
           this.runMutation(() => this.localGame.breakthrough(), "breakthrough"),
+        cultivateDao: (times) =>
+          this.runMutation(() => this.localGame.cultivateDao(times)),
         chooseAvatar: (avatarVariant) => this.chooseAvatar(avatarVariant),
         renamePlayer: (displayName) => this.renamePlayer(displayName),
         markPartnerUnlockNoticeSeen: () =>

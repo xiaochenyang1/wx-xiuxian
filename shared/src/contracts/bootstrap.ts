@@ -127,6 +127,13 @@ export interface BootstrapSnapshot {
     level: number;
     contribution: number;
   };
+  dao: {
+    /**
+     * `0` until the level cap is reached: `cultivationReserve`, the only
+     * currency this track spends, accrues nowhere else.
+     */
+    level: number;
+  };
   progressionTasks: Array<{
     taskConfigId: string;
     progress: BigNumberString;

@@ -42,6 +42,7 @@ import {
   getMainFeatureMessageGeometry,
   type FeatureMessageDisplay,
 } from "../core/FeatureMessageDisplay";
+import { getDaoDisplay } from "../core/DaoDisplay";
 import {
   advanceLiveCultivationElapsed,
   initialLiveCultivationElapsed,
@@ -157,6 +158,7 @@ export interface AppViewActions {
   openFeature(feature: FeaturePanel): void;
   closeFeature(): void;
   breakthrough(): void;
+  cultivateDao(times: number): void;
   chooseAvatar(avatarVariant: ChosenAvatarVariant): void;
   renamePlayer(displayName: string): void;
   markPartnerUnlockNoticeSeen(): void;
@@ -1649,6 +1651,9 @@ export class AppView {
       projection.progress,
       data.config.maxLevel,
     );
+    // Built from the projected progress so the affordable count matches the
+    // reserve the line above it is currently showing.
+    const daoDisplay = getDaoDisplay({ ...data, progress: projection.progress });
     const pendingTasks = countPendingProgressionTasks(
       data.progressionTasks,
       VISIBLE_PROGRESSION_TASK_COUNT,
@@ -1867,6 +1872,85 @@ export class AppView {
           enabled: mutationsEnabled,
         },
         () => this.actions.breakthrough(),
+      );
+    } else if (daoDisplay.visible) {
+      // At the cap "修炼进行中" says nothing — the level cannot move again. The
+      // slot goes to 悟道 instead, the one place the reserve on the line above
+      // can be spent.
+      addLabel(
+        this.root,
+        daoDisplay.titleText,
+        0,
+        -248,
+        374,
+        26,
+        18,
+        COLORS.gold,
+        true,
+        1,
+        HorizontalTextAlignment.CENTER,
+        "fixed",
+      );
+      addLabel(
+        this.root,
+        daoDisplay.bonusText,
+        0,
+        -274,
+        374,
+        24,
+        14,
+        COLORS.green,
+        false,
+        1,
+        HorizontalTextAlignment.CENTER,
+        "fixed",
+      );
+      addLabel(
+        this.root,
+        daoDisplay.costText,
+        0,
+        -296,
+        374,
+        22,
+        13,
+        COLORS.textMuted,
+        false,
+        1,
+        HorizontalTextAlignment.CENTER,
+        "fixed",
+      );
+      const daoEnabled = mutationsEnabled && daoDisplay.actionEnabled;
+      createButton(
+        this.root,
+        daoDisplay.actionText,
+        -78,
+        -338,
+        148,
+        52,
+        {
+          fill: daoEnabled ? COLORS.goldMuted : COLORS.panel,
+          stroke: COLORS.gold,
+          text: daoEnabled ? COLORS.black : COLORS.textMuted,
+          fontSize: 22,
+          enabled: daoEnabled,
+        },
+        () => this.actions.cultivateDao(1),
+      );
+      createButton(
+        this.root,
+        daoDisplay.batchActionText,
+        78,
+        -338,
+        148,
+        52,
+        {
+          fill: COLORS.panel,
+          stroke: daoEnabled ? COLORS.gold : COLORS.goldMuted,
+          text: daoEnabled ? COLORS.gold : COLORS.textMuted,
+          fontSize: 18,
+          enabled: daoEnabled,
+        },
+        () => this.actions.cultivateDao(daoDisplay.affordableLevels),
       );
     } else {
       createButton(

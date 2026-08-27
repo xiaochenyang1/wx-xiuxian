@@ -8,6 +8,7 @@ import {
   CAVE_BUILDING_CONFIGS,
   CAVE_MAX_LEVEL,
   CAVE_UNLOCK_LEVEL,
+  DAO_MAX_LEVEL,
   ENHANCE_STONE_OVERFLOW_SPIRIT_STONE_VALUE,
   EQUIPMENT_MAX_ENHANCE_LEVEL,
   EXPEDITION_STAGE_CONFIGS,
@@ -27,6 +28,7 @@ import {
   PROGRESSION_TASK_CONFIGS,
   TRIAL_TOWER_MAX_FLOOR,
   TRIAL_TOWER_UNLOCK_LEVEL,
+  daoCumulativeCost,
   evaluateTrialFloor,
   trialFloorRewards,
   TECHNIQUE_MAX_STAR,
@@ -91,6 +93,7 @@ import {
   rollEquipmentAffixes,
   settleCultivation,
   sectContributionRequirement,
+  spendReserveOnDao,
   shouldAutoLockEquipment,
   simulateOnlineExperience,
   techniqueStarUpgradeCost,
@@ -115,6 +118,7 @@ import {
   GAME_CONFIG_VERSION_PRE_REALM_SPLIT,
   GAME_CONFIG_VERSION_PRE_MATERIAL_CURVE,
   GAME_CONFIG_VERSION_PRE_CAVE,
+  GAME_CONFIG_VERSION_PRE_DAO,
   GAME_CONFIG_VERSION_PRE_EQUIPMENT_MANAGEMENT,
   GAME_CONFIG_VERSION_PRE_EXPEDITION,
   GAME_CONFIG_VERSION_PRE_EXPEDITION_SWEEPS,
@@ -1052,6 +1056,51 @@ export class LocalGameService {
           level > snapshot.sect.level
             ? `${config.displayName}声望提升至 Lv.${level}`
             : `向${config.displayName}捐献物资，贡献 +${contributionGain}`,
+      };
+    });
+  }
+
+  /**
+   * Spends `cultivationReserve` on 道行. Levels are bought all-or-nothing so a
+   * batch tap can never leave the player guessing how far the reserve went.
+   */
+  cultivateDao(times = 1): LocalMutationResult {
+    return this.mutate((snapshot) => {
+      if (snapshot.progress.status !== "version_cap") {
+        throw new LocalGameError("修为储备只在等级封顶后积累");
+      }
+      if (snapshot.dao.level >= DAO_MAX_LEVEL) {
+        throw new LocalGameError("道行已至圆满");
+      }
+      if (!Number.isInteger(times) || times < 1) {
+        throw new LocalGameError("悟道次数不合法");
+      }
+      const capped = Math.min(times, DAO_MAX_LEVEL - snapshot.dao.level);
+      let spent;
+      try {
+        spent = spendReserveOnDao({
+          level: snapshot.dao.level,
+          cultivationReserve: snapshot.progress.cultivationReserve,
+          times: capped,
+        });
+      } catch {
+        const needed = decimal(daoCumulativeCost(snapshot.dao.level + capped))
+          .minus(daoCumulativeCost(snapshot.dao.level))
+          .minus(snapshot.progress.cultivationReserve)
+          .toFixed(0);
+        throw new LocalGameError(`修为储备不足，还需 ${needed}`);
+      }
+      return {
+        snapshot: refreshSnapshot({
+          ...snapshot,
+          progress: {
+            ...snapshot.progress,
+            cultivationReserve: spent.cultivationReserve,
+          },
+          dao: { level: spent.level },
+        }),
+        events: [],
+        message: `道行提升至 Lv.${spent.level}`,
       };
     });
   }
@@ -2880,6 +2929,23 @@ function migrateSnapshot(snapshot: unknown): unknown {
     // Its first new breakthrough is the next hundred it reaches.
     migrated = {
       ...migrated,
+      config: { ...config, version: GAME_CONFIG_VERSION_PRE_DAO },
+    };
+    config = migrated.config;
+  }
+  if (isRecord(config) && config.version === GAME_CONFIG_VERSION_PRE_DAO) {
+    // The first step in this chain that actually adds a stored field. `dao` is
+    // not derivable from anything already on the save, so it is written in at
+    // level 0 rather than rebuilt by `refreshSnapshot`.
+    //
+    // No 道行 is back-credited. The reserve an old save has been piling up since
+    // it capped is exactly the currency this track spends, so the save keeps it
+    // and buys its own levels — a capped save will open the game to a large
+    // reserve and a run of levels it can take immediately, which is the
+    // intended behaviour, not a shortfall to compensate for.
+    migrated = {
+      ...migrated,
+      dao: { level: 0 },
       config: { ...config, version: GAME_CONFIG_VERSION },
     };
   }
@@ -3044,6 +3110,7 @@ function isBootstrapSnapshot(value: unknown): value is BootstrapSnapshot {
     isTrialTowerSnapshot(value.trialTower) &&
     isPartnerSnapshot(value.partner) &&
     isSectSnapshot(value.sect) &&
+    isDaoSnapshot(value.dao) &&
     isProgressionTaskList(value.progressionTasks) &&
     isRecord(value.unlocks) &&
     typeof value.unlocks.partner === "boolean" &&
@@ -3062,6 +3129,15 @@ function isBootstrapSnapshot(value: unknown): value is BootstrapSnapshot {
     isOfflineSettlement(value.offlineSettlement) &&
     hasConsistentInventory(value)
   );
+}
+
+/**
+ * 道行 needs no cross-check against the level. The reserve it spends only
+ * accrues at the cap, and the level never decreases, so a positive 道行 on a
+ * low-level save is unreachable rather than illegal.
+ */
+function isDaoSnapshot(value: unknown): boolean {
+  return isRecord(value) && isIntegerBetween(value.level, 0, DAO_MAX_LEVEL);
 }
 
 function isPartnerSnapshot(value: unknown): boolean {
