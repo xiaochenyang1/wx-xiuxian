@@ -2568,7 +2568,13 @@ function maxAffordableBatchCount(
 }
 
 function formatQualityCounts(counts: ReadonlyMap<AssetQuality, number>): string {
-  return [...counts.entries()]
+  // Map.forEach rather than spreading counts.entries(): the Cocos build
+  // transpiles array spread to [].concat(...), which appends an iterator as a
+  // single element instead of expanding it, so the spread form renders
+  // "undefined xundefined" in the built game while passing here.
+  const entries: Array<readonly [AssetQuality, number]> = [];
+  counts.forEach((count, quality) => entries.push([quality, count]));
+  return entries
     .sort(([left], [right]) => ASSET_QUALITY_ORDER[left] - ASSET_QUALITY_ORDER[right])
     .map(([quality, count]) => `${qualityDisplayName(quality)} x${count}`)
     .join("、");
