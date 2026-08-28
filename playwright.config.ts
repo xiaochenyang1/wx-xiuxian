@@ -13,10 +13,15 @@ export default defineConfig({
     trace: "retain-on-failure",
   },
   webServer: {
-    command: "node scripts/serve-web-build.mjs",
+    // Verifying before serving makes it structurally impossible for the suite to
+    // pass against a bundle built from other sources, however playwright is
+    // started. `verify:candidate` sequences the two, a bare `pnpm test:e2e` does
+    // not, and a stale bundle fails by testing code nobody wrote.
+    command:
+      "node scripts/verify-web-build.mjs && node scripts/serve-web-build.mjs",
     url: "http://127.0.0.1:4173",
     reuseExistingServer: false,
-    timeout: 10_000,
+    timeout: 30_000,
   },
   projects: [
     {

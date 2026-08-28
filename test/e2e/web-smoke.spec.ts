@@ -1,7 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { PNG } from "pngjs";
-
-const SAVE_KEY = "cultivation-diary.local-save.v1";
+import { assertScreenshotHasRenderedPixels, SAVE_KEY } from "./canvas";
 
 test("boots a nonblank game canvas and restores its local save", async ({ page }, testInfo) => {
   const pageErrors: string[] = [];
@@ -65,24 +63,3 @@ test("boots a nonblank game canvas and restores its local save", async ({ page }
   expect(pageErrors).toEqual([]);
   expect(consoleErrors).toEqual([]);
 });
-
-function assertScreenshotHasRenderedPixels(buffer: Buffer): void {
-  const image = PNG.sync.read(buffer);
-  const colors = new Set<number>();
-  let minLuminance = 255;
-  let maxLuminance = 0;
-  for (let y = 0; y < image.height; y += 4) {
-    for (let x = 0; x < image.width; x += 4) {
-      const offset = (image.width * y + x) * 4;
-      const red = image.data[offset]!;
-      const green = image.data[offset + 1]!;
-      const blue = image.data[offset + 2]!;
-      colors.add((red << 16) | (green << 8) | blue);
-      const luminance = Math.round(red * 0.2126 + green * 0.7152 + blue * 0.0722);
-      minLuminance = Math.min(minLuminance, luminance);
-      maxLuminance = Math.max(maxLuminance, luminance);
-    }
-  }
-  expect(colors.size).toBeGreaterThan(100);
-  expect(maxLuminance - minLuminance).toBeGreaterThan(100);
-}
