@@ -275,6 +275,8 @@ export class AppView {
   private supplementalArt: SupplementalArt = {
     cultivators: {},
     playerAvatars: {},
+    mainNavigation: {},
+    featureNavigation: {},
   };
   private destroyed = false;
   private mainPageRoot: Node | null = null;
@@ -1740,6 +1742,7 @@ export class AppView {
           this.actions.feedback();
           this.actions.openFeature(action.feature);
         },
+        this.supplementalArt.featureNavigation[action.feature],
       );
     }
 
@@ -2010,10 +2013,18 @@ export class AppView {
     ];
     features.forEach((item, index) => {
       const x = -292 + index * 146;
-      createFeatureButton(this.root, item.label, x, featureY, index, () => {
-        this.actions.feedback();
-        this.actions.openFeature(item.feature);
-      });
+      createFeatureButton(
+        this.root,
+        item.label,
+        x,
+        featureY,
+        index,
+        () => {
+          this.actions.feedback();
+          this.actions.openFeature(item.feature);
+        },
+        this.supplementalArt.featureNavigation[item.feature],
+      );
     });
   }
 
@@ -2590,6 +2601,7 @@ export class AppView {
           this.actions.feedback();
           this.actions.selectTab(item.id);
         },
+        this.supplementalArt.mainNavigation[item.id],
       );
     });
   }
@@ -2633,6 +2645,7 @@ export class AppView {
           this.actions.feedback();
           this.actions.openFeature(item.feature);
         },
+        this.supplementalArt.featureNavigation[item.feature],
       );
     });
   }

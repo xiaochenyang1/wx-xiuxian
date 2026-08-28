@@ -114,6 +114,7 @@ export function createFeatureButton(
   y: number,
   iconIndex: number,
   onClick: () => void,
+  art?: SpriteFrame,
 ): void {
   const node = createUiNode(parent, `Feature-${text}`);
   node.setPosition(x, y);
@@ -139,7 +140,11 @@ export function createFeatureButton(
   medallion.lineWidth = 2;
   medallion.circle(0, 0, 27);
   medallion.stroke();
-  drawFeatureGlyph(medallion, iconIndex, 0.76);
+  if (art) {
+    drawContainedSprite(node, "FeatureIconArt", art, 0, 17, 52, 52);
+  } else {
+    drawFeatureGlyph(medallion, iconIndex, 0.76);
+  }
   addLabel(
     node,
     text,
@@ -164,6 +169,7 @@ export function createMainTabButton(
   y: number,
   selected: boolean,
   onClick: () => void,
+  art?: SpriteFrame,
 ): void {
   const node = createUiNode(parent, `RightTab-${tab}`);
   node.setPosition(x, y);
@@ -181,9 +187,13 @@ export function createMainTabButton(
   button.zoomScale = 0.93;
   node.on(Button.EventType.CLICK, onClick);
 
-  const icon = drawTabIcon(node, tab, selected);
-  icon.node.setPosition(0, 17);
-  icon.node.setScale(0.78, 0.78, 1);
+  if (art) {
+    drawContainedSprite(node, "TabIconArt", art, 0, 17, 58, 58);
+  } else {
+    const icon = drawTabIcon(node, tab, selected);
+    icon.node.setPosition(0, 17);
+    icon.node.setScale(0.78, 0.78, 1);
+  }
   addLabel(
     node,
     text,
@@ -207,6 +217,7 @@ export function createBottomFeatureButton(
   y: number,
   iconIndex: number,
   onClick: () => void,
+  art?: SpriteFrame,
 ): void {
   const node = createUiNode(parent, `BottomFeature-${text}`);
   node.setPosition(x, y);
@@ -233,7 +244,11 @@ export function createBottomFeatureButton(
   medallion.lineWidth = 2;
   medallion.circle(0, 0, 34);
   medallion.stroke();
-  drawFeatureGlyph(medallion, iconIndex, 0.82);
+  if (art) {
+    drawContainedSprite(node, "BottomFeatureIconArt", art, 0, 27, 66, 66);
+  } else {
+    drawFeatureGlyph(medallion, iconIndex, 0.82);
+  }
   addLabel(
     node,
     text,
@@ -258,6 +273,7 @@ export function createSideFeatureButton(
   iconIndex: number,
   badge: number,
   onClick: () => void,
+  art?: SpriteFrame,
 ): void {
   const node = createUiNode(parent, `SideFeature-${text}`);
   node.setPosition(x, y);
@@ -274,8 +290,12 @@ export function createSideFeatureButton(
   button.transition = Button.Transition.SCALE;
   button.zoomScale = 0.92;
   node.on(Button.EventType.CLICK, onClick);
-  const glyph = graphicsNode(node, "SideFeatureGlyph", 0, 14);
-  drawFeatureGlyph(glyph, iconIndex, 0.95);
+  if (art) {
+    drawContainedSprite(node, "SideFeatureIconArt", art, 0, 14, 58, 58);
+  } else {
+    const glyph = graphicsNode(node, "SideFeatureGlyph", 0, 14);
+    drawFeatureGlyph(glyph, iconIndex, 0.95);
+  }
   addLabel(
     node,
     text,
