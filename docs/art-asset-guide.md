@@ -44,6 +44,17 @@
 | 宗门 | `assets/resources/art/navigation/features/sect.png` | `(589, 1247)` |
 | 历练 | `assets/resources/art/navigation/features/training.png` | `(696, 1247)` |
 
+## 修炼页左侧快捷
+
+同样是 `256 x 256` 透明 PNG，与底栏共用一套图标目录。这两格只在修炼页出现，各带一个程序绘制的数字角标（待领任务数、收获箱件数），角标压在图标右上角外侧，图案本身不要画红点。
+
+| 入口 | 文件位置 | 按钮中心坐标 |
+| --- | --- | --- |
+| 任务 | `assets/resources/art/navigation/features/tasks.png` | `(53, 412)` |
+| 行囊 | `assets/resources/art/navigation/features/inventory.png` | `(53, 517)` |
+
+档案不在这张表里：它的入口是顶栏头像，用的是上面那两张 `player-*.png`。
+
 ## 可选增强素材
 
 | 素材 | 文件位置 | 推荐尺寸 | 画面位置 |

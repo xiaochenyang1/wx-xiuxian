@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  BOTTOM_FEATURE_RAIL,
+  CULTIVATION_SHORTCUTS,
+  HEADER_FEATURE,
+} from "../assets/scripts/core/AppNavigation";
+import {
   FEATURE_NAVIGATION_ART_FILES,
   findNavigationArtName,
   MAIN_NAVIGATION_ART_FILES,
@@ -17,8 +22,7 @@ describe("navigation art resource mapping", () => {
     ]);
   });
 
-  it("declares every bottom feature asset with its documented basename", () => {
-    expect(Object.keys(FEATURE_NAVIGATION_ART_FILES)).toHaveLength(7);
+  it("declares every feature asset with its documented basename", () => {
     expect(Object.values(FEATURE_NAVIGATION_ART_FILES)).toEqual([
       "technique",
       "treasure",
@@ -27,7 +31,27 @@ describe("navigation art resource mapping", () => {
       "trial-tower",
       "sect",
       "training",
+      "inventory",
+      "tasks",
     ]);
+  });
+
+  it("names a file for every navigation button that can show one", () => {
+    const artCapable = [
+      ...BOTTOM_FEATURE_RAIL.map((entry) => entry.feature),
+      ...CULTIVATION_SHORTCUTS.map((entry) => entry.feature),
+    ];
+    expect(Object.keys(FEATURE_NAVIGATION_ART_FILES).sort()).toEqual(
+      [...artCapable].sort(),
+    );
+    // 档案 is deliberately absent: its entry point is the header avatar, which
+    // draws the player's own portrait rather than a navigation icon.
+    expect(FEATURE_NAVIGATION_ART_FILES).not.toHaveProperty(HEADER_FEATURE);
+    // Two buttons pointing at one file would make a dropped-in icon appear in
+    // a second place its author never saw.
+    expect(new Set(Object.values(FEATURE_NAVIGATION_ART_FILES)).size).toBe(
+      artCapable.length,
+    );
   });
 
   it("matches Cocos sprite names with extensions and directory prefixes", () => {

@@ -1,4 +1,5 @@
-import type { FeaturePanel, MainTab } from "./ClientTypes";
+import type { ArtCapableFeature } from "./AppNavigation";
+import type { MainTab } from "./ClientTypes";
 
 export const MAIN_NAVIGATION_ART_FILES: Readonly<Record<MainTab, string>> = {
   cultivation: "cultivation",
@@ -7,8 +8,14 @@ export const MAIN_NAVIGATION_ART_FILES: Readonly<Record<MainTab, string>> = {
   cave: "cave",
 };
 
+/**
+ * One file name per navigation button that can carry a dropped-in icon. The key
+ * set is fixed by `ArtCapableFeature`, so a button added to a rail without a
+ * name here fails the typecheck rather than silently keeping its drawn glyph
+ * forever. 档案 is not a key: the header avatar shows the player's portrait.
+ */
 export const FEATURE_NAVIGATION_ART_FILES: Readonly<
-  Partial<Record<FeaturePanel, string>>
+  Record<ArtCapableFeature, string>
 > = {
   techniques: "technique",
   equipment: "treasure",
@@ -17,6 +24,8 @@ export const FEATURE_NAVIGATION_ART_FILES: Readonly<
   trialTower: "trial-tower",
   sect: "sect",
   expedition: "training",
+  inventory: "inventory",
+  tasks: "tasks",
 };
 
 export function normalizeResourceName(name: string): string {

@@ -77,7 +77,8 @@ describe("bottom feature rail wiring", () => {
     // tower took that slot, so a repeated panel id is now a wiring mistake.
     const tower = BOTTOM_FEATURE_RAIL.find((entry) => entry.label === "试炼塔");
     expect(tower?.feature).toBe("trialTower");
-    expect(BOTTOM_FEATURE_RAIL.some((entry) => entry.label === "灵宠")).toBe(false);
+    const labels: readonly string[] = BOTTOM_FEATURE_RAIL.map((entry) => entry.label);
+    expect(labels).not.toContain("灵宠");
   });
 
   it("routes 历练 to its implemented expedition panel", () => {

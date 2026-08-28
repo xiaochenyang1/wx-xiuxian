@@ -31,12 +31,12 @@ export interface ShortcutEntry extends FeatureEntry {
 }
 
 /** The four pages, on the right rail of every screen. */
-export const MAIN_TABS: ReadonlyArray<MainTabEntry> = [
+export const MAIN_TABS = [
   { id: "cultivation", label: "修炼" },
   { id: "partner", label: "伴侣" },
   { id: "ranking", label: "排行" },
   { id: "cave", label: "洞府" },
-];
+] as const satisfies ReadonlyArray<MainTabEntry>;
 
 /**
  * The bottom rail, drawn on every page. Seven slots at a 107px pitch is what a
@@ -44,7 +44,7 @@ export const MAIN_TABS: ReadonlyArray<MainTabEntry> = [
  * the two with live counts sit on the cultivation page instead, and 档案 hangs
  * off the header avatar.
  */
-export const BOTTOM_FEATURE_RAIL: ReadonlyArray<FeatureEntry> = [
+export const BOTTOM_FEATURE_RAIL = [
   { label: "功法", feature: "techniques" },
   { label: "法宝", feature: "equipment" },
   { label: "炼丹", feature: "alchemy" },
@@ -53,17 +53,27 @@ export const BOTTOM_FEATURE_RAIL: ReadonlyArray<FeatureEntry> = [
   { label: "试炼塔", feature: "trialTower" },
   { label: "宗门", feature: "sect" },
   { label: "历练", feature: "expedition" },
-];
+] as const satisfies ReadonlyArray<FeatureEntry>;
 
 /**
  * The left edge of the cultivation page. Both slots earn their space by showing
  * a number the player is waiting on; the right-hand column is left to the main
  * navigation, which is why nothing here needs suppressing behind artwork.
  */
-export const CULTIVATION_SHORTCUTS: ReadonlyArray<ShortcutEntry> = [
+export const CULTIVATION_SHORTCUTS = [
   { label: "任务", feature: "tasks", x: -322, y: 255, icon: 3, badge: "tasks" },
   { label: "行囊", feature: "inventory", x: -322, y: 150, icon: 2, badge: "harvest" },
-];
+] as const satisfies ReadonlyArray<ShortcutEntry>;
+
+/**
+ * The panels reached through a button that can show a dropped-in icon. 档案 is
+ * absent by design: its entry point is the header avatar, which draws the
+ * player's own portrait instead. `AppArtConfig` names a file for each of these,
+ * and the compiler rejects a name for anything else.
+ */
+export type ArtCapableFeature =
+  | (typeof BOTTOM_FEATURE_RAIL)[number]["feature"]
+  | (typeof CULTIVATION_SHORTCUTS)[number]["feature"];
 
 /** 档案 opens from the header avatar, which every page draws. */
 export const HEADER_FEATURE: FeaturePanel = "profile";
