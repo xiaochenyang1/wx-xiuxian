@@ -71,6 +71,13 @@ import type {
   MainTab,
 } from "../core/ClientTypes";
 import { canRunLocalMutation, shouldShowPartnerUnlockNotice } from "../core/ClientTypes";
+import {
+  BOTTOM_FEATURE_RAIL,
+  CULTIVATION_SHORTCUTS,
+  HEADER_FEATURE,
+  MAIN_TABS,
+  type ShortcutBadge,
+} from "../core/AppNavigation";
 import { color, COLORS, withAlpha } from "./primitives/Colors";
 import {
   addLabel,
@@ -88,7 +95,6 @@ import {
 import { formatSignedPowerDelta } from "./primitives/Format";
 import {
   createBottomFeatureButton,
-  createFeatureButton,
   createMainTabButton,
   createSideFeatureButton,
   drawContainedSprite,
@@ -1484,7 +1490,7 @@ export class AppView {
     avatarClick.zoomScale = 0.95;
     avatarButton.on(Button.EventType.CLICK, () => {
       this.actions.feedback();
-      this.actions.openFeature("profile");
+      this.actions.openFeature(HEADER_FEATURE);
     });
     addLabel(
       avatarButton,
@@ -1711,33 +1717,18 @@ export class AppView {
       "fixed",
     );
 
-    const sideActions: ReadonlyArray<{
-      readonly label: string;
-      readonly x: number;
-      readonly y: number;
-      readonly icon: number;
-      readonly badge: number;
-      readonly feature: FeaturePanel;
-    }> = [
-      { label: "仙途", x: -322, y: 360, icon: 4, badge: 0, feature: "profile" },
-      { label: "任务", x: -322, y: 255, icon: 3, badge: pendingTasks, feature: "tasks" },
-      { label: "行囊", x: -322, y: 150, icon: 2, badge: 0, feature: "inventory" },
-      { label: "功法", x: 322, y: 360, icon: 0, badge: 0, feature: "techniques" },
-      { label: "法宝", x: 322, y: 255, icon: 1, badge: 0, feature: "equipment" },
-      { label: "收获", x: 322, y: 150, icon: 5, badge: pendingHarvest, feature: "inventory" },
-    ];
-    for (const action of sideActions) {
-      // The right-side main navigation occupies this space when a full-screen
-      // background is present. All three features remain reachable from the
-      // two bottom rails, so keep only the unobstructed left-side shortcuts.
-      if (hasBackground && action.x > 0) continue;
+    const badgeCounts: Readonly<Record<ShortcutBadge, number>> = {
+      tasks: pendingTasks,
+      harvest: pendingHarvest,
+    };
+    for (const action of CULTIVATION_SHORTCUTS) {
       createSideFeatureButton(
         this.root,
         action.label,
         action.x,
         action.y,
         action.icon,
-        action.badge,
+        badgeCounts[action.badge],
         () => {
           this.actions.feedback();
           this.actions.openFeature(action.feature);
@@ -1989,43 +1980,6 @@ export class AppView {
         "fixed",
       );
     }
-
-    const featureY =
-      this.chromeGeometry.navigationCenterY -
-      this.chromeGeometry.bodyOffsetY +
-      140;
-    drawBand(
-      this.root,
-      "FeatureRail",
-      0,
-      featureY,
-      750,
-      106,
-      withAlpha(COLORS.panelStrong, 246),
-      COLORS.goldMuted,
-    );
-    const features: Array<{ label: string; feature: FeaturePanel }> = [
-      { label: "功法", feature: "techniques" },
-      { label: "法宝", feature: "equipment" },
-      { label: "行囊", feature: "inventory" },
-      { label: "任务", feature: "tasks" },
-      { label: "档案", feature: "profile" },
-    ];
-    features.forEach((item, index) => {
-      const x = -292 + index * 146;
-      createFeatureButton(
-        this.root,
-        item.label,
-        x,
-        featureY,
-        index,
-        () => {
-          this.actions.feedback();
-          this.actions.openFeature(item.feature);
-        },
-        this.supplementalArt.featureNavigation[item.feature],
-      );
-    });
   }
 
   private updateCultivationProjectionAnchor(
@@ -2573,12 +2527,6 @@ export class AppView {
     x: number,
     topY: number,
   ): void {
-    const items: ReadonlyArray<{ readonly id: MainTab; readonly label: string }> = [
-      { id: "cultivation", label: "修炼" },
-      { id: "partner", label: "伴侣" },
-      { id: "ranking", label: "排行" },
-      { id: "cave", label: "洞府" },
-    ];
     drawBand(
       parent,
       "RightNavigation",
@@ -2589,7 +2537,7 @@ export class AppView {
       COLORS.panelStrong,
       COLORS.goldMuted,
     );
-    items.forEach((item, index) => {
+    MAIN_TABS.forEach((item, index) => {
       createMainTabButton(
         parent,
         item.id,
@@ -2621,20 +2569,7 @@ export class AppView {
       COLORS.panelStrong,
       COLORS.goldMuted,
     );
-    const features: ReadonlyArray<{
-      readonly label: string;
-      readonly feature: FeaturePanel;
-    }> = [
-      { label: "功法", feature: "techniques" },
-      { label: "法宝", feature: "equipment" },
-      { label: "炼丹", feature: "alchemy" },
-      { label: "炼器", feature: "crafting" },
-      // 灵宠是法宝的一个槽位（月影灵狐），法宝面板已经管着它，这一格留给试炼塔。
-      { label: "试炼塔", feature: "trialTower" },
-      { label: "宗门", feature: "sect" },
-      { label: "历练", feature: "expedition" },
-    ];
-    features.forEach((item, index) => {
+    BOTTOM_FEATURE_RAIL.forEach((item, index) => {
       createBottomFeatureButton(
         parent,
         item.label,

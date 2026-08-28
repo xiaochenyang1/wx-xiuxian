@@ -107,60 +107,6 @@ export function drawContainedSprite(
   return node;
 }
 
-export function createFeatureButton(
-  parent: Node,
-  text: string,
-  x: number,
-  y: number,
-  iconIndex: number,
-  onClick: () => void,
-  art?: SpriteFrame,
-): void {
-  const node = createUiNode(parent, `Feature-${text}`);
-  node.setPosition(x, y);
-  setSize(node, 138, 100);
-  const background = node.addComponent(Graphics);
-  background.fillColor = withAlpha(COLORS.panel, 238);
-  background.roundRect(-67, -48, 134, 96, 5);
-  background.fill();
-  background.strokeColor = COLORS.goldMuted;
-  background.lineWidth = 1;
-  background.roundRect(-67, -48, 134, 96, 5);
-  background.stroke();
-  const button = node.addComponent(Button);
-  button.transition = Button.Transition.SCALE;
-  button.zoomScale = 0.95;
-  node.on(Button.EventType.CLICK, onClick);
-
-  const medallion = graphicsNode(node, "FeatureMedallion", 0, 17);
-  medallion.fillColor = COLORS.black;
-  medallion.circle(0, 0, 27);
-  medallion.fill();
-  medallion.strokeColor = iconIndex % 2 === 0 ? COLORS.gold : COLORS.cyan;
-  medallion.lineWidth = 2;
-  medallion.circle(0, 0, 27);
-  medallion.stroke();
-  if (art) {
-    drawContainedSprite(node, "FeatureIconArt", art, 0, 17, 52, 52);
-  } else {
-    drawFeatureGlyph(medallion, iconIndex, 0.76);
-  }
-  addLabel(
-    node,
-    text,
-    0,
-    -31,
-    116,
-    30,
-    18,
-    COLORS.text,
-    true,
-    1,
-    HorizontalTextAlignment.CENTER,
-    "fixed",
-  );
-}
-
 export function createMainTabButton(
   parent: Node,
   tab: MainTab,

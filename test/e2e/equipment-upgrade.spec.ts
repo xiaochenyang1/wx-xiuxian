@@ -70,10 +70,10 @@ test("enhances and ascends an equipment piece through the real canvas UI", async
     snapshot.settings.selectedTab = "cultivation";
   });
 
-  await waitForNode(page, "Feature-法宝");
+  await waitForNode(page, "BottomFeature-法宝");
   expect((await readSave(page)).snapshot.progress.level).toBe(11);
 
-  await clickNode(page, "Feature-法宝");
+  await clickNode(page, "BottomFeature-法宝");
   await waitForNode(page, "Button-强化");
   assertScreenshotHasRenderedPixels(
     await page.screenshot({
