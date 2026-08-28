@@ -4,6 +4,7 @@ import {
   getEquipmentAffixDisplay,
   getEquipmentAscendDisplay,
   getEquipmentEnhanceDisplay,
+  getEquipmentEnhanceOrderHintText,
   getEquipmentHeaderText,
   getEquipmentRerollDisplay,
   getEquipmentTitleText,
@@ -306,6 +307,45 @@ describe("equipment page header", () => {
     expect(getEquipmentHeaderText(snapshotWithBalances(0, 0), 0)).toBe(
       "法宝 0 件 · 强化石 0（挂机 ×1） · 装备影响战力与挂机效率",
     );
+  });
+});
+
+describe("equipment enhancement order hint", () => {
+  it("warns about the irreversible cost for legendary pieces", () => {
+    expect(
+      getEquipmentEnhanceOrderHintText([equipment(0, "legendary")]),
+    ).toBe(
+      "强化顺序提示：传说法宝先强化至 +20 再升华，单件最多可省 1,430 枚强化石",
+    );
+  });
+
+  it("uses the smaller final-path saving for mythic pieces", () => {
+    expect(
+      getEquipmentEnhanceOrderHintText([equipment(0, "mythic")]),
+    ).toBe(
+      "强化顺序提示：神话法宝先强化至 +20 再升华，单件最多可省 880 枚强化石",
+    );
+  });
+
+  it("keeps each quality paired with its own saving in a mixed page", () => {
+    expect(
+      getEquipmentEnhanceOrderHintText([
+        equipment(0, "legendary"),
+        equipment(0, "mythic"),
+      ]),
+    ).toBe(
+      "强化顺序提示：传说法宝先强化至 +20 再升华，单件最多可省 1,430 枚强化石；神话法宝先强化至 +20 再升华，单件最多可省 880 枚强化石",
+    );
+  });
+
+  it("stays quiet when every piece is already maxed or cannot ascend", () => {
+    expect(
+      getEquipmentEnhanceOrderHintText([
+        equipment(20, "legendary"),
+        equipment(0, "epic"),
+        equipment(0, "primordial"),
+      ]),
+    ).toBeNull();
   });
 });
 

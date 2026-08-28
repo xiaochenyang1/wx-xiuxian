@@ -6,6 +6,7 @@ import {
   getEquipmentAffixDisplay,
   getEquipmentAscendDisplay,
   getEquipmentEnhanceDisplay,
+  getEquipmentEnhanceOrderHintText,
   getEquipmentHeaderText,
   getEquipmentRerollDisplay,
   getEquipmentTitleText,
@@ -44,6 +45,22 @@ export function drawEquipmentPanel(
     19,
     COLORS.jade,
   );
+  const enhanceOrderHint = getEquipmentEnhanceOrderHintText(equipment);
+  if (enhanceOrderHint) {
+    addLabel(
+      overlay,
+      enhanceOrderHint,
+      0,
+      365,
+      590,
+      22,
+      13,
+      COLORS.gold,
+      false,
+      1,
+      HorizontalTextAlignment.CENTER,
+    );
+  }
   const slots: Array<{ id: EquippedEquipmentSlot; label: string }> = [
     { id: "weapon", label: "武器" },
     { id: "armor", label: "防具" },

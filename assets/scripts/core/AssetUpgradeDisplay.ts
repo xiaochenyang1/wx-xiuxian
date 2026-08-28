@@ -3,6 +3,7 @@ import {
   IDLE_ENHANCE_STONE_BAND_MULTIPLIER,
   TECHNIQUE_MAX_STAR,
   TECHNIQUE_PAGES_PER_DUPLICATE,
+  ASSET_QUALITY_DISPLAY_NAMES,
   affixScorePercent,
   canAscendEquipmentQuality,
   caveBuildingLevel,
@@ -19,6 +20,7 @@ import {
   readRolledAffixes,
   techniqueStarUpgradeCost,
   type AffixStat,
+  type AssetQuality,
   type BootstrapSnapshot,
 } from "@cultivation-diary/shared";
 import { formatBasisPoints, formatLargeNumber } from "./ClientNumber";
@@ -163,6 +165,71 @@ export function getEquipmentHeaderText(
       (stack) => stack.itemConfigId === "enhance_stone",
     )?.quantity ?? "0";
   return `法宝 ${equipmentCount} 件 · 强化石 ${formatLargeNumber(stones)}（挂机 ×${IDLE_ENHANCE_STONE_BAND_MULTIPLIER[band]}） · 装备影响战力与挂机效率`;
+}
+
+/**
+ * A compact page-level warning for the irreversible cost difference between
+ * enhancing before ascending and enhancing after ascending. It intentionally
+ * reports the maximum saving for each quality that is currently present, so
+ * the line remains useful when pieces on the page have different levels.
+ */
+export function getEquipmentEnhanceOrderHintText(
+  equipment: readonly BootstrapSnapshot["equipment"][number][],
+): string | null {
+  const savingsByQuality = new Map<string, number>();
+  for (const item of equipment) {
+    if (
+      !isAssetQuality(item.quality) ||
+      item.enhanceLevel >= EQUIPMENT_MAX_ENHANCE_LEVEL ||
+      !canAscendEquipmentQuality(item.quality)
+    ) {
+      continue;
+    }
+    const quality = item.quality as AssetQuality;
+    const savings = enhancementStoneSavingsToHighestQuality(
+      quality,
+      item.enhanceLevel,
+    );
+    const previous = savingsByQuality.get(quality) ?? 0;
+    if (savings > previous) savingsByQuality.set(quality, savings);
+  }
+
+  if (savingsByQuality.size === 0) return null;
+  // Map.forEach rather than spreading map.entries(): the Cocos build transpiles
+  // array spread to [].concat(...), which appends an iterator as a single
+  // element instead of expanding it, so the spread form renders "undefined" in
+  // the built game while passing here.
+  const clauses: string[] = [];
+  savingsByQuality.forEach((savings, quality) => {
+    clauses.push(
+      `${ASSET_QUALITY_DISPLAY_NAMES[quality as AssetQuality]}法宝先强化至 +${EQUIPMENT_MAX_ENHANCE_LEVEL} 再升华，单件最多可省 ${formatLargeNumber(String(savings))} 枚强化石`,
+    );
+  });
+  return `强化顺序提示：${clauses.join("；")}`;
+}
+
+function enhancementStoneSavingsToHighestQuality(
+  quality: AssetQuality,
+  currentLevel: number,
+): number {
+  let highestQuality = quality;
+  let nextQuality = nextAssetQuality(highestQuality);
+  while (nextQuality !== null) {
+    highestQuality = nextQuality;
+    nextQuality = nextAssetQuality(highestQuality);
+  }
+
+  let savings = 0;
+  for (
+    let targetLevel = currentLevel + 1;
+    targetLevel <= EQUIPMENT_MAX_ENHANCE_LEVEL;
+    targetLevel += 1
+  ) {
+    const sourceCost = equipmentEnhanceCost(quality, targetLevel - 1).enhanceStone;
+    const finalCost = equipmentEnhanceCost(highestQuality, targetLevel - 1).enhanceStone;
+    savings += finalCost - sourceCost;
+  }
+  return savings;
 }
 
 export function getEquipmentRerollDisplay(
