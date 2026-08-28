@@ -13,6 +13,7 @@ import {
   sourceFingerprint,
   validateBuildFacts,
 } from "./wechat-build-manifest.mjs";
+import { bundleHazardPatterns } from "./transpile-hazards.mjs";
 
 const workspace = process.cwd();
 const rawArgs = process.argv.slice(2);
@@ -44,20 +45,7 @@ const runtimeMarkers = [
   "cultivation-diary.local-save.v1",
   "LocalGameService",
 ];
-const forbiddenRuntimePatterns = [
-  {
-    pattern: /Math\.pow\(\s*\d+n\s*,\s*BigInt\(/,
-    reason: "Cocos-transpiled BigInt exponentiation",
-  },
-  {
-    // The Cocos build lowers array spread to [].concat(...), which appends an
-    // iterator as one element instead of expanding it. Spreading map.entries()
-    // therefore yields [Iterator], and every destructured field reads
-    // undefined — silently, and only in the built game. Use Map.forEach.
-    pattern: /\[\]\.concat\((?!Object\.)[A-Za-z_$][A-Za-z0-9_$.]*\.(?:entries|keys|values)\(\)/,
-    reason: "Cocos-transpiled spread of an iterator (use Map/Set forEach)",
-  },
-];
+const forbiddenRuntimePatterns = bundleHazardPatterns;
 const requiredEntries = [
   "game.js",
   "game.json",

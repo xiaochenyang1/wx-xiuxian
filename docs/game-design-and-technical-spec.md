@@ -557,7 +557,8 @@ Release 构建不创建调试根节点。调试能力仍走 `LocalGameService` �
 - `pnpm typecheck` 通过（含 `test/` 的独立 TypeScript 程序）。
 - `pnpm test` 通过。
 - `pnpm verify:release-config` 通过。
-- `pnpm verify:wechat` 拦截 Cocos 转译出的运行时陷阱：BigInt 幂运算，以及展开迭代器——`[...map.entries()]` 会被降级成 `[].concat(iterator)`，把迭代器当成单个元素塞进数组，解构出来全是 `undefined`，且只在构建产物里发生，单元测试看不见。集合遍历一律用 `Map`/`Set` 的 `forEach`。
+- `pnpm verify:source` 拦截 Cocos 转译陷阱的源码形态：`[...map.entries()]`、`[...new Set(list)]` 一类展开会被降级成 `[].concat(iterator)`，把迭代器当成单个元素塞进数组，解构出来全是 `undefined`，且只在构建产物里发生，源码和单元测试都看不见。集合遍历一律用 `Map`/`Set` 的 `forEach` 或 `Array.from`；`for...of` 走引擎的 `createForOfIteratorHelperLoose`，认 `Symbol.iterator`，是安全的。
+- `pnpm verify:web` 与 `pnpm verify:wechat` 再扫构建产物里的降级形态（含 BigInt 幂运算），兜住源码正则看不见的写法。规则本身连同两个已上线事故的样本在 `test/transpile-hazards.test.ts` 里有测试——只在构建后才跑的关卡进不了 CI，源码那道才是每次 push 都跑的。
 - 仓库中不存在 `server/`、数据库迁移和 Docker 配置。
 - 客户端源码中不存在 `fetch`、`wx.request`、API base URL、Token 或重连队列。
 

@@ -7,6 +7,7 @@ import {
   sha256,
   sourceFingerprint,
 } from "./wechat-build-manifest.mjs";
+import { bundleHazardPatterns } from "./transpile-hazards.mjs";
 
 const workspace = process.cwd();
 const WEB_BUILD_MANIFEST = "cultivation-diary-web-build.json";
@@ -64,6 +65,19 @@ const files = await javascriptFiles(directory);
 for (const file of files) {
   const checked = spawnSync(process.execPath, ["--check", file], { encoding: "utf8" });
   if (checked.status !== 0) throw new Error(`Web JavaScript syntax check failed: ${file}`);
+  // The same scan verify:wechat runs on its bundles. The web build is a
+  // different Cocos target through the same transpiler, so a hazard reaches the
+  // browser exactly as readily as it reaches WeChat — and this is the bundle the
+  // e2e suite plays, so catching it here names the cause instead of leaving a
+  // click test to fail on a label reading "undefined".
+  const bundleSource = await readFile(file, "utf8");
+  for (const { pattern, reason } of bundleHazardPatterns) {
+    if (pattern.test(bundleSource)) {
+      throw new Error(
+        `Web build contains unsupported runtime code: ${reason} (${path.relative(directory, file)})`,
+      );
+    }
+  }
 }
 const mainSource = await readFile(path.join(directory, "assets/main/index.js"), "utf8");
 for (const marker of ["GameBootstrap", "FIXED_WIDTH", "750", "1334", "LocalGameService"]) {
