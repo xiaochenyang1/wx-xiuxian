@@ -1,30 +1,61 @@
 import {
+  PARTNER_CONFIGS,
+  PARTNER_MAX_LEVEL,
+  type AutoSalvageQuality,
   type BootstrapSnapshot,
   type ChosenAvatarVariant,
   type DebugGrantTarget,
   type EquippedEquipmentSlot,
   type OfflineSettlementSummary,
+  type PartnerId,
+  type SectId,
 } from "@cultivation-diary/shared";
+import {
+  partnerProgressText,
+  selectedPartner,
+  socialBonusText,
+} from "../core/SocialDisplay";
+import {
+  countPendingProgressionTasks,
+  VISIBLE_PROGRESSION_TASK_COUNT,
+} from "../core/ProgressionTaskDisplay";
+import {
+  buildLocalRanking,
+  type RankingCategory,
+} from "../core/RankingDisplay";
 import {
   formatLargeNumber,
   interpolateBigNumberStrings,
-  ratioOfBigNumberStrings,
   sumBigNumberStrings,
 } from "../core/ClientNumber";
 import type {
   MainBackgroundArt,
   MainBackgroundKey,
+  SupplementalArt,
 } from "../core/AppArt";
 import {
   mergeCultivationPresentationPlans,
   type CultivationPresentationPlan,
 } from "../core/CultivationPresentation";
 import {
+  getFeatureMessageDisplay,
+  getMainFeatureMessageGeometry,
+  type FeatureMessageDisplay,
+} from "../core/FeatureMessageDisplay";
+import { getDaoDisplay } from "../core/DaoDisplay";
+import {
   advanceLiveCultivationElapsed,
   initialLiveCultivationElapsed,
   liveCultivationSettlementKey,
   projectLiveCultivation,
 } from "../core/CultivationProjection";
+import {
+  EMPTY_SOCIAL_CONFIRMATION_STATE,
+  getPartnerConfirmationDisplay,
+  getSectConfirmationDisplay,
+  reconcileSocialConfirmationState,
+  type SocialConfirmationState,
+} from "../core/SocialConfirmationDisplay";
 import {
   clampModalButtonCenterY,
   DEFAULT_DESIGN_SAFE_AREA_LAYOUT,
@@ -39,11 +70,14 @@ import type {
   FeaturePanel,
   MainTab,
 } from "../core/ClientTypes";
+import { canRunLocalMutation, shouldShowPartnerUnlockNotice } from "../core/ClientTypes";
 import {
-  canRunLocalMutation,
-  isUpcomingFeaturePanel,
-  shouldShowPartnerUnlockNotice,
-} from "../core/ClientTypes";
+  BOTTOM_FEATURE_RAIL,
+  CULTIVATION_SHORTCUTS,
+  HEADER_FEATURE,
+  MAIN_TABS,
+  type ShortcutBadge,
+} from "../core/AppNavigation";
 import { color, COLORS, withAlpha } from "./primitives/Colors";
 import {
   addLabel,
@@ -60,29 +94,46 @@ import {
 } from "./primitives/Draw";
 import { formatSignedPowerDelta } from "./primitives/Format";
 import {
+  createBottomFeatureButton,
+  createMainTabButton,
+  createSideFeatureButton,
+  drawContainedSprite,
+  formatDebugTimestamp,
+  formatDuration,
+  liveCultivationGainText,
+  parseDebugDropSeed,
+  presentationKindName,
+  ratio,
+  shortId,
+  snapshotMatchesPresentationSource,
+  snapshotMatchesPresentationTarget,
+} from "./AppViewHelpers";
+import {
   drawAvatarPortrait,
+  drawCultivatorFigure,
   drawCurrencyChip,
-  drawFeatureGlyph,
   drawGoldenFormation,
   drawMountainLayer,
   drawPowerBanner,
-  drawTabIcon,
   drawTribulationLightning,
 } from "./primitives/Scenery";
 import { drawEquipmentPanel } from "./panels/EquipmentPanel";
+import { drawExpeditionPanel } from "./panels/ExpeditionPanel";
 import { drawInventoryPanel } from "./panels/InventoryPanel";
 import {
   drawProfilePanel,
+  type ProfileBackupAction,
+  type ProfileBackupControls,
   type ProfileDraftState,
   type ProfileResetControls,
 } from "./panels/ProfilePanel";
 import { drawTaskPanel } from "./panels/TaskPanel";
 import { drawTechniquePanel } from "./panels/TechniquePanel";
-import {
-  drawUpcomingPanel,
-  UPCOMING_FEATURE_COPY,
-} from "./panels/UpcomingPanel";
+import { drawAlchemyPanel } from "./panels/AlchemyPanel";
+import { drawCraftingPanel } from "./panels/CraftingPanel";
+import { drawSectPanel } from "./panels/SectPanel";
 import { drawCavePanel } from "./panels/CavePanel";
+import { drawTrialTowerPanel } from "./panels/TrialTowerPanel";
 import {
   Button,
   BlockInputEvents,
@@ -100,25 +151,45 @@ import {
 } from "cc";
 import { DEBUG } from "cc/env";
 
-const MAX_DEBUG_DROP_SEED = 0xffff_ffff;
-
 type DebugLifecycleStatus = "foreground" | "background";
 
 export interface AppViewActions {
   retry(): void;
   resetProgress(): void;
+  exportProgressBackup(): void;
+  importProgressBackup(): void;
+  restoreImportRecovery(): void;
+  hasImportRecovery(): boolean;
   selectTab(tab: MainTab): void;
   openFeature(feature: FeaturePanel): void;
   closeFeature(): void;
   breakthrough(): void;
+  cultivateDao(times: number): void;
   chooseAvatar(avatarVariant: ChosenAvatarVariant): void;
   renamePlayer(displayName: string): void;
   markPartnerUnlockNoticeSeen(): void;
   expandInventory(): void;
   upgradeCaveBuilding(buildingConfigId: string): void;
+  challengeExpedition(stageConfigId: string): void;
+  sweepExpedition(stageConfigId: string): void;
+  challengeTrialTower(floor: number): void;
+  huntTreasure(): void;
+  brewAlchemy(recipeId: string): void;
+  brewAlchemyBatch(recipeId: string): void;
+  craftEquipment(recipeId: string): void;
+  craftEquipmentBatch(recipeId: string): void;
+  choosePartner(partnerId: string): void;
+  cultivateWithPartner(): void;
+  joinSect(sectId: string): void;
+  donateToSect(): void;
+  upgradeTechnique(techniqueConfigId: string): void;
   useInventoryItem(itemConfigId: string): void;
+  useAllInventoryItems(itemConfigId: string): void;
   transferHarvest(entryId: string): void;
+  collectAllHarvest(): void;
   salvageHarvest(entryId: string): void;
+  salvageLowQualityHarvest(): void;
+  toggleAutoSalvage(quality: AutoSalvageQuality): void;
   equipTechnique(techniqueConfigId: string): void;
   unequipTechnique(techniqueConfigId: string): void;
   equipEquipment(
@@ -126,6 +197,11 @@ export interface AppViewActions {
     equippedSlot: EquippedEquipmentSlot,
   ): void;
   unequipEquipment(equipmentInstanceId: string): void;
+  enhanceEquipment(equipmentInstanceId: string): void;
+  rerollEquipmentAffixes(equipmentInstanceId: string): void;
+  ascendEquipment(equipmentInstanceId: string): void;
+  toggleEquipmentLock(equipmentInstanceId: string): void;
+  salvageEquipment(equipmentInstanceId: string): void;
   dismissOfflineSettlement(): void;
   simulateOffline(seconds: number, dropSeed?: number): void;
   grantDebug(target: DebugGrantTarget): void;
@@ -202,6 +278,12 @@ export class AppView {
   private readonly safeAreaLayout: DesignSafeAreaLayout;
   private readonly chromeGeometry: AppChromeGeometry;
   private mainBackgroundArt: MainBackgroundArt = {};
+  private supplementalArt: SupplementalArt = {
+    cultivators: {},
+    playerAvatars: {},
+    mainNavigation: {},
+    featureNavigation: {},
+  };
   private destroyed = false;
   private mainPageRoot: Node | null = null;
   private idleLabel: Label | null = null;
@@ -232,10 +314,15 @@ export class AppView {
   private debugSaveResetArmed = false;
   private profileResetArmed = false;
   private profileResetPending = false;
+  private profileBackupArmed: ProfileBackupAction | null = null;
+  private profileBackupPending = false;
   private profilePlayerId: string | null = null;
   private profileAvatarDraft: ChosenAvatarVariant | null = null;
   private profileNameDraft: string | null = null;
   private profileNameSource: string | null = null;
+  private socialConfirmationState: SocialConfirmationState =
+    EMPTY_SOCIAL_CONFIRMATION_STATE;
+  private rankingCategory: RankingCategory = "power";
   private pendingPresentation: CultivationPresentationPlan | null = null;
   private activePresentation: CultivationPresentationPlan | null = null;
   private activePresentationTween: Tween<Node> | null = null;
@@ -271,6 +358,15 @@ export class AppView {
     arm: () => this.armProfileReset(),
     cancel: () => this.cancelProfileReset(),
     confirm: () => this.confirmProfileReset(),
+  };
+  private readonly profileBackupControls: ProfileBackupControls = {
+    armed: () => this.profileBackupArmed,
+    pending: () => this.profileBackupPending,
+    recoveryAvailable: () => this.actions.hasImportRecovery(),
+    copy: () => this.copyProfileBackup(),
+    arm: (action) => this.armProfileBackup(action),
+    cancel: () => this.cancelProfileBackup(),
+    confirm: () => this.confirmProfileBackup(),
   };
 
   constructor(
@@ -339,14 +435,29 @@ export class AppView {
 
   render(state: Readonly<AppState>): void {
     this.updateCultivationProjectionAnchor(state);
+    const previousState = this.lastState;
     const playerId = state.bootstrap?.player.id ?? null;
-    if (playerId !== this.profilePlayerId) {
+    const playerIdentityChanged = playerId !== this.profilePlayerId;
+    if (playerIdentityChanged) {
       this.interruptCultivationPresentation(true);
       this.clearPlayerUiState();
       this.profilePlayerId = playerId;
     }
     const selectedTabChanged =
-      this.lastState !== null && this.lastState.selectedTab !== state.selectedTab;
+      previousState !== null && previousState.selectedTab !== state.selectedTab;
+    const activeFeatureChanged =
+      previousState !== null && previousState.activeFeature !== state.activeFeature;
+    this.socialConfirmationState = reconcileSocialConfirmationState(
+      this.socialConfirmationState,
+      {
+        selectedTab: state.selectedTab,
+        activeFeature: state.activeFeature,
+        viewChanged:
+          playerIdentityChanged || selectedTabChanged || activeFeatureChanged,
+        partnerAlreadySelected: Boolean(state.bootstrap?.partner.partnerId),
+        sectAlreadySelected: Boolean(state.bootstrap?.sect.sectId),
+      },
+    );
     this.lastState = state;
     if (selectedTabChanged) this.interruptCultivationPresentation(true);
     if (
@@ -390,66 +501,66 @@ export class AppView {
       return;
     }
 
-    const usesCultivationReferenceSkin =
-      state.selectedTab === "cultivation" &&
-      this.hasMainBackground("cultivation");
-    this.drawMainPage(state);
-    if (!usesCultivationReferenceSkin) {
-      this.drawHeader(state);
-      this.drawNavigation(state.selectedTab);
-      this.drawBottomFeatureRail(
-        this.contentRoot,
-        this.chromeGeometry.centerX,
-        this.chromeGeometry.navigationCenterY,
-      );
-    }
+    const partnerUnlockNoticeOpen = shouldShowPartnerUnlockNotice(state);
+    const featureMessageDisplay = getFeatureMessageDisplay({
+      message: state.featureMessage,
+      selectedTab: state.selectedTab,
+      activeFeatureOpen: state.activeFeature !== null,
+      offlineSettlementOpen: state.bootstrap.offlineSettlement !== null,
+      partnerUnlockNoticeOpen,
+    });
+
+    this.drawMainPage(state, featureMessageDisplay);
+    this.drawHeader(state);
+    this.drawNavigation(state.selectedTab);
+    this.drawBottomFeatureRail(
+      this.contentRoot,
+      this.chromeGeometry.centerX,
+      this.chromeGeometry.navigationCenterY,
+    );
     this.drawSyncStatus(state);
     if (state.activeFeature) {
-      this.drawFeaturePanel(state, state.activeFeature);
+      this.drawFeaturePanel(state, state.activeFeature, featureMessageDisplay);
     }
     if (state.bootstrap.offlineSettlement) {
       this.drawOfflineSettlement(state.bootstrap.offlineSettlement);
     }
-    if (shouldShowPartnerUnlockNotice(state)) {
-      this.drawPartnerUnlockNotice(state);
+    if (partnerUnlockNoticeOpen) {
+      this.drawPartnerUnlockNotice(featureMessageDisplay);
     }
     this.tryStartCultivationPresentation();
     this.drawDebugPanel(state);
   }
 
-  private drawMainPage(state: Readonly<AppState>): void {
+  private drawMainPage(
+    state: Readonly<AppState>,
+    featureMessageDisplay: FeatureMessageDisplay | null,
+  ): void {
     const pageRoot = createUiNode(this.contentRoot, "MainPageRoot");
-    const usesCultivationReferenceSkin =
-      state.selectedTab === "cultivation" &&
-      this.hasMainBackground("cultivation");
     pageRoot.setPosition(
       this.chromeGeometry.centerX,
-      usesCultivationReferenceSkin ? 0 : this.chromeGeometry.bodyOffsetY,
+      this.chromeGeometry.bodyOffsetY,
     );
-    if (usesCultivationReferenceSkin) {
-      pageRoot.setScale(
-        1,
-        this.safeAreaLayout.viewportHeight / DESIGN_VIEWPORT_HEIGHT,
-        1,
-      );
-    }
     setSize(pageRoot, DESIGN_VIEWPORT_WIDTH, DESIGN_VIEWPORT_HEIGHT);
     this.mainPageRoot = pageRoot;
     try {
       this.drawMainBackground(state.selectedTab);
       switch (state.selectedTab) {
         case "cultivation":
-          this.drawCultivation(state);
+          this.drawCultivation(state, featureMessageDisplay);
           break;
         case "partner":
           this.drawPartner(state);
           break;
         case "ranking":
-          this.drawRanking();
+          this.drawRanking(state, featureMessageDisplay);
           break;
         case "cave":
           this.drawCave(state);
           break;
+      }
+      if (featureMessageDisplay?.surface === "main") {
+        this.drawMainFeatureMessage(featureMessageDisplay);
       }
     } finally {
       this.mainPageRoot = null;
@@ -511,10 +622,23 @@ export class AppView {
     if (this.lastState) this.render(this.lastState);
   }
 
+  setSupplementalArt(art: SupplementalArt): void {
+    if (this.destroyed || this.supplementalArt === art) return;
+    this.supplementalArt = art;
+    if (this.lastState) this.render(this.lastState);
+  }
+
   setResetInFlight(inFlight: boolean): void {
     if (this.profileResetPending === inFlight) return;
     this.profileResetPending = inFlight;
     if (inFlight) this.profileResetArmed = false;
+    if (this.lastState) this.render(this.lastState);
+  }
+
+  setBackupInFlight(inFlight: boolean): void {
+    if (this.profileBackupPending === inFlight) return;
+    this.profileBackupPending = inFlight;
+    if (inFlight) this.profileBackupArmed = null;
     if (this.lastState) this.render(this.lastState);
   }
 
@@ -1338,19 +1462,35 @@ export class AppView {
     avatarFrame.lineWidth = 3;
     avatarFrame.circle(0, 7, 52);
     avatarFrame.stroke();
-    drawAvatarPortrait(
-      avatarButton,
-      bootstrap.player.avatarVariant,
-      0,
-      7,
-      1.48,
-    );
+    const playerAvatarArt =
+      bootstrap.player.avatarVariant === "neutral"
+        ? undefined
+        : this.supplementalArt.playerAvatars[bootstrap.player.avatarVariant];
+    if (playerAvatarArt) {
+      drawContainedSprite(
+        avatarButton,
+        "PlayerAvatarArt",
+        playerAvatarArt,
+        0,
+        7,
+        88,
+        88,
+      );
+    } else {
+      drawAvatarPortrait(
+        avatarButton,
+        bootstrap.player.avatarVariant,
+        0,
+        7,
+        1.48,
+      );
+    }
     const avatarClick = avatarButton.addComponent(Button);
     avatarClick.transition = Button.Transition.SCALE;
     avatarClick.zoomScale = 0.95;
     avatarButton.on(Button.EventType.CLICK, () => {
       this.actions.feedback();
-      this.actions.openFeature("profile");
+      this.actions.openFeature(HEADER_FEATURE);
     });
     addLabel(
       avatarButton,
@@ -1428,18 +1568,10 @@ export class AppView {
     drawCurrencyChip(
       this.root,
       right - 72,
-      headerCenterY + 38,
+      headerCenterY + 7,
       "灵石",
       formatLargeNumber(bootstrap.wallet.spiritStone),
       COLORS.goldBright,
-    );
-    drawCurrencyChip(
-      this.root,
-      right - 72,
-      headerCenterY - 25,
-      "仙玉",
-      formatLargeNumber(bootstrap.wallet.immortalJade),
-      COLORS.cyan,
     );
 
     const divider = graphicsNode(
@@ -1482,23 +1614,79 @@ export class AppView {
     );
   }
 
-  private drawCultivation(state: Readonly<AppState>): void {
+  private drawMainFeatureMessage(
+    display: Extract<FeatureMessageDisplay, { readonly surface: "main" }>,
+  ): void {
+    const geometry = getMainFeatureMessageGeometry(display.tab);
+    drawBand(
+      this.root,
+      "MainFeatureMessage",
+      geometry.x,
+      geometry.y,
+      geometry.width,
+      geometry.height,
+      withAlpha(COLORS.inkGreenLight, 246),
+      COLORS.goldMuted,
+    );
+    addLabel(
+      this.root,
+      display.text,
+      geometry.x,
+      geometry.y,
+      geometry.labelWidth,
+      geometry.labelHeight,
+      display.tab === "cultivation" ? 15 : 16,
+      COLORS.goldBright,
+      true,
+      display.maxLines,
+      HorizontalTextAlignment.CENTER,
+      "fixed",
+    );
+  }
+
+  private drawCultivation(
+    state: Readonly<AppState>,
+    featureMessageDisplay: FeatureMessageDisplay | null,
+  ): void {
     const data = state.bootstrap!;
-    if (this.hasMainBackground("cultivation")) {
-      this.drawCultivationReferenceHotspots(state);
-      return;
-    }
+    const featureMessageOpen =
+      featureMessageDisplay?.surface === "main" &&
+      featureMessageDisplay.tab === "cultivation";
+    const hasBackground = this.hasMainBackground("cultivation");
     const mutationsEnabled = canRunLocalMutation(state);
     const projection = this.resolveCultivationProjection(state);
     const progressDisplay = getCultivationProgressDisplay(
       projection.progress,
       data.config.maxLevel,
     );
-    const pendingTasks = data.newcomerTasks.filter(
-      (task) => task.completedAt === null,
-    ).length;
+    // Built from the projected progress so the affordable count matches the
+    // reserve the line above it is currently showing.
+    const daoDisplay = getDaoDisplay({ ...data, progress: projection.progress });
+    const pendingTasks = countPendingProgressionTasks(
+      data.progressionTasks,
+      VISIBLE_PROGRESSION_TASK_COUNT,
+    );
     const pendingHarvest = data.harvestChest.pendingCount;
-    this.drawCultivationScene();
+    if (!hasBackground) this.drawCultivationScene();
+    if (hasBackground) {
+      const cultivatorArt =
+        data.player.avatarVariant === "neutral"
+          ? undefined
+          : this.supplementalArt.cultivators[data.player.avatarVariant];
+      if (cultivatorArt) {
+        drawContainedSprite(
+          this.root,
+          "CultivatorArt",
+          cultivatorArt,
+          0,
+          42,
+          520,
+          730,
+        );
+      } else {
+        drawCultivatorFigure(this.root, data.player.avatarVariant, 0, 54);
+      }
+    }
     drawOrnatePanel(this.root, "RealmBanner", 0, 452, 408, 78);
     addLabel(
       this.root,
@@ -1529,33 +1717,23 @@ export class AppView {
       "fixed",
     );
 
-    const sideActions: ReadonlyArray<{
-      readonly label: string;
-      readonly x: number;
-      readonly y: number;
-      readonly icon: number;
-      readonly badge: number;
-      readonly feature: FeaturePanel;
-    }> = [
-      { label: "仙途", x: -322, y: 360, icon: 4, badge: 0, feature: "profile" },
-      { label: "任务", x: -322, y: 255, icon: 3, badge: pendingTasks, feature: "tasks" },
-      { label: "行囊", x: -322, y: 150, icon: 2, badge: 0, feature: "inventory" },
-      { label: "功法", x: 322, y: 360, icon: 0, badge: 0, feature: "techniques" },
-      { label: "法宝", x: 322, y: 255, icon: 1, badge: 0, feature: "equipment" },
-      { label: "收获", x: 322, y: 150, icon: 5, badge: pendingHarvest, feature: "inventory" },
-    ];
-    for (const action of sideActions) {
+    const badgeCounts: Readonly<Record<ShortcutBadge, number>> = {
+      tasks: pendingTasks,
+      harvest: pendingHarvest,
+    };
+    for (const action of CULTIVATION_SHORTCUTS) {
       createSideFeatureButton(
         this.root,
         action.label,
         action.x,
         action.y,
         action.icon,
-        action.badge,
+        badgeCounts[action.badge],
         () => {
           this.actions.feedback();
           this.actions.openFeature(action.feature);
         },
+        this.supplementalArt.featureNavigation[action.feature],
       );
     }
 
@@ -1629,7 +1807,11 @@ export class AppView {
         progressDisplay.progressRatio ?? 0,
       );
     }
-    if (mutationsEnabled && data.progress.status !== "breakthrough_ready") {
+    if (
+      !featureMessageOpen &&
+      mutationsEnabled &&
+      data.progress.status !== "breakthrough_ready"
+    ) {
       this.cultivationGrowthLabel = addLabel(
         this.root,
         liveCultivationGainText(
@@ -1651,20 +1833,22 @@ export class AppView {
     this.lastCultivationProjectionSecond = projection.elapsedWholeSeconds;
     this.lastCultivationProjectionGain = projection.gainedSinceAnchor;
 
-    addLabel(
-      this.root,
-      `灵石收益  ${formatLargeNumber(data.progress.spiritStonePerMinute)}/分`,
-      0,
-      -205,
-      372,
-      30,
-      18,
-      COLORS.cyan,
-      true,
-      1,
-      HorizontalTextAlignment.CENTER,
-      "fixed",
-    );
+    if (!featureMessageOpen) {
+      addLabel(
+        this.root,
+        `灵石收益  ${formatLargeNumber(data.progress.spiritStonePerMinute)}/分`,
+        0,
+        -205,
+        372,
+        30,
+        18,
+        COLORS.cyan,
+        true,
+        1,
+        HorizontalTextAlignment.CENTER,
+        "fixed",
+      );
+    }
 
     if (data.progress.status === "breakthrough_ready") {
       createButton(
@@ -1682,6 +1866,85 @@ export class AppView {
           enabled: mutationsEnabled,
         },
         () => this.actions.breakthrough(),
+      );
+    } else if (daoDisplay.visible) {
+      // At the cap "修炼进行中" says nothing — the level cannot move again. The
+      // slot goes to 悟道 instead, the one place the reserve on the line above
+      // can be spent.
+      addLabel(
+        this.root,
+        daoDisplay.titleText,
+        0,
+        -248,
+        374,
+        26,
+        18,
+        COLORS.gold,
+        true,
+        1,
+        HorizontalTextAlignment.CENTER,
+        "fixed",
+      );
+      addLabel(
+        this.root,
+        daoDisplay.bonusText,
+        0,
+        -274,
+        374,
+        24,
+        14,
+        COLORS.green,
+        false,
+        1,
+        HorizontalTextAlignment.CENTER,
+        "fixed",
+      );
+      addLabel(
+        this.root,
+        daoDisplay.costText,
+        0,
+        -296,
+        374,
+        22,
+        13,
+        COLORS.textMuted,
+        false,
+        1,
+        HorizontalTextAlignment.CENTER,
+        "fixed",
+      );
+      const daoEnabled = mutationsEnabled && daoDisplay.actionEnabled;
+      createButton(
+        this.root,
+        daoDisplay.actionText,
+        -78,
+        -338,
+        148,
+        52,
+        {
+          fill: daoEnabled ? COLORS.goldMuted : COLORS.panel,
+          stroke: COLORS.gold,
+          text: daoEnabled ? COLORS.black : COLORS.textMuted,
+          fontSize: 22,
+          enabled: daoEnabled,
+        },
+        () => this.actions.cultivateDao(1),
+      );
+      createButton(
+        this.root,
+        daoDisplay.batchActionText,
+        78,
+        -338,
+        148,
+        52,
+        {
+          fill: COLORS.panel,
+          stroke: daoEnabled ? COLORS.gold : COLORS.goldMuted,
+          text: daoEnabled ? COLORS.gold : COLORS.textMuted,
+          fontSize: 18,
+          enabled: daoEnabled,
+        },
+        () => this.actions.cultivateDao(daoDisplay.affordableLevels),
       );
     } else {
       createButton(
@@ -1701,7 +1964,7 @@ export class AppView {
         () => undefined,
       );
     }
-    if (progressDisplay.footer) {
+    if (!featureMessageOpen && progressDisplay.footer) {
       this.cultivationFooterLabel = addLabel(
         this.root,
         progressDisplay.footer,
@@ -1717,113 +1980,6 @@ export class AppView {
         "fixed",
       );
     }
-
-    const featureY =
-      this.chromeGeometry.navigationCenterY -
-      this.chromeGeometry.bodyOffsetY +
-      140;
-    drawBand(
-      this.root,
-      "FeatureRail",
-      0,
-      featureY,
-      750,
-      106,
-      withAlpha(COLORS.panelStrong, 246),
-      COLORS.goldMuted,
-    );
-    const features: Array<{ label: string; feature: FeaturePanel }> = [
-      { label: "功法", feature: "techniques" },
-      { label: "法宝", feature: "equipment" },
-      { label: "行囊", feature: "inventory" },
-      { label: "任务", feature: "tasks" },
-      { label: "档案", feature: "profile" },
-    ];
-    features.forEach((item, index) => {
-      const x = -292 + index * 146;
-      createFeatureButton(this.root, item.label, x, featureY, index, () => {
-        this.actions.feedback();
-        this.actions.openFeature(item.feature);
-      });
-    });
-  }
-
-  private drawCultivationReferenceHotspots(
-    state: Readonly<AppState>,
-  ): void {
-    const openFeature = (feature: FeaturePanel): void => {
-      this.actions.feedback();
-      this.actions.openFeature(feature);
-    };
-
-    createHotspot(this.root, "ReferenceAvatar", -300, 591, 120, 150, () =>
-      openFeature("profile"),
-    );
-    createHotspot(this.root, "ReferencePower", 40, 572, 330, 76, () =>
-      openFeature("profile"),
-    );
-    createHotspot(this.root, "ReferenceBoost", 319, 573, 82, 92, () =>
-      openFeature("techniques"),
-    );
-
-    drawBand(
-      this.root,
-      "ReferenceRightRailMask",
-      319,
-      268,
-      112,
-      440,
-      COLORS.panelStrong,
-      COLORS.goldMuted,
-    );
-    drawBand(
-      this.root,
-      "ReferenceBottomNavigationMask",
-      0,
-      -520,
-      DESIGN_VIEWPORT_WIDTH,
-      294,
-      COLORS.panelStrong,
-      COLORS.goldMuted,
-    );
-
-    const sideHotspots: ReadonlyArray<{
-      readonly name: string;
-      readonly x: number;
-      readonly y: number;
-      readonly feature: FeaturePanel;
-    }> = [
-      { name: "Journey", x: -315, y: 431, feature: "profile" },
-      { name: "Tasks", x: -315, y: 329, feature: "tasks" },
-      { name: "Achievements", x: -315, y: 226, feature: "profile" },
-      { name: "Mail", x: -315, y: 123, feature: "tasks" },
-    ];
-    for (const hotspot of sideHotspots) {
-      createHotspot(
-        this.root,
-        `Reference${hotspot.name}`,
-        hotspot.x,
-        hotspot.y,
-        98,
-        98,
-        () => openFeature(hotspot.feature),
-      );
-    }
-
-    createHotspot(this.root, "ReferenceAutoCultivation", -306, -302, 126, 130, () =>
-      openFeature("profile"),
-    );
-    createHotspot(this.root, "ReferenceOnlineReward", 306, -302, 126, 130, () =>
-      openFeature("inventory"),
-    );
-    createHotspot(this.root, "ReferenceBreakthrough", 0, -307, 282, 88, () => {
-      if (!canRunLocalMutation(state)) return;
-      this.actions.feedback();
-      this.actions.breakthrough();
-    });
-
-    this.drawRightNavigation(this.root, state.selectedTab, 319, 430);
-    this.drawBottomFeatureRail(this.root, 0, -580);
   }
 
   private updateCultivationProjectionAnchor(
@@ -2059,27 +2215,165 @@ export class AppView {
       return;
     }
 
+    const snapshot = state.bootstrap!;
+    const partner = selectedPartner(snapshot);
+    const confirmation = getPartnerConfirmationDisplay(
+      this.socialConfirmationState.partnerId,
+    );
     drawBand(
       this.root,
-      "PartnerEmpty",
+      "PartnerPanel",
       -56,
       130,
       566,
-      690,
+      720,
       this.hasMainBackground("partner")
         ? withAlpha(COLORS.inkGreen, 150)
         : COLORS.inkGreen,
     );
-    addLabel(this.root, "小师妹", -56, 245, 500, 58, 35, COLORS.gold, true);
-    addLabel(this.root, "亲密度 0 / 1000", -56, 145, 450, 40, 20, COLORS.text);
-    drawProgress(this.root, -56, 105, 430, 14, 0);
-    addLabel(this.root, "初识", -56, 45, 280, 40, 22, COLORS.jade);
+    if (!partner) {
+      if (confirmation) {
+        this.drawPartnerConfirmation(confirmation);
+        return;
+      }
+      addLabel(this.root, "选择道侣", -56, 410, 500, 50, 30, COLORS.gold, true);
+      addLabel(this.root, "结缘后不可更换，请确认你的修行方向", -56, 355, 500, 34, 17, COLORS.textMuted);
+      PARTNER_CONFIGS.forEach((candidate, index) => {
+        const y = 230 - index * 145;
+        drawBand(this.root, `PartnerCandidate-${candidate.id}`, -56, y, 500, 112, COLORS.panel, COLORS.goldMuted);
+        addLabel(this.root, candidate.displayName, -238, y + 27, 180, 32, 20, COLORS.gold, true);
+        addLabel(this.root, `${candidate.epithet}　${socialBonusText(candidate, 1)}`, -48, y + 27, 270, 30, 15, COLORS.jade);
+        createButton(
+          this.root,
+          "结缘",
+          186,
+          y,
+          88,
+          44,
+          { fill: COLORS.inkGreen, stroke: COLORS.goldMuted, fontSize: 15 },
+          () => this.beginPartnerConfirmation(candidate.id),
+        );
+      });
+      return;
+    }
+    addLabel(this.root, partner.displayName, -56, 370, 500, 54, 32, COLORS.gold, true);
+    addLabel(this.root, partner.epithet, -56, 322, 500, 32, 18, COLORS.text);
+    addLabel(
+      this.root,
+      `亲密等级 Lv.${snapshot.partner.level}　${socialBonusText(partner, snapshot.partner.level)}`,
+      -56,
+      260,
+      500,
+      34,
+      18,
+      COLORS.jade,
+    );
+    addLabel(this.root, partnerProgressText(snapshot), -56, 205, 500, 34, 18, COLORS.textMuted);
+    drawProgress(
+      this.root,
+      -56,
+      160,
+      430,
+      14,
+      snapshot.partner.level >= PARTNER_MAX_LEVEL
+        ? 1
+        : snapshot.partner.bond / ((snapshot.partner.level + 1) * 100),
+    );
+    createButton(
+      this.root,
+      snapshot.partner.level >= PARTNER_MAX_LEVEL ? "已圆满" : "双修",
+      -56,
+      75,
+      170,
+      58,
+      {
+        fill: COLORS.inkGreen,
+        stroke: COLORS.gold,
+        text: COLORS.gold,
+        fontSize: 19,
+        enabled: snapshot.partner.level < PARTNER_MAX_LEVEL,
+      },
+      () => this.actions.cultivateWithPartner(),
+    );
+    addLabel(
+      this.root,
+      `双修丹 ${snapshot.inventory.stacks.find((stack) => stack.itemConfigId === "dual_cultivation_pill")?.quantity ?? "0"}`,
+      -56,
+      15,
+      300,
+      32,
+      16,
+      COLORS.textMuted,
+    );
   }
 
-  private drawRanking(): void {
+  private drawPartnerConfirmation(
+    confirmation: NonNullable<
+      ReturnType<typeof getPartnerConfirmationDisplay>
+    >,
+  ): void {
+    addLabel(
+      this.root,
+      confirmation.title,
+      -56,
+      400,
+      500,
+      50,
+      29,
+      COLORS.gold,
+      true,
+    );
+    addLabel(
+      this.root,
+      confirmation.displayName,
+      -56,
+      298,
+      500,
+      54,
+      34,
+      COLORS.text,
+      true,
+    );
+    addLabel(this.root, confirmation.detailText, -56, 246, 500, 34, 18, COLORS.textMuted);
+    addLabel(this.root, confirmation.bonusText, -56, 174, 500, 40, 20, COLORS.jade, true);
+    addLabel(this.root, confirmation.irreversibleText, -56, 96, 500, 38, 19, COLORS.gold, true);
+    addLabel(this.root, confirmation.persistenceText, -56, 56, 500, 30, 15, COLORS.textMuted);
+    createButton(
+      this.root,
+      confirmation.cancelLabel,
+      -161,
+      -22,
+      190,
+      58,
+      { fill: COLORS.panel, stroke: COLORS.goldMuted, fontSize: 18 },
+      () => this.cancelSocialConfirmation(),
+    );
+    createButton(
+      this.root,
+      confirmation.confirmLabel,
+      49,
+      -22,
+      190,
+      58,
+      { fill: COLORS.red, stroke: COLORS.gold, fontSize: 18 },
+      () => this.confirmPartnerSelection(),
+    );
+  }
+
+  private drawRanking(
+    state: Readonly<AppState>,
+    featureMessageDisplay: FeatureMessageDisplay | null,
+  ): void {
     const hasBackground = this.hasMainBackground("ranking");
-    const tabs = ["战力", "等级", "财富", "洞府", "伴侣"];
-    tabs.forEach((tab, index) => {
+    const tabEntries: ReadonlyArray<{ label: string; category: RankingCategory }> = [
+      { label: "战力", category: "power" },
+      { label: "等级", category: "level" },
+      { label: "财富", category: "wealth" },
+      { label: "洞府", category: "cave" },
+      { label: "伴侣", category: "partner" },
+    ];
+    const entries = buildLocalRanking(state.bootstrap!, this.rankingCategory);
+    tabEntries.forEach((tab, index) => {
       const x = -280 + index * 112;
       drawBand(
         this.root,
@@ -2089,11 +2383,15 @@ export class AppView {
         102,
         54,
         hasBackground
-          ? withAlpha(index === 0 ? COLORS.inkGreenLight : COLORS.panel, 224)
-          : index === 0 ? COLORS.inkGreenLight : COLORS.panel,
-        index === 0 ? COLORS.gold : undefined,
+          ? withAlpha(tab.category === this.rankingCategory ? COLORS.inkGreenLight : COLORS.panel, 224)
+          : tab.category === this.rankingCategory ? COLORS.inkGreenLight : COLORS.panel,
+        tab.category === this.rankingCategory ? COLORS.gold : undefined,
       );
-      addLabel(this.root, tab, x, 474, 94, 34, 17, index === 0 ? COLORS.gold : COLORS.textMuted);
+      addLabel(this.root, tab.label, x, 474, 94, 34, 17, tab.category === this.rankingCategory ? COLORS.gold : COLORS.textMuted);
+      createButton(this.root, "", x, 474, 102, 54, { fill: withAlpha(COLORS.black, 0), stroke: withAlpha(COLORS.black, 0), fontSize: 1 }, () => {
+        this.rankingCategory = tab.category;
+        if (this.lastState) this.render(this.lastState);
+      });
     });
 
     drawBand(
@@ -2105,11 +2403,17 @@ export class AppView {
       650,
       hasBackground ? withAlpha(COLORS.panel, 208) : COLORS.panel,
     );
-    [1, 2, 3, 4, 5].forEach((rank, index) => {
-      const y = 355 - index * 105;
+    // All six rows, not the top five: with the benchmarks recalibrated the
+    // player sits mid-board for most of the run and last on a new save, and
+    // last was exactly the row the slice used to cut — "我的排名 6 / 6" with
+    // nobody by that name in the list. y=360 down to −140 with the separator
+    // at −188 all stay inside this band's −225…425.
+    entries.forEach((entry, index) => {
+      const rank = index + 1;
+      const y = 360 - index * 100;
       addLabel(this.root, String(rank), -285, y, 62, 38, 21, rank <= 3 ? COLORS.gold : COLORS.text);
-      addLabel(this.root, "暂无道友", -110, y, 240, 38, 20, COLORS.textMuted);
-      addLabel(this.root, "--", 180, y, 100, 38, 20, COLORS.textMuted);
+      addLabel(this.root, entry.displayName, -110, y, 240, 38, 20, entry.player ? COLORS.gold : COLORS.text);
+      addLabel(this.root, formatLargeNumber(entry.value), 180, y, 120, 38, 19, entry.player ? COLORS.jade : COLORS.textMuted);
       const line = graphicsNode(this.root, `RankLine${rank}`, -56, y - 48);
       line.strokeColor = color("#2b3c46");
       line.lineWidth = 1;
@@ -2127,8 +2431,15 @@ export class AppView {
       hasBackground ? withAlpha(COLORS.inkGreenLight, 228) : COLORS.inkGreenLight,
       COLORS.goldMuted,
     );
+    const playerRank = entries.findIndex((entry) => entry.player) + 1;
     addLabel(this.root, "我的排名", -220, -275, 180, 40, 20, COLORS.text);
-    addLabel(this.root, "--", 180, -275, 100, 40, 22, COLORS.gold, true);
+    addLabel(this.root, `${playerRank} / ${entries.length}`, 150, -275, 150, 40, 20, COLORS.gold, true);
+    if (
+      featureMessageDisplay?.surface !== "main" ||
+      featureMessageDisplay.tab !== "ranking"
+    ) {
+      addLabel(this.root, "本地试炼榜 · 标杆是按等级与装备换算的虚构修士，玩家数据来自本地存档", 0, -350, 580, 32, 14, COLORS.textMuted);
+    }
   }
 
   private drawCave(state: Readonly<AppState>): void {
@@ -2216,12 +2527,6 @@ export class AppView {
     x: number,
     topY: number,
   ): void {
-    const items: ReadonlyArray<{ readonly id: MainTab; readonly label: string }> = [
-      { id: "cultivation", label: "修炼" },
-      { id: "partner", label: "伴侣" },
-      { id: "ranking", label: "排行" },
-      { id: "cave", label: "洞府" },
-    ];
     drawBand(
       parent,
       "RightNavigation",
@@ -2232,7 +2537,7 @@ export class AppView {
       COLORS.panelStrong,
       COLORS.goldMuted,
     );
-    items.forEach((item, index) => {
+    MAIN_TABS.forEach((item, index) => {
       createMainTabButton(
         parent,
         item.id,
@@ -2244,6 +2549,7 @@ export class AppView {
           this.actions.feedback();
           this.actions.selectTab(item.id);
         },
+        this.supplementalArt.mainNavigation[item.id],
       );
     });
   }
@@ -2263,20 +2569,7 @@ export class AppView {
       COLORS.panelStrong,
       COLORS.goldMuted,
     );
-    const features: ReadonlyArray<{
-      readonly label: string;
-      readonly feature: FeaturePanel;
-    }> = [
-      { label: "功法", feature: "techniques" },
-      { label: "法宝", feature: "equipment" },
-      { label: "炼丹", feature: "alchemy" },
-      { label: "炼器", feature: "crafting" },
-      // 灵宠是法宝的一个槽位（月影灵狐），直接开到法宝面板。
-      { label: "灵宠", feature: "equipment" },
-      { label: "宗门", feature: "sect" },
-      { label: "历练", feature: "expedition" },
-    ];
-    features.forEach((item, index) => {
+    BOTTOM_FEATURE_RAIL.forEach((item, index) => {
       createBottomFeatureButton(
         parent,
         item.label,
@@ -2287,7 +2580,7 @@ export class AppView {
           this.actions.feedback();
           this.actions.openFeature(item.feature);
         },
-        isUpcomingFeaturePanel(item.feature),
+        this.supplementalArt.featureNavigation[item.feature],
       );
     });
   }
@@ -2295,6 +2588,7 @@ export class AppView {
   private drawFeaturePanel(
     state: Readonly<AppState>,
     feature: FeaturePanel,
+    featureMessageDisplay: FeatureMessageDisplay | null,
   ): void {
     const overlay = createUiNode(this.root, `FeaturePanel-${feature}`);
     this.setFullscreenSize(overlay);
@@ -2307,15 +2601,18 @@ export class AppView {
     shade.fill();
 
     drawBand(overlay, "FeaturePanelBody", 0, 0, 700, 1060, COLORS.panelStrong, COLORS.goldMuted);
-    const title = isUpcomingFeaturePanel(feature)
-      ? UPCOMING_FEATURE_COPY[feature].title
-      : {
-          profile: "个人档案",
-          techniques: "功法库",
-          equipment: "法宝",
-          inventory: "行囊与挂机收获",
-          tasks: "修行任务",
-        }[feature];
+    const title = {
+      profile: "个人档案",
+      techniques: "功法库",
+      equipment: "法宝",
+      inventory: "行囊与挂机收获",
+      tasks: "修行任务",
+      alchemy: "炼丹房",
+      crafting: "炼器室",
+      sect: "宗门",
+      expedition: "历练",
+      trialTower: "试炼塔",
+    }[feature];
     addLabel(overlay, title, 0, 466, 420, 54, 31, COLORS.gold, true);
     createButton(
       overlay,
@@ -2337,6 +2634,7 @@ export class AppView {
         state,
         this.actions,
         this.profileDrafts,
+        this.profileBackupControls,
         this.profileResetControls,
       );
     if (feature === "inventory")
@@ -2346,25 +2644,45 @@ export class AppView {
     if (feature === "equipment")
       drawEquipmentPanel(overlay, state, this.actions, this.panelPaging);
     if (feature === "tasks") drawTaskPanel(overlay, state);
-    if (isUpcomingFeaturePanel(feature)) drawUpcomingPanel(overlay, feature);
+    if (feature === "alchemy") drawAlchemyPanel(overlay, state, this.actions);
+    if (feature === "crafting") drawCraftingPanel(overlay, state, this.actions);
+    if (feature === "sect") {
+      drawSectPanel(overlay, state, this.actions, {
+        display: getSectConfirmationDisplay(
+          this.socialConfirmationState.sectId,
+        ),
+        begin: (sectId) => this.beginSectConfirmation(sectId),
+        cancel: () => this.cancelSocialConfirmation(),
+        confirm: () => this.confirmSectSelection(),
+      });
+    }
+    if (feature === "expedition")
+      drawExpeditionPanel(overlay, state, this.actions);
+    if (feature === "trialTower")
+      drawTrialTowerPanel(overlay, state, this.actions);
 
-    if (state.featureMessage) {
-      drawBand(overlay, "FeatureMessage", 0, -473, 620, 54, COLORS.inkGreenLight);
+    if (featureMessageDisplay?.surface === "feature-panel") {
+      drawBand(overlay, "FeatureMessage", 0, -473, 620, 68, COLORS.inkGreenLight);
       addLabel(
         overlay,
-        state.featureMessage,
+        featureMessageDisplay.text,
         0,
         -473,
         590,
-        38,
-        17,
+        52,
+        16,
         COLORS.gold,
+        false,
+        featureMessageDisplay.maxLines,
+        HorizontalTextAlignment.CENTER,
+        "fixed",
       );
     }
   }
 
   private armProfileReset(): void {
     this.actions.feedback();
+    this.profileBackupArmed = null;
     this.profileResetArmed = true;
     if (this.lastState) this.render(this.lastState);
   }
@@ -2381,6 +2699,32 @@ export class AppView {
     this.actions.resetProgress();
   }
 
+  private copyProfileBackup(): void {
+    this.actions.feedback();
+    this.actions.exportProgressBackup();
+  }
+
+  private armProfileBackup(action: ProfileBackupAction): void {
+    this.actions.feedback();
+    this.profileResetArmed = false;
+    this.profileBackupArmed = action;
+    if (this.lastState) this.render(this.lastState);
+  }
+
+  private cancelProfileBackup(): void {
+    this.actions.feedback();
+    this.profileBackupArmed = null;
+    if (this.lastState) this.render(this.lastState);
+  }
+
+  private confirmProfileBackup(): void {
+    const action = this.profileBackupArmed;
+    this.profileBackupArmed = null;
+    this.actions.feedback();
+    if (action === "import") this.actions.importProgressBackup();
+    if (action === "recovery") this.actions.restoreImportRecovery();
+  }
+
   private selectAvatarDraft(avatarVariant: ChosenAvatarVariant): void {
     this.actions.feedback();
     this.profileAvatarDraft = avatarVariant;
@@ -2392,16 +2736,54 @@ export class AppView {
     this.profileNameDraft = null;
     this.profileNameSource = null;
     this.profileResetArmed = false;
+    this.profileBackupArmed = null;
+  }
+
+  private beginPartnerConfirmation(partnerId: PartnerId): void {
+    this.actions.feedback();
+    this.socialConfirmationState = { partnerId, sectId: null };
+    if (this.lastState) this.render(this.lastState);
+  }
+
+  private beginSectConfirmation(sectId: SectId): void {
+    this.actions.feedback();
+    this.socialConfirmationState = { partnerId: null, sectId };
+    if (this.lastState) this.render(this.lastState);
+  }
+
+  private cancelSocialConfirmation(): void {
+    this.actions.feedback();
+    this.socialConfirmationState = EMPTY_SOCIAL_CONFIRMATION_STATE;
+    if (this.lastState) this.render(this.lastState);
+  }
+
+  private confirmPartnerSelection(): void {
+    const partnerId = this.socialConfirmationState.partnerId;
+    if (partnerId === null) return;
+    this.socialConfirmationState = EMPTY_SOCIAL_CONFIRMATION_STATE;
+    this.actions.feedback();
+    this.actions.choosePartner(partnerId);
+  }
+
+  private confirmSectSelection(): void {
+    const sectId = this.socialConfirmationState.sectId;
+    if (sectId === null) return;
+    this.socialConfirmationState = EMPTY_SOCIAL_CONFIRMATION_STATE;
+    this.actions.feedback();
+    this.actions.joinSect(sectId);
   }
 
   private clearPlayerUiState(): void {
     this.clearProfileDraft();
+    this.socialConfirmationState = EMPTY_SOCIAL_CONFIRMATION_STATE;
     this.profileResetPending = false;
+    this.profileBackupPending = false;
     this.debugSaveResetArmed = false;
     this.pages.inventoryStacks = 0;
     this.pages.harvestChest = 0;
     this.pages.techniques = 0;
     this.pages.equipment = 0;
+    this.rankingCategory = "power";
   }
 
   private drawOfflineSettlement(settlement: OfflineSettlementSummary): void {
@@ -2511,7 +2893,9 @@ export class AppView {
     );
   }
 
-  private drawPartnerUnlockNotice(state: Readonly<AppState>): void {
+  private drawPartnerUnlockNotice(
+    featureMessageDisplay: FeatureMessageDisplay | null,
+  ): void {
     const overlay = createUiNode(this.root, "PartnerUnlockNoticeModal");
     this.setFullscreenSize(overlay);
     overlay.addComponent(BlockInputEvents);
@@ -2556,16 +2940,20 @@ export class AppView {
       COLORS.goldMuted,
     );
     addLabel(overlay, "伴侣入口已开启", 0, 18, 420, 38, 20, COLORS.jade, true);
-    if (state.featureMessage) {
+    if (featureMessageDisplay?.surface === "partner-unlock") {
       addLabel(
         overlay,
-        state.featureMessage,
+        featureMessageDisplay.text,
         0,
         -62,
         500,
         34,
         16,
         COLORS.textMuted,
+        false,
+        featureMessageDisplay.maxLines,
+        HorizontalTextAlignment.CENTER,
+        "fixed",
       );
     }
     createButton(
@@ -2579,304 +2967,4 @@ export class AppView {
       () => this.actions.markPartnerUnlockNoticeSeen(),
     );
   }
-}
-
-function snapshotMatchesPresentationTarget(
-  state: Readonly<AppState>,
-  plan: CultivationPresentationPlan,
-): boolean {
-  const bootstrap = state.bootstrap;
-  return (
-    bootstrap !== null &&
-    bootstrap.account.id === plan.accountId &&
-    bootstrap.player.id === plan.playerId &&
-    bootstrap.progress.level === plan.toLevel &&
-    bootstrap.progress.realmName === plan.toRealmName &&
-    bootstrap.progress.totalPower === plan.toPower
-  );
-}
-
-function snapshotMatchesPresentationSource(
-  state: Readonly<AppState>,
-  plan: CultivationPresentationPlan,
-): boolean {
-  const bootstrap = state.bootstrap;
-  return (
-    bootstrap !== null &&
-    bootstrap.account.id === plan.accountId &&
-    bootstrap.player.id === plan.playerId &&
-    bootstrap.progress.level === plan.fromLevel &&
-    bootstrap.progress.realmName === plan.fromRealmName &&
-    bootstrap.progress.totalPower === plan.fromPower
-  );
-}
-
-function parseDebugDropSeed(value: string): number | null {
-  if (!/^\d{1,10}$/.test(value)) return null;
-  const seed = Number(value);
-  return Number.isSafeInteger(seed) && seed <= MAX_DEBUG_DROP_SEED ? seed : null;
-}
-
-function formatDebugTimestamp(value: string | null): string {
-  if (!value) return "尚未保存";
-  const timestamp = Date.parse(value);
-  if (!Number.isFinite(timestamp)) return "时间未知";
-  return value.replace("T", " ").replace(/\.\d{3}Z$/, "Z");
-}
-
-function shortId(value: string): string {
-  return value.length > 12 ? `${value.slice(0, 6)}...${value.slice(-4)}` : value;
-}
-
-function presentationKindName(kind: CultivationPresentationPlan["kind"]): string {
-  if (kind === "level_up") return "升级";
-  if (kind === "breakthrough") return "突破";
-  return "战力";
-}
-
-function createFeatureButton(
-  parent: Node,
-  text: string,
-  x: number,
-  y: number,
-  iconIndex: number,
-  onClick: () => void,
-): void {
-  const node = createUiNode(parent, `Feature-${text}`);
-  node.setPosition(x, y);
-  setSize(node, 138, 100);
-  const background = node.addComponent(Graphics);
-  background.fillColor = withAlpha(COLORS.panel, 238);
-  background.roundRect(-67, -48, 134, 96, 5);
-  background.fill();
-  background.strokeColor = COLORS.goldMuted;
-  background.lineWidth = 1;
-  background.roundRect(-67, -48, 134, 96, 5);
-  background.stroke();
-  const button = node.addComponent(Button);
-  button.transition = Button.Transition.SCALE;
-  button.zoomScale = 0.95;
-  node.on(Button.EventType.CLICK, onClick);
-
-  const medallion = graphicsNode(node, "FeatureMedallion", 0, 17);
-  medallion.fillColor = COLORS.black;
-  medallion.circle(0, 0, 27);
-  medallion.fill();
-  medallion.strokeColor = iconIndex % 2 === 0 ? COLORS.gold : COLORS.cyan;
-  medallion.lineWidth = 2;
-  medallion.circle(0, 0, 27);
-  medallion.stroke();
-  drawFeatureGlyph(medallion, iconIndex, 0.76);
-  addLabel(
-    node,
-    text,
-    0,
-    -31,
-    116,
-    30,
-    18,
-    COLORS.text,
-    true,
-    1,
-    HorizontalTextAlignment.CENTER,
-    "fixed",
-  );
-}
-
-function createHotspot(
-  parent: Node,
-  name: string,
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-  onClick: () => void,
-): Node {
-  const node = createUiNode(parent, name);
-  node.setPosition(x, y);
-  setSize(node, width, height);
-  const button = node.addComponent(Button);
-  button.transition = Button.Transition.NONE;
-  node.on(Button.EventType.CLICK, onClick);
-  return node;
-}
-
-function createMainTabButton(
-  parent: Node,
-  tab: MainTab,
-  text: string,
-  x: number,
-  y: number,
-  selected: boolean,
-  onClick: () => void,
-): void {
-  const node = createUiNode(parent, `RightTab-${tab}`);
-  node.setPosition(x, y);
-  setSize(node, 104, 102);
-  const plate = node.addComponent(Graphics);
-  plate.fillColor = selected ? COLORS.goldMuted : COLORS.panel;
-  plate.roundRect(-50, -49, 100, 98, 6);
-  plate.fill();
-  plate.strokeColor = selected ? COLORS.goldBright : COLORS.goldMuted;
-  plate.lineWidth = selected ? 2 : 1;
-  plate.roundRect(-50, -49, 100, 98, 6);
-  plate.stroke();
-  const button = node.addComponent(Button);
-  button.transition = Button.Transition.SCALE;
-  button.zoomScale = 0.93;
-  node.on(Button.EventType.CLICK, onClick);
-
-  const icon = drawTabIcon(node, tab, selected);
-  icon.node.setPosition(0, 17);
-  icon.node.setScale(0.78, 0.78, 1);
-  addLabel(
-    node,
-    text,
-    0,
-    -31,
-    90,
-    26,
-    18,
-    selected ? COLORS.goldBright : COLORS.text,
-    true,
-    1,
-    HorizontalTextAlignment.CENTER,
-    "fixed",
-  );
-}
-
-function createBottomFeatureButton(
-  parent: Node,
-  text: string,
-  x: number,
-  y: number,
-  iconIndex: number,
-  onClick: () => void,
-  upcoming = false,
-): void {
-  const node = createUiNode(parent, `BottomFeature-${text}`);
-  node.setPosition(x, y);
-  setSize(node, 104, 166);
-  const plate = node.addComponent(Graphics);
-  plate.fillColor = COLORS.panel;
-  plate.roundRect(-50, -79, 100, 158, 5);
-  plate.fill();
-  plate.strokeColor = upcoming ? withAlpha(COLORS.goldMuted, 110) : COLORS.goldMuted;
-  plate.lineWidth = 1;
-  plate.roundRect(-50, -79, 100, 158, 5);
-  plate.stroke();
-  const button = node.addComponent(Button);
-  button.transition = Button.Transition.SCALE;
-  button.zoomScale = 0.94;
-  node.on(Button.EventType.CLICK, onClick);
-
-  const medallion = graphicsNode(node, "BottomFeatureMedallion", 0, 27);
-  medallion.fillColor = COLORS.black;
-  medallion.circle(0, 0, 34);
-  medallion.fill();
-  const accent = iconIndex % 2 === 0 ? COLORS.gold : COLORS.cyan;
-  medallion.strokeColor = upcoming ? withAlpha(accent, 110) : accent;
-  medallion.lineWidth = 2;
-  medallion.circle(0, 0, 34);
-  medallion.stroke();
-  drawFeatureGlyph(medallion, iconIndex, 0.82);
-  addLabel(
-    node,
-    text,
-    0,
-    -43,
-    92,
-    32,
-    19,
-    upcoming ? COLORS.textMuted : COLORS.text,
-    true,
-    1,
-    HorizontalTextAlignment.CENTER,
-    "fixed",
-  );
-}
-
-function createSideFeatureButton(
-  parent: Node,
-  text: string,
-  x: number,
-  y: number,
-  iconIndex: number,
-  badge: number,
-  onClick: () => void,
-): void {
-  const node = createUiNode(parent, `SideFeature-${text}`);
-  node.setPosition(x, y);
-  setSize(node, 86, 96);
-  const plate = node.addComponent(Graphics);
-  plate.fillColor = withAlpha(COLORS.panelStrong, 246);
-  plate.circle(0, 12, 35);
-  plate.fill();
-  plate.strokeColor = COLORS.goldMuted;
-  plate.lineWidth = 2;
-  plate.circle(0, 12, 37);
-  plate.stroke();
-  const button = node.addComponent(Button);
-  button.transition = Button.Transition.SCALE;
-  button.zoomScale = 0.92;
-  node.on(Button.EventType.CLICK, onClick);
-  const glyph = graphicsNode(node, "SideFeatureGlyph", 0, 14);
-  drawFeatureGlyph(glyph, iconIndex, 0.95);
-  addLabel(
-    node,
-    text,
-    0,
-    -34,
-    84,
-    28,
-    17,
-    COLORS.goldBright,
-    true,
-    1,
-    HorizontalTextAlignment.CENTER,
-    "fixed",
-  );
-  if (badge > 0) {
-    const marker = graphicsNode(node, "Badge", 29, 39);
-    marker.fillColor = COLORS.red;
-    marker.circle(0, 0, 11);
-    marker.fill();
-    marker.strokeColor = COLORS.goldBright;
-    marker.lineWidth = 1;
-    marker.circle(0, 0, 11);
-    marker.stroke();
-    addLabel(
-      node,
-      badge > 9 ? "9+" : String(badge),
-      29,
-      39,
-      22,
-      20,
-      11,
-      COLORS.text,
-      true,
-      1,
-      HorizontalTextAlignment.CENTER,
-      "fixed",
-    );
-  }
-}
-
-function liveCultivationGainText(
-  status: BootstrapSnapshot["progress"]["status"],
-  gainedSinceAnchor: string,
-): string {
-  return `${status === "version_cap" ? "本轮积蓄" : "本轮修炼"} +${formatLargeNumber(gainedSinceAnchor)}`;
-}
-
-function ratio(value: string, total: string): number {
-  return ratioOfBigNumberStrings(value, total);
-}
-
-function formatDuration(totalSeconds: number): string {
-  const seconds = Math.max(0, Math.floor(totalSeconds));
-  const hours = Math.floor(seconds / 3_600);
-  const minutes = Math.floor((seconds % 3_600) / 60);
-  if (hours > 0) return minutes > 0 ? `${hours}小时${minutes}分` : `${hours}小时`;
-  return `${Math.max(1, minutes)}分钟`;
 }

@@ -307,6 +307,204 @@ export function drawAvatarPortrait(
   }
 }
 
+export function drawCultivatorFigure(
+  parent: Node,
+  variant: AvatarVariant,
+  x: number,
+  y: number,
+  scale = 1,
+): void {
+  const aura = graphicsNode(parent, `CultivatorAura-${variant}`, x, y);
+  aura.node.setScale(scale, scale, 1);
+  aura.strokeColor = withAlpha(COLORS.gold, 116);
+  aura.lineWidth = 2;
+  aura.circle(0, 12, 184);
+  aura.circle(0, 12, 161);
+  aura.stroke();
+  aura.strokeColor = withAlpha(COLORS.jade, 132);
+  aura.lineWidth = 1;
+  for (let index = 0; index < 8; index += 1) {
+    const angle = (Math.PI * 2 * index) / 8;
+    aura.moveTo(Math.cos(angle) * 166, 12 + Math.sin(angle) * 166);
+    aura.lineTo(Math.cos(angle) * 179, 12 + Math.sin(angle) * 179);
+  }
+  aura.stroke();
+
+  const weapon = graphicsNode(parent, `CultivatorWeapon-${variant}`, x, y);
+  weapon.node.setScale(scale, scale, 1);
+  weapon.strokeColor = color("#b8c9c4");
+  weapon.lineWidth = 7;
+  weapon.moveTo(92, -166);
+  weapon.lineTo(128, 151);
+  weapon.stroke();
+  weapon.strokeColor = COLORS.goldMuted;
+  weapon.lineWidth = 10;
+  weapon.moveTo(111, -2);
+  weapon.lineTo(143, -6);
+  weapon.stroke();
+  weapon.fillColor = COLORS.goldBright;
+  weapon.moveTo(128, 151);
+  weapon.lineTo(116, 126);
+  weapon.lineTo(135, 124);
+  weapon.close();
+  weapon.fill();
+
+  const figure = graphicsNode(parent, `CultivatorFigure-${variant}`, x, y);
+  figure.node.setScale(scale, scale, 1);
+  const robeColor =
+    variant === "female"
+      ? color("#6f3140")
+      : variant === "male"
+        ? color("#245f5a")
+        : color("#35434b");
+  const robeShadow =
+    variant === "female"
+      ? color("#341c2a")
+      : variant === "male"
+        ? color("#132f32")
+        : color("#1a252c");
+  const accent =
+    variant === "female"
+      ? COLORS.goldBright
+      : variant === "male"
+        ? COLORS.jade
+        : COLORS.textMuted;
+  const skin = variant === "neutral" ? COLORS.black : color("#d8c3a9");
+
+  figure.fillColor = withAlpha(COLORS.black, 156);
+  figure.roundRect(-132, -227, 264, 34, 17);
+  figure.fill();
+
+  if (variant === "female") {
+    figure.fillColor = COLORS.black;
+    figure.circle(-25, 139, 44);
+    figure.circle(25, 139, 44);
+    figure.moveTo(-50, 132);
+    figure.lineTo(-42, 35);
+    figure.lineTo(-8, 72);
+    figure.lineTo(8, 72);
+    figure.lineTo(42, 35);
+    figure.lineTo(50, 132);
+    figure.close();
+    figure.fill();
+  }
+
+  figure.fillColor = robeColor;
+  figure.moveTo(-42, 92);
+  figure.lineTo(-106, 40);
+  figure.lineTo(-78, -57);
+  figure.lineTo(-126, -145);
+  figure.lineTo(-82, -200);
+  figure.lineTo(0, -229);
+  figure.lineTo(82, -200);
+  figure.lineTo(126, -145);
+  figure.lineTo(78, -57);
+  figure.lineTo(106, 40);
+  figure.lineTo(42, 92);
+  figure.close();
+  figure.fill();
+
+  figure.fillColor = robeShadow;
+  figure.moveTo(-27, 91);
+  figure.lineTo(-46, -154);
+  figure.lineTo(0, -205);
+  figure.lineTo(46, -154);
+  figure.lineTo(27, 91);
+  figure.close();
+  figure.fill();
+
+  figure.fillColor = robeColor;
+  figure.moveTo(-43, 62);
+  figure.lineTo(-122, 18);
+  figure.lineTo(-91, -68);
+  figure.lineTo(-24, -17);
+  figure.close();
+  figure.fill();
+  figure.moveTo(43, 62);
+  figure.lineTo(122, 18);
+  figure.lineTo(91, -68);
+  figure.lineTo(24, -17);
+  figure.close();
+  figure.fill();
+
+  figure.fillColor = skin;
+  figure.circle(-65, -40, 14);
+  figure.circle(65, -40, 14);
+  figure.fill();
+  figure.strokeColor = accent;
+  figure.lineWidth = 4;
+  figure.moveTo(-68, -39);
+  figure.lineTo(-8, -54);
+  figure.lineTo(8, -54);
+  figure.lineTo(68, -39);
+  figure.stroke();
+
+  figure.fillColor = COLORS.black;
+  figure.circle(0, 151, variant === "neutral" ? 51 : 43);
+  figure.fill();
+  if (variant === "neutral") {
+    figure.fillColor = robeColor;
+    figure.circle(0, 150, 48);
+    figure.fill();
+    figure.fillColor = COLORS.black;
+    figure.circle(0, 145, 31);
+    figure.fill();
+  } else {
+    figure.fillColor = skin;
+    figure.circle(0, 148, 32);
+    figure.fill();
+    figure.fillColor = COLORS.black;
+    figure.moveTo(-34, 151);
+    figure.lineTo(-25, 178);
+    figure.lineTo(0, 187);
+    figure.lineTo(27, 177);
+    figure.lineTo(34, 151);
+    figure.lineTo(18, 161);
+    figure.lineTo(0, 158);
+    figure.lineTo(-18, 161);
+    figure.close();
+    figure.fill();
+    figure.strokeColor = color("#433a35");
+    figure.lineWidth = 2;
+    figure.moveTo(-17, 145);
+    figure.lineTo(-7, 145);
+    figure.moveTo(7, 145);
+    figure.lineTo(17, 145);
+    figure.stroke();
+  }
+
+  figure.fillColor = COLORS.black;
+  if (variant === "male") {
+    figure.circle(0, 202, 18);
+    figure.fill();
+    figure.strokeColor = COLORS.gold;
+    figure.lineWidth = 4;
+    figure.moveTo(-29, 199);
+    figure.lineTo(29, 199);
+    figure.stroke();
+  } else if (variant === "female") {
+    figure.circle(-35, 186, 13);
+    figure.circle(35, 186, 13);
+    figure.fill();
+    figure.fillColor = COLORS.goldBright;
+    figure.circle(-35, 188, 4);
+    figure.circle(35, 188, 4);
+    figure.fill();
+  }
+
+  figure.strokeColor = accent;
+  figure.lineWidth = 5;
+  figure.moveTo(-29, 84);
+  figure.lineTo(0, 49);
+  figure.lineTo(29, 84);
+  figure.moveTo(-66, -101);
+  figure.lineTo(66, -101);
+  figure.stroke();
+  figure.fillColor = COLORS.gold;
+  figure.roundRect(-7, -112, 14, 22, 5);
+  figure.fill();
+}
+
 export function drawMountainLayer(
   graphic: Graphics,
   baseY: number,

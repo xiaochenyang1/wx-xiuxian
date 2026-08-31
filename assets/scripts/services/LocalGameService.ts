@@ -1,64 +1,150 @@
 import {
+  AFFIX_STATS,
+  ASSET_QUALITY_DISPLAY_NAMES,
+  ASSET_QUALITY_MULTIPLIER_BP,
+  ASSET_QUALITY_ORDER,
   BASIS_POINTS,
+  CRAFTING_QUALITY_WEIGHTS,
   CAVE_BUILDING_CONFIGS,
   CAVE_MAX_LEVEL,
-  EQUIPMENT_CONFIGS,
+  CAVE_UNLOCK_LEVEL,
+  DAO_MAX_LEVEL,
+  ENHANCE_STONE_OVERFLOW_SPIRIT_STONE_VALUE,
+  EQUIPMENT_MAX_ENHANCE_LEVEL,
+  EXPEDITION_STAGE_CONFIGS,
+  EXPEDITION_SWEEP_MAX_COUNT,
+  EXPEDITION_SWEEP_TOKEN_COST,
+  HARVEST_CHEST_CAPACITY,
+  IDLE_DROP_ROLL_SPAN,
+  IDLE_EQUIPMENT_DROP_CHANCE,
+  IDLE_ITEM_DROPS,
+  IDLE_STACK_OVERFLOW_SPIRIT_STONE_VALUE,
+  IDLE_TECHNIQUE_DROP_CHANCE,
+  IDLE_TECHNIQUE_DROP_QUALITY_WEIGHTS,
+  PARTNER_MAX_LEVEL,
+  PARTNER_UNLOCK_LEVEL,
+  SECT_MAX_LEVEL,
   MAX_LEVEL,
-  NEWCOMER_REACH_LEVEL_8_TASK_ID,
-  NEWCOMER_TASK_CONFIGS,
+  PROGRESSION_TASK_CONFIGS,
+  TRIAL_TOWER_MAX_FLOOR,
+  TRIAL_TOWER_UNLOCK_LEVEL,
+  daoCumulativeCost,
+  evaluateTrialFloor,
+  trialFloorRewards,
+  TECHNIQUE_MAX_STAR,
+  TECHNIQUE_PAGES_PER_DUPLICATE,
   TECHNIQUE_CONFIGS,
+  TREASURE_HUNT_TOTAL_WEIGHT,
   applyWholeExperience,
   addLoadoutBonuses,
+  affixScorePercent,
+  calculatePartnerBonuses,
+  calculateSectBonuses,
   calculateCaveBonuses,
+  calculateEquipmentContribution,
   calculateLoadoutBonuses,
   calculateOnlineExperiencePerSecond,
   calculateSpiritStonePerMinute,
+  calculateTechniqueContribution,
   calculateTotalPower,
   caveUpgradeCost,
+  caveBuildingLevel,
+  canAscendEquipmentQuality,
+  craftingQualityWeight,
+  craftingSpiritStoneCost,
   completeBreakthrough,
+  countOccupiedBagSlots,
   createEmptyCaveBuildings,
   decimal,
+  equipmentAffixScoreBp,
+  equipmentAscendCost,
+  equipmentBandForConfig,
+  equipmentBandForLevel,
+  equipmentConfigsForBand,
+  equipmentDropQualityWeights,
+  equipmentEnhanceCost,
+  equipmentRerollCost,
+  equipmentSalvageReward,
+  evaluateExpeditionStage,
+  evaluateExpeditionSweep,
   getCaveBuildingConfig,
+  getAlchemyRecipeConfig,
+  getCraftingRecipeConfig,
   getEquipmentConfig,
+  getExpeditionStageConfig,
   getItemConfig,
+  getPartnerConfig,
   getRealmConfigForLevel,
   getRealmStage,
   getRealmTitle,
   getTechniqueConfig,
+  getSectConfig,
+  idleItemDropBandMultiplier,
+  idleStackDropBandMultiplier,
+  idleStackDropQuantitySpan,
   isAssetQuality,
+  nextAssetQuality,
+  partnerBondRequirement,
+  pickIdleStackDrop,
+  pickTreasureHuntReward,
   requiredExperienceForLevel,
+  readRolledAffixes,
+  resolveCraftingEquipmentConfig,
+  rollEquipmentAffixes,
   settleCultivation,
+  sectContributionRequirement,
+  spendReserveOnDao,
+  shouldAutoLockEquipment,
   simulateOnlineExperience,
+  techniqueStarUpgradeCost,
   type AssetQuality,
+  type AutoSalvageQuality,
   type BootstrapSnapshot,
   type ChosenAvatarVariant,
   type DebugGrantTarget,
   type DropRewardSummary,
+  type EquipmentBand,
   type EquippedEquipmentSlot,
   type ProgressionEvent,
 } from "@cultivation-diary/shared";
 import { CLIENT_CONFIG } from "../core/ClientConfig";
+import { isMainTab, type MainTab } from "../core/ClientTypes";
 import type { PlatformAdapter } from "../platform/PlatformAdapter";
+import {
+  DROP_CONFIG_VERSION,
+  GAME_CONFIG_VERSION,
+  GAME_CONFIG_VERSION_PRE_AFFIX_ROLL,
+  GAME_CONFIG_VERSION_PRE_EQUIPMENT_BANDS,
+  GAME_CONFIG_VERSION_PRE_ENHANCE_STONE_CURVE,
+  GAME_CONFIG_VERSION_PRE_REALM_SPLIT,
+  GAME_CONFIG_VERSION_PRE_MATERIAL_CURVE,
+  GAME_CONFIG_VERSION_PRE_CAVE,
+  GAME_CONFIG_VERSION_PRE_DAO,
+  GAME_CONFIG_VERSION_PRE_EQUIPMENT_MANAGEMENT,
+  GAME_CONFIG_VERSION_PRE_EXPEDITION,
+  GAME_CONFIG_VERSION_PRE_EXPEDITION_SWEEPS,
+  GAME_CONFIG_VERSION_PRE_FEATURE_COMPLETION,
+  GAME_CONFIG_VERSION_PRE_ITEM_COMPLETION,
+  GAME_CONFIG_VERSION_PRE_POWER_MODEL,
+  GAME_CONFIG_VERSION_PRE_TASK_CHAIN,
+  GAME_CONFIG_VERSION_PRE_TRIAL_TOWER,
+  LOCAL_SAVE_SCHEMA_VERSION,
+  createInitialSave,
+  refreshSnapshot,
+  syncProgressionTasks,
+  type LocalGameSave,
+} from "./local-game-snapshot";
 
-const LOCAL_SAVE_SCHEMA_VERSION = 1 as const;
-const GAME_CONFIG_VERSION = "local-1.1.0";
-const GAME_CONFIG_VERSION_PRE_CAVE = "local-1.0.0";
-const DROP_CONFIG_VERSION = "local-idle-drop-v1";
 const OFFLINE_NOTICE_MIN_SECONDS = 60;
-const HARVEST_CHEST_CAPACITY = 100;
 const BAG_INITIAL_CAPACITY = 50;
 const BAG_MAX_CAPACITY = 200;
 const BAG_EXPANSION_SIZE = 10;
 const BAG_EXPANSION_BASE_COST = 5_000;
 const DROP_CLOCK_MAX_REMAINDER = 60_000_000;
-
-interface LocalGameSave {
-  readonly schemaVersion: typeof LOCAL_SAVE_SCHEMA_VERSION;
-  readonly savedAt: string;
-  readonly spiritStoneRemainderMicros: number;
-  readonly dropClockRemainderMicros: number;
-  readonly snapshot: BootstrapSnapshot;
-}
+const LOCAL_BACKUP_PREFIX = "XIUXIAN_SAVE_V1:";
+const LOCAL_BACKUP_CHECKSUM_LENGTH = 8;
+const LOCAL_BACKUP_MAX_LENGTH = 1_000_000;
+const LOCAL_BATCH_ACTION_CAP = 100;
 
 export interface LocalMutationResult {
   readonly previous: BootstrapSnapshot;
@@ -76,6 +162,10 @@ export interface LocalLoadResult {
   readonly events: readonly ProgressionEvent[];
   readonly sourceId: string;
   readonly created: boolean;
+}
+
+export interface LocalBackupExportResult extends LocalLoadResult {
+  readonly backupCode: string;
 }
 
 export class LocalGameError extends Error {
@@ -251,6 +341,23 @@ export class LocalGameService {
     });
   }
 
+  /**
+   * Records the tab the player is on so the next launch opens there.
+   *
+   * Same shape as the two settings writes below it, for the same reason: the
+   * alternative — keep it in memory and let the next checkpoint carry it —
+   * loses the last switch before a quit, which is the one case worth fixing.
+   */
+  selectTab(tab: MainTab): LocalMutationResult {
+    return this.mutate((snapshot) => ({
+      snapshot: {
+        ...snapshot,
+        settings: { ...snapshot.settings, selectedTab: tab },
+      },
+      events: [],
+    }));
+  }
+
   markPartnerUnlockNoticeSeen(): LocalMutationResult {
     return this.mutate((snapshot) => ({
       snapshot: {
@@ -259,6 +366,26 @@ export class LocalGameService {
       },
       events: [],
     }));
+  }
+
+  toggleAutoSalvage(quality: AutoSalvageQuality): LocalMutationResult {
+    return this.mutate((snapshot) => {
+      if (quality !== "common" && quality !== "uncommon") {
+        throw new LocalGameError("该品质不支持自动分解");
+      }
+      const settingKey =
+        quality === "common" ? "autoSalvageCommon" : "autoSalvageUncommon";
+      const enabled = !snapshot.settings[settingKey];
+      const qualityName = quality === "common" ? "普通" : "优秀";
+      return {
+        snapshot: {
+          ...snapshot,
+          settings: { ...snapshot.settings, [settingKey]: enabled },
+        },
+        events: [],
+        message: `${qualityName}品质自动分解已${enabled ? "开启" : "关闭"}，仅影响后续新收获`,
+      };
+    });
   }
 
   expandInventory(): LocalMutationResult {
@@ -293,7 +420,9 @@ export class LocalGameService {
   upgradeCaveBuilding(buildingConfigId: string): LocalMutationResult {
     return this.mutate((snapshot) => {
       if (!snapshot.unlocks.cave) {
-        throw new LocalGameError("修为达到 Lv.11 才能开辟洞府");
+        throw new LocalGameError(
+          `修为达到 Lv.${CAVE_UNLOCK_LEVEL} 才能开辟洞府`,
+        );
       }
       const config = getCaveBuildingConfig(buildingConfigId);
       const building = snapshot.cave.buildings.find(
@@ -349,37 +478,717 @@ export class LocalGameService {
     });
   }
 
+  challengeExpedition(stageConfigId: string): LocalMutationResult {
+    return this.mutate((snapshot) => {
+      let config: ReturnType<typeof getExpeditionStageConfig>;
+      try {
+        config = getExpeditionStageConfig(stageConfigId);
+      } catch {
+        throw new LocalGameError("未知的历练关卡");
+      }
+      const evaluation = evaluateExpeditionStage(
+        config.id,
+        snapshot.expedition.clearedStageIds,
+        snapshot.progress.totalPower,
+      );
+      if (evaluation.status === "cleared") {
+        throw new LocalGameError("该关卡已经完成，首通奖励不可重复领取");
+      }
+      if (evaluation.status === "locked") {
+        const previous = EXPEDITION_STAGE_CONFIGS[
+          Math.max(0, snapshot.expedition.clearedStageIds.length)
+        ];
+        throw new LocalGameError(
+          previous ? `需先完成${previous.displayName}` : "前置关卡尚未完成",
+        );
+      }
+      if (evaluation.status === "underpowered") {
+        throw new LocalGameError(`战力不足，还需 ${evaluation.powerDeficit}`);
+      }
+
+      const inventory = addStackRewards(
+        snapshot,
+        snapshot.inventory,
+        config.itemRewards,
+        "行囊空间不足，无法领取历练首通奖励",
+      );
+      const spiritStone = decimal(snapshot.wallet.spiritStone).plus(
+        config.spiritStoneReward,
+      );
+      return {
+        snapshot: {
+          ...snapshot,
+          inventory,
+          expedition: {
+            ...snapshot.expedition,
+            clearedStageIds: [
+              ...snapshot.expedition.clearedStageIds,
+              config.id,
+            ],
+          },
+          wallet: {
+            ...snapshot.wallet,
+            spiritStone: spiritStone.toFixed(0),
+            lifetimeSpiritStoneEarned: decimal(
+              snapshot.wallet.lifetimeSpiritStoneEarned,
+            )
+              .plus(config.spiritStoneReward)
+              .toFixed(0),
+          },
+        },
+        events: [],
+        message: `首通${config.displayName}，获得 ${config.spiritStoneReward} 灵石和历练物资`,
+      };
+    });
+  }
+
+  sweepExpedition(stageConfigId: string): LocalMutationResult {
+    return this.mutate((snapshot) => {
+      let config: ReturnType<typeof getExpeditionStageConfig>;
+      try {
+        config = getExpeditionStageConfig(stageConfigId);
+      } catch {
+        throw new LocalGameError("未知的历练关卡");
+      }
+
+      const evaluation = evaluateExpeditionSweep(
+        config.id,
+        snapshot.expedition.clearedStageIds,
+        snapshot.progress.totalPower,
+      );
+      if (evaluation.status === "locked") {
+        throw new LocalGameError("完成该关首通后才能扫荡");
+      }
+      if (evaluation.status === "underpowered") {
+        throw new LocalGameError(`当前战力不足，还需 ${evaluation.powerDeficit}`);
+      }
+
+      const existingSweep = snapshot.expedition.sweepCounts.find(
+        (entry) => entry.stageConfigId === config.id,
+      );
+      if ((existingSweep?.count ?? 0) >= EXPEDITION_SWEEP_MAX_COUNT) {
+        throw new LocalGameError("该关扫荡次数已达到本地存档上限");
+      }
+
+      const tokens = decimal(stackQuantity(snapshot, "treasure_token"));
+      if (tokens.lessThan(EXPEDITION_SWEEP_TOKEN_COST)) {
+        throw new LocalGameError("寻宝令不足，无法扫荡");
+      }
+      let inventory = setStackQuantity(
+        snapshot.inventory,
+        "treasure_token",
+        tokens.minus(EXPEDITION_SWEEP_TOKEN_COST).toFixed(0),
+      );
+      inventory = addStackRewards(
+        snapshot,
+        inventory,
+        config.sweepItemRewards,
+        "行囊空间不足，无法领取扫荡奖励",
+      );
+
+      const sweepCounts = existingSweep
+        ? snapshot.expedition.sweepCounts.map((entry) =>
+            entry.stageConfigId === config.id
+              ? { ...entry, count: entry.count + 1 }
+              : entry,
+          )
+        : [
+            ...snapshot.expedition.sweepCounts,
+            { stageConfigId: config.id, count: 1 },
+          ];
+      return {
+        snapshot: {
+          ...snapshot,
+          inventory,
+          expedition: { ...snapshot.expedition, sweepCounts },
+          wallet: {
+            ...snapshot.wallet,
+            spiritStone: decimal(snapshot.wallet.spiritStone)
+              .plus(config.sweepSpiritStoneReward)
+              .toFixed(0),
+            lifetimeSpiritStoneEarned: decimal(
+              snapshot.wallet.lifetimeSpiritStoneEarned,
+            )
+              .plus(config.sweepSpiritStoneReward)
+              .toFixed(0),
+          },
+        },
+        events: [],
+        message: `扫荡${config.displayName}，获得 ${config.sweepSpiritStoneReward} 灵石和历练物资`,
+      };
+    });
+  }
+
+  /**
+   * The tower is climbed one floor at a time and never swept: the whole point of
+   * a power ladder is that each rung is checked against the current loadout, and
+   * a sweep would hand out the rewards without ever making that check.
+   */
+  challengeTrialTower(floor: number): LocalMutationResult {
+    return this.mutate((snapshot) => {
+      if (!snapshot.unlocks.trialTower) {
+        throw new LocalGameError(
+          `修为达到 Lv.${TRIAL_TOWER_UNLOCK_LEVEL} 才能进入试炼塔`,
+        );
+      }
+      if (!isIntegerBetween(floor, 1, TRIAL_TOWER_MAX_FLOOR)) {
+        throw new LocalGameError("未知的试炼塔层数");
+      }
+      const evaluation = evaluateTrialFloor(
+        snapshot.trialTower.highestFloor,
+        floor,
+        snapshot.progress.totalPower,
+      );
+      if (evaluation.status === "cleared") {
+        throw new LocalGameError("该层已经通过，奖励不可重复领取");
+      }
+      if (evaluation.status === "locked") {
+        throw new LocalGameError(
+          `需先通过第 ${snapshot.trialTower.highestFloor + 1} 层`,
+        );
+      }
+      if (evaluation.status === "underpowered") {
+        throw new LocalGameError(`战力不足，还需 ${evaluation.powerDeficit}`);
+      }
+
+      const rewards = trialFloorRewards(floor);
+      // Checked before the floor is recorded, so a full bag leaves the climb
+      // exactly where it was rather than banking the floor and dropping the loot.
+      const inventory = addStackRewards(
+        snapshot,
+        snapshot.inventory,
+        rewards.itemRewards,
+        "行囊空间不足，无法领取试炼塔奖励",
+      );
+      return {
+        snapshot: {
+          ...snapshot,
+          inventory,
+          trialTower: { highestFloor: floor },
+          wallet: {
+            ...snapshot.wallet,
+            spiritStone: decimal(snapshot.wallet.spiritStone)
+              .plus(rewards.spiritStone)
+              .toFixed(0),
+            lifetimeSpiritStoneEarned: decimal(
+              snapshot.wallet.lifetimeSpiritStoneEarned,
+            )
+              .plus(rewards.spiritStone)
+              .toFixed(0),
+          },
+        },
+        events: [],
+        message: `登临试炼塔第 ${floor} 层，获得 ${rewards.spiritStone} 灵石和试炼奖励`,
+      };
+    });
+  }
+
+  huntTreasure(): LocalMutationResult {
+    return this.mutate((snapshot) => {
+      const tokens = decimal(stackQuantity(snapshot, "treasure_token"));
+      if (tokens.lessThan(1)) throw new LocalGameError("寻宝令不足");
+
+      let inventory = setStackQuantity(
+        snapshot.inventory,
+        "treasure_token",
+        tokens.minus(1).toFixed(0),
+      );
+      const reward = pickTreasureHuntReward(
+        randomInteger(TREASURE_HUNT_TOTAL_WEIGHT),
+      );
+      if (reward.kind === "spirit_stone") {
+        return {
+          snapshot: {
+            ...snapshot,
+            inventory,
+            wallet: {
+              ...snapshot.wallet,
+              spiritStone: decimal(snapshot.wallet.spiritStone)
+                .plus(reward.amount)
+                .toFixed(0),
+              lifetimeSpiritStoneEarned: decimal(
+                snapshot.wallet.lifetimeSpiritStoneEarned,
+              )
+                .plus(reward.amount)
+                .toFixed(0),
+            },
+          },
+          events: [],
+          message: `寻得 ${reward.amount} 灵石`,
+        };
+      }
+
+      const itemConfigId =
+        reward.kind === "random_material"
+          ? ["wood", "stone", "spiritual_soil", "spiritual_herb", "ore"][
+              randomInteger(5)
+            ]!
+          : reward.itemConfigId;
+      const quantity = reward.quantity;
+      ensureStackOutputCapacity(
+        { ...snapshot, inventory },
+        itemConfigId,
+        "行囊空间不足，无法领取寻宝奖励",
+      );
+      inventory = addStack(inventory, itemConfigId, quantity);
+      return {
+        snapshot: { ...snapshot, inventory },
+        events: [],
+        message: `寻得 ${getItemConfig(itemConfigId).displayName} x${quantity}`,
+      };
+    });
+  }
+
+  brewAlchemy(recipeId: string): LocalMutationResult {
+    return this.brewAlchemyInternal(recipeId, false);
+  }
+
+  brewAlchemyBatch(recipeId: string): LocalMutationResult {
+    return this.brewAlchemyInternal(recipeId, true);
+  }
+
+  private brewAlchemyInternal(
+    recipeId: string,
+    useAll: boolean,
+  ): LocalMutationResult {
+    return this.mutate((snapshot) => {
+      let recipe: ReturnType<typeof getAlchemyRecipeConfig>;
+      try {
+        recipe = getAlchemyRecipeConfig(recipeId);
+      } catch {
+        throw new LocalGameError("未知的炼丹配方");
+      }
+      const alchemyRoomLevel = caveBuildingLevel(snapshot.cave.buildings, "alchemy_room");
+      if (alchemyRoomLevel < recipe.requiredAlchemyRoomLevel) {
+        throw new LocalGameError(
+          `炼丹房需达到 Lv.${recipe.requiredAlchemyRoomLevel}`,
+        );
+      }
+      const stones = decimal(snapshot.wallet.spiritStone);
+      if (stones.lessThan(recipe.spiritStoneCost)) {
+        throw new LocalGameError(
+          `灵石不足，还需 ${decimal(recipe.spiritStoneCost).minus(stones).toFixed(0)} 灵石`,
+        );
+      }
+      for (const ingredient of recipe.ingredients) {
+        const owned = decimal(stackQuantity(snapshot, ingredient.itemConfigId));
+        if (owned.lessThan(ingredient.quantity)) {
+          throw new LocalGameError(
+            `${getItemConfig(ingredient.itemConfigId).displayName}不足，还需 ${decimal(ingredient.quantity).minus(owned).toFixed(0)} 个`,
+          );
+        }
+      }
+      const batchCount = useAll
+        ? maxAffordableBatchCount(
+            snapshot.wallet.spiritStone,
+            recipe.spiritStoneCost,
+            recipe.ingredients.map((ingredient) => ({
+              owned: stackQuantity(snapshot, ingredient.itemConfigId),
+              cost: ingredient.quantity,
+            })),
+          )
+        : 1;
+      let inventory = snapshot.inventory;
+      for (const ingredient of recipe.ingredients) {
+        inventory = setStackQuantity(
+          inventory,
+          ingredient.itemConfigId,
+          decimal(stackQuantity(snapshot, ingredient.itemConfigId))
+            .minus(decimal(ingredient.quantity).times(batchCount))
+            .toFixed(0),
+        );
+      }
+      ensureStackOutputCapacity(
+        { ...snapshot, inventory },
+        recipe.outputItemConfigId,
+      );
+      inventory = addStack(
+        inventory,
+        recipe.outputItemConfigId,
+        recipe.outputQuantity * batchCount,
+      );
+      return {
+        snapshot: {
+          ...snapshot,
+          inventory,
+          wallet: {
+            ...snapshot.wallet,
+            spiritStone: stones
+              .minus(decimal(recipe.spiritStoneCost).times(batchCount))
+              .toFixed(0),
+          },
+        },
+        events: [],
+        message: useAll
+          ? `批量炼成 ${recipe.displayName} x${recipe.outputQuantity * batchCount}`
+          : `炼成 ${recipe.displayName} x${recipe.outputQuantity}`,
+      };
+    });
+  }
+
+  craftEquipment(recipeId: string): LocalMutationResult {
+    return this.craftEquipmentInternal(recipeId, false);
+  }
+
+  craftEquipmentBatch(recipeId: string): LocalMutationResult {
+    return this.craftEquipmentInternal(recipeId, true);
+  }
+
+  private craftEquipmentInternal(
+    recipeId: string,
+    useAll: boolean,
+  ): LocalMutationResult {
+    return this.mutate((snapshot) => {
+      let recipe: ReturnType<typeof getCraftingRecipeConfig>;
+      try {
+        recipe = getCraftingRecipeConfig(recipeId);
+      } catch {
+        throw new LocalGameError("未知的炼器图谱");
+      }
+      const craftingRoomLevel = caveBuildingLevel(snapshot.cave.buildings, "crafting_room");
+      if (craftingRoomLevel < recipe.requiredCraftingRoomLevel) {
+        throw new LocalGameError(
+          `炼器室需达到 Lv.${recipe.requiredCraftingRoomLevel}`,
+        );
+      }
+      // Crafting produces the crafter's own band, at that band's spirit stone
+      // price. Materials are deliberately flat across bands.
+      const band = equipmentBandForLevel(snapshot.progress.level);
+      const product = resolveCraftingEquipmentConfig(recipe.slot, snapshot.progress.level);
+      const spiritStoneCost = craftingSpiritStoneCost(recipe, band);
+      const stones = decimal(snapshot.wallet.spiritStone);
+      if (stones.lessThan(spiritStoneCost)) {
+        throw new LocalGameError(
+          `灵石不足，还需 ${decimal(spiritStoneCost).minus(stones).toFixed(0)} 灵石`,
+        );
+      }
+      for (const material of recipe.materials) {
+        const owned = decimal(stackQuantity(snapshot, material.itemConfigId));
+        if (owned.lessThan(material.quantity)) {
+          throw new LocalGameError(
+            `${getItemConfig(material.itemConfigId).displayName}不足，还需 ${decimal(material.quantity).minus(owned).toFixed(0)} 个`,
+          );
+        }
+      }
+      const availableSlots =
+        snapshot.inventory.bagCapacity - countOccupiedBagSlots(snapshot);
+      if (availableSlots <= 0) {
+        throw new LocalGameError("行囊空间不足，无法炼器");
+      }
+      const batchCount = useAll
+        ? Math.min(
+            availableSlots,
+            maxAffordableBatchCount(
+              snapshot.wallet.spiritStone,
+              spiritStoneCost,
+              recipe.materials.map((material) => ({
+                owned: stackQuantity(snapshot, material.itemConfigId),
+                cost: material.quantity,
+              })),
+            ),
+          )
+        : 1;
+      let inventory = snapshot.inventory;
+      for (const material of recipe.materials) {
+        inventory = setStackQuantity(
+          inventory,
+          material.itemConfigId,
+          decimal(stackQuantity(snapshot, material.itemConfigId))
+            .minus(decimal(material.quantity).times(batchCount))
+            .toFixed(0),
+        );
+      }
+      ensureEquipmentCapacity({ ...snapshot, inventory });
+      const equipment = [...snapshot.equipment];
+      const craftedQualities: AssetQuality[] = [];
+      const qualityCounts = new Map<AssetQuality, number>();
+      for (let index = 0; index < batchCount; index += 1) {
+        const quality = rollCraftingQuality(craftingRoomLevel, band, randomInteger);
+        craftedQualities.push(quality);
+        equipment.push(createCraftedEquipment(product.id, quality));
+        qualityCounts.set(quality, (qualityCounts.get(quality) ?? 0) + 1);
+      }
+      return {
+        snapshot: refreshSnapshot({
+          ...snapshot,
+          inventory,
+          equipment,
+          wallet: {
+            ...snapshot.wallet,
+            spiritStone: stones
+              .minus(decimal(spiritStoneCost).times(batchCount))
+              .toFixed(0),
+          },
+        }),
+        events: [],
+        message: useAll
+          ? `批量${recipe.displayName} x${batchCount}，品质：${formatQualityCounts(qualityCounts)}`
+          : `${recipe.displayName}成功，获得${qualityDisplayName(craftedQualities[0])}品质${product.displayName}`,
+      };
+    });
+  }
+
+  choosePartner(partnerId: string): LocalMutationResult {
+    return this.mutate((snapshot) => {
+      if (!snapshot.unlocks.partner) {
+        throw new LocalGameError(
+          `修为达到 Lv.${PARTNER_UNLOCK_LEVEL} 才能结识道侣`,
+        );
+      }
+      if (snapshot.partner.partnerId !== null) {
+        throw new LocalGameError("道侣已经确定，不能再次选择");
+      }
+      let config: ReturnType<typeof getPartnerConfig>;
+      try {
+        config = getPartnerConfig(partnerId);
+      } catch {
+        throw new LocalGameError("未知的道侣");
+      }
+      return {
+        snapshot: refreshSnapshot({
+          ...snapshot,
+          partner: { partnerId: config.id, level: 1, bond: 0 },
+        }),
+        events: [],
+        message: `已与${config.displayName}结为道侣`,
+      };
+    });
+  }
+
+  cultivateWithPartner(): LocalMutationResult {
+    return this.mutate((snapshot) => {
+      const partnerId = snapshot.partner.partnerId;
+      if (partnerId === null) throw new LocalGameError("请先选择一位道侣");
+      if (snapshot.partner.level >= PARTNER_MAX_LEVEL) {
+        throw new LocalGameError("道侣亲密等级已满");
+      }
+      const pills = decimal(stackQuantity(snapshot, "dual_cultivation_pill"));
+      if (pills.lessThan(1)) throw new LocalGameError("双修丹不足");
+      const targetLevel = snapshot.partner.level + 1;
+      const gainedBond = 100;
+      const nextBond = snapshot.partner.bond + gainedBond;
+      const required = partnerBondRequirement(targetLevel);
+      const level = nextBond >= required ? targetLevel : snapshot.partner.level;
+      const bond =
+        level >= PARTNER_MAX_LEVEL
+          ? 0
+          : nextBond >= required
+            ? nextBond - required
+            : nextBond;
+      const inventory = setStackQuantity(
+        snapshot.inventory,
+        "dual_cultivation_pill",
+        pills.minus(1).toFixed(0),
+      );
+      const config = getPartnerConfig(partnerId);
+      return {
+        snapshot: refreshSnapshot({
+          ...snapshot,
+          inventory,
+          partner: { partnerId, level, bond },
+        }),
+        events: [],
+        message:
+          level > snapshot.partner.level
+            ? `${config.displayName}亲密提升至 Lv.${level}`
+            : `与${config.displayName}双修，亲密 +${gainedBond}`,
+      };
+    });
+  }
+
+  joinSect(sectId: string): LocalMutationResult {
+    return this.mutate((snapshot) => {
+      if (snapshot.progress.level < 11) {
+        throw new LocalGameError("修为达到 Lv.11 才能拜入宗门");
+      }
+      if (snapshot.sect.sectId !== null) {
+        throw new LocalGameError("已经加入宗门，当前不能改投他派");
+      }
+      let config: ReturnType<typeof getSectConfig>;
+      try {
+        config = getSectConfig(sectId);
+      } catch {
+        throw new LocalGameError("未知的宗门");
+      }
+      return {
+        snapshot: refreshSnapshot({
+          ...snapshot,
+          sect: { sectId: config.id, level: 1, contribution: 0 },
+        }),
+        events: [],
+        message: `已拜入${config.displayName}`,
+      };
+    });
+  }
+
+  donateToSect(): LocalMutationResult {
+    return this.mutate((snapshot) => {
+      const sectId = snapshot.sect.sectId;
+      if (sectId === null) throw new LocalGameError("请先加入宗门");
+      if (snapshot.sect.level >= SECT_MAX_LEVEL) {
+        throw new LocalGameError("宗门声望已满级");
+      }
+      const donation = [
+        { itemConfigId: "wood", quantity: 5 },
+        { itemConfigId: "stone", quantity: 5 },
+        { itemConfigId: "spiritual_herb", quantity: 5 },
+      ] as const;
+      for (const material of donation) {
+        const owned = decimal(stackQuantity(snapshot, material.itemConfigId));
+        if (owned.lessThan(material.quantity)) {
+          throw new LocalGameError(
+            `${getItemConfig(material.itemConfigId).displayName}不足，还需 ${decimal(material.quantity).minus(owned).toFixed(0)} 个`,
+          );
+        }
+      }
+      let inventory = snapshot.inventory;
+      for (const material of donation) {
+        inventory = setStackQuantity(
+          inventory,
+          material.itemConfigId,
+          decimal(stackQuantity(snapshot, material.itemConfigId))
+            .minus(material.quantity)
+            .toFixed(0),
+        );
+      }
+      const contributionGain = 100;
+      const targetLevel = snapshot.sect.level + 1;
+      const totalContribution = snapshot.sect.contribution + contributionGain;
+      const required = sectContributionRequirement(targetLevel);
+      const level = totalContribution >= required ? targetLevel : snapshot.sect.level;
+      const contribution =
+        level >= SECT_MAX_LEVEL
+          ? 0
+          : totalContribution >= required
+            ? totalContribution - required
+            : totalContribution;
+      const config = getSectConfig(sectId);
+      return {
+        snapshot: refreshSnapshot({
+          ...snapshot,
+          inventory,
+          sect: { sectId, level, contribution },
+        }),
+        events: [],
+        message:
+          level > snapshot.sect.level
+            ? `${config.displayName}声望提升至 Lv.${level}`
+            : `向${config.displayName}捐献物资，贡献 +${contributionGain}`,
+      };
+    });
+  }
+
+  /**
+   * Spends `cultivationReserve` on 道行. Levels are bought all-or-nothing so a
+   * batch tap can never leave the player guessing how far the reserve went.
+   */
+  cultivateDao(times = 1): LocalMutationResult {
+    return this.mutate((snapshot) => {
+      if (snapshot.progress.status !== "version_cap") {
+        throw new LocalGameError("修为储备只在等级封顶后积累");
+      }
+      if (snapshot.dao.level >= DAO_MAX_LEVEL) {
+        throw new LocalGameError("道行已至圆满");
+      }
+      if (!Number.isInteger(times) || times < 1) {
+        throw new LocalGameError("悟道次数不合法");
+      }
+      const capped = Math.min(times, DAO_MAX_LEVEL - snapshot.dao.level);
+      let spent;
+      try {
+        spent = spendReserveOnDao({
+          level: snapshot.dao.level,
+          cultivationReserve: snapshot.progress.cultivationReserve,
+          times: capped,
+        });
+      } catch {
+        const needed = decimal(daoCumulativeCost(snapshot.dao.level + capped))
+          .minus(daoCumulativeCost(snapshot.dao.level))
+          .minus(snapshot.progress.cultivationReserve)
+          .toFixed(0);
+        throw new LocalGameError(`修为储备不足，还需 ${needed}`);
+      }
+      return {
+        snapshot: refreshSnapshot({
+          ...snapshot,
+          progress: {
+            ...snapshot.progress,
+            cultivationReserve: spent.cultivationReserve,
+          },
+          dao: { level: spent.level },
+        }),
+        events: [],
+        message: `道行提升至 Lv.${spent.level}`,
+      };
+    });
+  }
+
   useInventoryItem(itemConfigId: string): LocalMutationResult {
+    return this.useExperienceItems(itemConfigId, false);
+  }
+
+  useAllInventoryItems(itemConfigId: string): LocalMutationResult {
+    return this.useExperienceItems(itemConfigId, true);
+  }
+
+  private useExperienceItems(
+    itemConfigId: string,
+    useAll: boolean,
+  ): LocalMutationResult {
     return this.mutate((snapshot) => {
       const config = getItemConfig(itemConfigId);
       const quantity = stackQuantity(snapshot, itemConfigId);
       if (decimal(quantity).lessThan(1)) throw new LocalGameError("物品数量不足");
       if (!config.useEffect) throw new LocalGameError("该物品当前版本暂不可使用");
+      if (snapshot.progress.status === "breakthrough_ready") {
+        throw new LocalGameError("当前处于突破瓶颈，请先完成突破再使用经验丹");
+      }
 
-      const simulated = simulateOnlineExperience({
-        progress: snapshot.progress,
-        elapsedMilliseconds: config.useEffect.durationSeconds * 1_000,
-        experienceBonusBp: snapshot.progress.experienceBonusBp,
-      });
+      const requested = useAll ? decimal(quantity) : decimal(1);
+      let consumed = decimal(0);
+      let progress = snapshot.progress;
+      let experienceGained = decimal(0);
+      const events: ProgressionEvent[] = [];
+      while (consumed.lessThan(requested) && progress.status !== "breakthrough_ready") {
+        const simulated = simulateOnlineExperience({
+          progress,
+          elapsedMilliseconds: config.useEffect.durationSeconds * 1_000,
+          experienceBonusBp: progress.experienceBonusBp,
+        });
+        progress = { ...progress, ...simulated.progress };
+        experienceGained = experienceGained.plus(simulated.experienceGained);
+        events.push(...simulated.events);
+        consumed = consumed.plus(1);
+      }
+      if (consumed.isZero()) {
+        throw new LocalGameError("当前处于突破瓶颈，请先完成突破再使用经验丹");
+      }
       const inventory = setStackQuantity(
         snapshot.inventory,
         itemConfigId,
-        decimal(quantity).minus(1).toFixed(0),
+        decimal(quantity).minus(consumed).toFixed(0),
       );
       const progressed = refreshSnapshot({
         ...snapshot,
         inventory,
         progress: {
-          ...snapshot.progress,
-          ...simulated.progress,
+          ...progress,
           settledAt: new Date().toISOString(),
         },
       });
-      const withTasks = syncNewcomerTasks(progressed);
+      const withTasks = syncProgressionTasks(progressed);
+      const consumedText = consumed.equals(1)
+        ? ""
+        : ` x${consumed.toFixed(0)}`;
+      const bottleneckText =
+        useAll && progress.status === "breakthrough_ready" &&
+        decimal(quantity).greaterThan(consumed)
+          ? "，已到突破瓶颈"
+          : "";
       return {
         snapshot: withTasks.snapshot,
-        events: simulated.events,
-        message: `使用 ${config.displayName}，获得 ${simulated.experienceGained} 修为`,
+        events,
+        message: `${useAll ? "批量使用" : "使用"} ${config.displayName}${consumedText}，获得 ${experienceGained.toFixed(0)} 修为${bottleneckText}`,
       };
     });
   }
@@ -393,10 +1202,7 @@ export class LocalGameService {
       let message: string;
 
       if (entry.entryType === "equipment") {
-        const usedSlots =
-          snapshot.inventory.stacks.length +
-          snapshot.equipment.filter((item) => item.location !== "harvest").length;
-        if (usedSlots >= snapshot.inventory.bagCapacity) {
+        if (countOccupiedBagSlots(snapshot) >= snapshot.inventory.bagCapacity) {
           throw new LocalGameError("行囊空间不足，请先整理或扩容");
         }
         equipment = equipment.map((item) =>
@@ -415,7 +1221,7 @@ export class LocalGameService {
               ? { ...item, duplicateCount: item.duplicateCount + 1 }
               : item,
           );
-          message = `${entry.displayName} 已转化为功法残页`;
+          message = `${entry.displayName} 同名副本 +1`;
         } else if (entry.techniqueConfigId) {
           techniques = [
             ...techniques,
@@ -440,35 +1246,230 @@ export class LocalGameService {
     });
   }
 
+  collectAllHarvest(): LocalMutationResult {
+    return this.mutate((snapshot) => {
+      const collectedEquipmentIds = new Set<string>();
+      const remainingEntries: BootstrapSnapshot["harvestChest"]["entries"] = [];
+      const techniques = [...snapshot.techniques];
+      const techniqueIndexes = new Map(
+        techniques.map((item, index) => [item.techniqueConfigId, index] as const),
+      );
+      let occupiedSlots = countOccupiedBagSlots(snapshot);
+      let equipmentCollected = 0;
+      let techniqueCollected = 0;
+      let newTechniques = 0;
+      let duplicateTechniques = 0;
+
+      for (const entry of snapshot.harvestChest.entries) {
+        if (entry.entryType === "equipment") {
+          if (occupiedSlots >= snapshot.inventory.bagCapacity) {
+            remainingEntries.push(entry);
+            continue;
+          }
+          if (
+            !entry.equipmentInstanceId ||
+            !snapshot.equipment.some(
+              (item) =>
+                item.id === entry.equipmentInstanceId &&
+                item.location === "harvest",
+            )
+          ) {
+            throw new LocalGameError("收获数据不完整，无法批量收取");
+          }
+          collectedEquipmentIds.add(entry.equipmentInstanceId);
+          occupiedSlots += 1;
+          equipmentCollected += 1;
+          continue;
+        }
+
+        if (!entry.techniqueConfigId) {
+          throw new LocalGameError("收获数据不完整，无法批量收取");
+        }
+        const existingIndex = techniqueIndexes.get(entry.techniqueConfigId);
+        if (existingIndex === undefined) {
+          techniques.push(createTechniqueSnapshot(entry.techniqueConfigId));
+          techniqueIndexes.set(entry.techniqueConfigId, techniques.length - 1);
+          newTechniques += 1;
+        } else {
+          const existing = techniques[existingIndex]!;
+          techniques[existingIndex] = {
+            ...existing,
+            duplicateCount: existing.duplicateCount + 1,
+          };
+          duplicateTechniques += 1;
+        }
+        techniqueCollected += 1;
+      }
+
+      const collectedCount = equipmentCollected + techniqueCollected;
+      if (collectedCount === 0) {
+        throw new LocalGameError("行囊空间不足，暂无可批量收取的收获");
+      }
+      const equipment = snapshot.equipment.map((item) =>
+        collectedEquipmentIds.has(item.id)
+          ? { ...item, location: "bag", equippedSlot: null }
+          : item,
+      );
+      const techniqueDetail =
+        techniqueCollected > 0
+          ? `（新录 ${newTechniques}、副本 ${duplicateTechniques}）`
+          : "";
+      const blockedNotice =
+        remainingEntries.length > 0 ? "，请整理或扩容行囊" : "";
+      return {
+        snapshot: refreshSnapshot({
+          ...snapshot,
+          equipment,
+          techniques,
+          harvestChest: {
+            pendingCount: remainingEntries.length,
+            entries: remainingEntries,
+          },
+        }),
+        events: [],
+        message: `批量收取 ${collectedCount} 件：法宝 ${equipmentCollected}、功法 ${techniqueCollected}${techniqueDetail}；剩余 ${remainingEntries.length} 件${blockedNotice}`,
+      };
+    });
+  }
+
   salvageHarvest(entryId: string): LocalMutationResult {
     return this.mutate((snapshot) => {
       const entry = snapshot.harvestChest.entries.find((item) => item.id === entryId);
       if (!entry) throw new LocalGameError("该收获已经处理");
       if (!isAssetQuality(entry.quality)) throw new LocalGameError("收获品质数据无效");
       const salvage = salvageValue(entry.entryType, entry.quality);
+      const applied = resolveSalvageReward(snapshot, salvage, {
+        releasesBagSlot: false,
+        accountLifetimeImmediately: true,
+      });
       const entries = snapshot.harvestChest.entries.filter((item) => item.id !== entryId);
       const equipment = entry.equipmentInstanceId
         ? snapshot.equipment.filter((item) => item.id !== entry.equipmentInstanceId)
         : snapshot.equipment;
-      let inventory = snapshot.inventory;
-      if (salvage.enhanceStone > 0) {
-        inventory = addStack(inventory, "enhance_stone", salvage.enhanceStone);
-      }
       return {
         snapshot: {
           ...snapshot,
           equipment,
-          inventory,
-          wallet: {
-            ...snapshot.wallet,
-            spiritStone: decimal(snapshot.wallet.spiritStone)
-              .plus(salvage.spiritStone)
-              .toFixed(0),
-          },
+          inventory: applied.inventory,
+          wallet: applied.wallet,
           harvestChest: { pendingCount: entries.length, entries },
         },
         events: [],
-        message: `分解 ${entry.displayName}，获得 ${salvage.spiritStone} 灵石`,
+        message: salvageRewardMessage(entry.displayName, applied),
+      };
+    });
+  }
+
+  salvageLowQualityHarvest(): LocalMutationResult {
+    return this.mutate((snapshot) => {
+      const salvageEntries = snapshot.harvestChest.entries.filter(
+        (entry) =>
+          entry.quality === "common" || entry.quality === "uncommon",
+      );
+      if (salvageEntries.length === 0) {
+        throw new LocalGameError("收获箱中没有可批量分解的普通或优秀物品");
+      }
+
+      let spiritStone = 0;
+      let enhanceStone = 0;
+      const salvagedEntryIds = new Set<string>();
+      const salvagedEquipmentIds = new Set<string>();
+      for (const entry of salvageEntries) {
+        if (!isAssetQuality(entry.quality)) {
+          throw new LocalGameError("收获品质数据无效");
+        }
+        const reward = salvageValue(entry.entryType, entry.quality);
+        spiritStone += reward.spiritStone;
+        enhanceStone += reward.enhanceStone;
+        salvagedEntryIds.add(entry.id);
+        if (entry.equipmentInstanceId) {
+          salvagedEquipmentIds.add(entry.equipmentInstanceId);
+        }
+      }
+
+      const applied = resolveSalvageReward(
+        snapshot,
+        { spiritStone, enhanceStone },
+        {
+          releasesBagSlot: false,
+          accountLifetimeImmediately: true,
+        },
+      );
+      const entries = snapshot.harvestChest.entries.filter(
+        (entry) => !salvagedEntryIds.has(entry.id),
+      );
+      const equipment = snapshot.equipment.filter(
+        (item) => !salvagedEquipmentIds.has(item.id),
+      );
+      const enhancementReward =
+        applied.enhanceStone > 0
+          ? `、强化石 ${applied.enhanceStone}`
+          : "";
+      const conversionNotice =
+        applied.convertedEnhanceStone > 0
+          ? `（${applied.convertedEnhanceStone} 枚强化石因行囊已满折为灵石）`
+          : "";
+      return {
+        snapshot: refreshSnapshot({
+          ...snapshot,
+          equipment,
+          inventory: applied.inventory,
+          wallet: applied.wallet,
+          harvestChest: { pendingCount: entries.length, entries },
+        }),
+        events: [],
+        message: `批量分解 ${salvageEntries.length} 件：获得灵石 ${applied.spiritStone}${enhancementReward}${conversionNotice}；剩余 ${entries.length} 件`,
+      };
+    });
+  }
+
+  upgradeTechnique(techniqueConfigId: string): LocalMutationResult {
+    return this.mutate((snapshot) => {
+      const target = snapshot.techniques.find(
+        (item) => item.techniqueConfigId === techniqueConfigId,
+      );
+      if (!target) throw new LocalGameError("尚未收录该功法");
+      if (target.star >= TECHNIQUE_MAX_STAR) {
+        throw new LocalGameError(`${target.displayName}已达到最高星级`);
+      }
+
+      const cost = techniqueStarUpgradeCost(target.star);
+      const duplicateCount = Math.min(
+        target.duplicateCount,
+        cost.duplicateCount,
+      );
+      const missingDuplicates = cost.duplicateCount - duplicateCount;
+      const requiredPages = missingDuplicates * TECHNIQUE_PAGES_PER_DUPLICATE;
+      const ownedPages = decimal(stackQuantity(snapshot, "technique_page"));
+      if (ownedPages.lessThan(requiredPages)) {
+        throw new LocalGameError(
+          `同名副本不足，可用功法残页补足，还需 ${decimal(requiredPages).minus(ownedPages).toFixed(0)} 张`,
+        );
+      }
+      const inventory =
+        requiredPages > 0
+          ? setStackQuantity(
+              snapshot.inventory,
+              "technique_page",
+              ownedPages.minus(requiredPages).toFixed(0),
+            )
+          : snapshot.inventory;
+      const techniques = snapshot.techniques.map((item) =>
+        item.techniqueConfigId === techniqueConfigId
+          ? {
+              ...item,
+              star: cost.targetStar,
+              duplicateCount: item.duplicateCount - duplicateCount,
+            }
+          : item,
+      );
+      return {
+        snapshot: refreshSnapshot({ ...snapshot, inventory, techniques }),
+        events: [],
+        message:
+          requiredPages > 0
+            ? `消耗 ${duplicateCount} 本同名副本和 ${requiredPages} 张残页，${target.displayName}升至 ${cost.targetStar} 星`
+            : `消耗 ${duplicateCount} 本同名副本，${target.displayName}升至 ${cost.targetStar} 星`,
       };
     });
   }
@@ -513,6 +1514,288 @@ export class LocalGameService {
         }),
         events: [],
         message: `已卸下 ${target.displayName}`,
+      };
+    });
+  }
+
+  enhanceEquipment(equipmentInstanceId: string): LocalMutationResult {
+    return this.mutate((snapshot) => {
+      const target = snapshot.equipment.find(
+        (item) => item.id === equipmentInstanceId,
+      );
+      if (!target || target.location === "harvest") {
+        throw new LocalGameError("该法宝不在行囊中");
+      }
+      if (!isAssetQuality(target.quality)) {
+        throw new LocalGameError("法宝品质数据无效");
+      }
+      if (target.enhanceLevel >= EQUIPMENT_MAX_ENHANCE_LEVEL) {
+        throw new LocalGameError(`${target.displayName}已强化至上限`);
+      }
+
+      const cost = equipmentEnhanceCost(target.quality, target.enhanceLevel);
+      const spiritStone = decimal(snapshot.wallet.spiritStone);
+      if (spiritStone.lessThan(cost.spiritStone)) {
+        throw new LocalGameError(
+          `灵石不足，还需 ${decimal(cost.spiritStone).minus(spiritStone).toFixed(0)} 灵石`,
+        );
+      }
+      const ownedEnhanceStone = decimal(
+        stackQuantity(snapshot, "enhance_stone"),
+      );
+      if (ownedEnhanceStone.lessThan(cost.enhanceStone)) {
+        throw new LocalGameError(
+          `强化石不足，还需 ${decimal(cost.enhanceStone).minus(ownedEnhanceStone).toFixed(0)} 枚`,
+        );
+      }
+
+      const inventory = setStackQuantity(
+        snapshot.inventory,
+        "enhance_stone",
+        ownedEnhanceStone.minus(cost.enhanceStone).toFixed(0),
+      );
+      const equipment = snapshot.equipment.map((item) =>
+        item.id === equipmentInstanceId
+          ? { ...item, enhanceLevel: cost.targetLevel }
+          : item,
+      );
+      return {
+        snapshot: refreshSnapshot({
+          ...snapshot,
+          equipment,
+          inventory,
+          wallet: {
+            ...snapshot.wallet,
+            spiritStone: spiritStone.minus(cost.spiritStone).toFixed(0),
+          },
+        }),
+        events: [],
+        message: `消耗 ${cost.spiritStone} 灵石和 ${cost.enhanceStone} 枚强化石，${target.displayName}强化至 +${cost.targetLevel}`,
+      };
+    });
+  }
+
+  rerollEquipmentAffixes(equipmentInstanceId: string): LocalMutationResult {
+    return this.mutate((snapshot) => {
+      const target = snapshot.equipment.find(
+        (item) => item.id === equipmentInstanceId,
+      );
+      if (!target || target.location === "harvest") {
+        throw new LocalGameError("该法宝不在行囊中");
+      }
+      if (!isAssetQuality(target.quality)) {
+        throw new LocalGameError("法宝品质数据无效");
+      }
+      if (target.quality === "common") {
+        throw new LocalGameError(`${target.displayName}没有词条，无法洗练`);
+      }
+
+      const cost = equipmentRerollCost(target.quality);
+      const ownedEnhanceStone = decimal(
+        stackQuantity(snapshot, "enhance_stone"),
+      );
+      if (ownedEnhanceStone.lessThan(cost.enhanceStone)) {
+        throw new LocalGameError(
+          `强化石不足，还需 ${decimal(cost.enhanceStone).minus(ownedEnhanceStone).toFixed(0)} 枚`,
+        );
+      }
+      const spiritStone = decimal(snapshot.wallet.spiritStone);
+      if (spiritStone.lessThan(cost.spiritStone)) {
+        throw new LocalGameError(
+          `灵石不足，还需 ${decimal(cost.spiritStone).minus(spiritStone).toFixed(0)} 灵石`,
+        );
+      }
+
+      // Only the better roll is kept, so a reroll can never ruin a finished
+      // piece. The cost is charged either way, which is what keeps the sink
+      // from being free. Both rolls are measured in the piece's own band, so a
+      // 天阶 piece is compared against the 天阶 ceiling.
+      const band = equipmentBandForConfig(target.equipmentConfigId);
+      const currentScoreBp = equipmentAffixScoreBp(
+        target.quality,
+        band,
+        readRolledAffixes(target.rolledAffixes),
+      );
+      const rolled = rollEquipmentAffixes(target.quality, band, randomInteger);
+      const rolledScoreBp = equipmentAffixScoreBp(target.quality, band, rolled);
+      const improved = rolledScoreBp > currentScoreBp;
+
+      return {
+        snapshot: refreshSnapshot({
+          ...snapshot,
+          equipment: improved
+            ? snapshot.equipment.map((item) =>
+                item.id === equipmentInstanceId
+                  ? { ...item, rolledAffixes: rolled }
+                  : item,
+              )
+            : snapshot.equipment,
+          inventory: setStackQuantity(
+            snapshot.inventory,
+            "enhance_stone",
+            ownedEnhanceStone.minus(cost.enhanceStone).toFixed(0),
+          ),
+          wallet: {
+            ...snapshot.wallet,
+            spiritStone: spiritStone.minus(cost.spiritStone).toFixed(0),
+          },
+        }),
+        events: [],
+        message: improved
+          ? `洗练完成：词条评分 ${formatAffixScore(currentScoreBp)} → ${formatAffixScore(rolledScoreBp)}`
+          : `洗练结果 ${formatAffixScore(rolledScoreBp)} 未超过当前 ${formatAffixScore(currentScoreBp)}，词条保持不变`,
+      };
+    });
+  }
+
+  ascendEquipment(equipmentInstanceId: string): LocalMutationResult {
+    return this.mutate((snapshot) => {
+      const target = snapshot.equipment.find(
+        (item) => item.id === equipmentInstanceId,
+      );
+      if (!target || target.location === "harvest") {
+        throw new LocalGameError("该法宝不在行囊中");
+      }
+      if (!isAssetQuality(target.quality)) {
+        throw new LocalGameError("法宝品质数据无效");
+      }
+      if (!nextAssetQuality(target.quality)) {
+        throw new LocalGameError(`${target.displayName}已是最高品质`);
+      }
+      if (!canAscendEquipmentQuality(target.quality)) {
+        throw new LocalGameError("只有传说与神话法宝可以升华");
+      }
+
+      const cost = equipmentAscendCost(target.quality);
+      const craftingRoomLevel = caveBuildingLevel(snapshot.cave.buildings, "crafting_room");
+      if (craftingRoomLevel < cost.requiredCraftingRoomLevel) {
+        throw new LocalGameError(
+          `炼器室需达到 Lv.${cost.requiredCraftingRoomLevel}`,
+        );
+      }
+
+      // Materials must be spare copies: in the bag, unlocked and unequipped, so
+      // ascending can never eat the piece the player is wearing or protecting.
+      const materials = snapshot.equipment.filter(
+        (item) =>
+          item.id !== target.id &&
+          item.equipmentConfigId === target.equipmentConfigId &&
+          item.quality === target.quality &&
+          item.location === "bag" &&
+          item.equippedSlot === null &&
+          !item.isLocked,
+      );
+      if (materials.length < cost.duplicateCount) {
+        throw new LocalGameError(
+          `同款${qualityDisplayName(target.quality)}法宝不足，还需 ${cost.duplicateCount - materials.length} 件（须在行囊中且未锁定）`,
+        );
+      }
+      const spiritStone = decimal(snapshot.wallet.spiritStone);
+      if (spiritStone.lessThan(cost.spiritStone)) {
+        throw new LocalGameError(
+          `灵石不足，还需 ${decimal(cost.spiritStone).minus(spiritStone).toFixed(0)} 灵石`,
+        );
+      }
+
+      const consumed = new Set(
+        materials.slice(0, cost.duplicateCount).map((item) => item.id),
+      );
+      // The enhance level survives: quality scales both base power and the
+      // enhance multiplier, so clearing it would force a choice between
+      // ascending and keeping the investment.
+      const equipment = snapshot.equipment
+        .filter((item) => !consumed.has(item.id))
+        .map((item) =>
+          item.id === equipmentInstanceId
+            ? {
+                ...item,
+                quality: cost.targetQuality,
+                isLocked: shouldAutoLockEquipment(cost.targetQuality),
+                rolledAffixes: rollEquipmentAffixes(
+                  cost.targetQuality,
+                  equipmentBandForConfig(item.equipmentConfigId),
+                  randomInteger,
+                ),
+              }
+            : item,
+        );
+
+      return {
+        snapshot: refreshSnapshot({
+          ...snapshot,
+          equipment,
+          wallet: {
+            ...snapshot.wallet,
+            spiritStone: spiritStone.minus(cost.spiritStone).toFixed(0),
+          },
+        }),
+        events: [],
+        message: `消耗 ${cost.duplicateCount} 件同款法宝和 ${cost.spiritStone} 灵石，${target.displayName}升华为${qualityDisplayName(cost.targetQuality)}`,
+      };
+    });
+  }
+
+  toggleEquipmentLock(equipmentInstanceId: string): LocalMutationResult {
+    return this.mutate((snapshot) => {
+      const target = snapshot.equipment.find(
+        (item) => item.id === equipmentInstanceId,
+      );
+      if (!target || target.location === "harvest") {
+        throw new LocalGameError("该法宝不在行囊中");
+      }
+      const isLocked = !target.isLocked;
+      return {
+        snapshot: {
+          ...snapshot,
+          equipment: snapshot.equipment.map((item) =>
+            item.id === equipmentInstanceId ? { ...item, isLocked } : item,
+          ),
+        },
+        events: [],
+        message: isLocked
+          ? `已锁定 ${target.displayName}，分解前需先解锁`
+          : `已解锁 ${target.displayName}`,
+      };
+    });
+  }
+
+  salvageEquipment(equipmentInstanceId: string): LocalMutationResult {
+    return this.mutate((snapshot) => {
+      const target = snapshot.equipment.find(
+        (item) => item.id === equipmentInstanceId,
+      );
+      if (!target || target.location === "harvest") {
+        throw new LocalGameError("该法宝不在行囊中");
+      }
+      if (target.location === "equipped" || target.equippedSlot !== null) {
+        throw new LocalGameError("请先卸下该法宝再分解");
+      }
+      if (target.isLocked) {
+        throw new LocalGameError("该法宝已锁定，请先解锁");
+      }
+      if (!isAssetQuality(target.quality)) {
+        throw new LocalGameError("法宝品质数据无效");
+      }
+
+      const reward = equipmentSalvageReward(
+        target.quality,
+        target.enhanceLevel,
+      );
+      const applied = resolveSalvageReward(snapshot, reward, {
+        releasesBagSlot: true,
+        accountLifetimeImmediately: true,
+      });
+      return {
+        snapshot: {
+          ...snapshot,
+          equipment: snapshot.equipment.filter(
+            (item) => item.id !== equipmentInstanceId,
+          ),
+          inventory: applied.inventory,
+          wallet: applied.wallet,
+        },
+        events: [],
+        message: salvageRewardMessage(target.displayName, applied),
       };
     });
   }
@@ -583,6 +1866,11 @@ export class LocalGameService {
         };
       }
       if (target === "breakthrough_pill") {
+        ensureStackOutputCapacity(
+          snapshot,
+          "breakthrough_pill",
+          "行囊空间不足，无法增加调试突破丹",
+        );
         return {
           snapshot: {
             ...snapshot,
@@ -602,7 +1890,7 @@ export class LocalGameService {
         ...snapshot,
         progress: { ...snapshot.progress, ...applied.progress },
       });
-      const withTasks = syncNewcomerTasks(progressed);
+      const withTasks = syncProgressionTasks(progressed);
       return {
         snapshot: withTasks.snapshot,
         events: applied.events,
@@ -641,9 +1929,61 @@ export class LocalGameService {
     };
   }
 
+  exportBackup(now = new Date()): LocalBackupExportResult {
+    const checkpoint = this.checkpoint(now);
+    const payload = JSON.stringify(this.requireSave());
+    return {
+      ...checkpoint,
+      backupCode: `${LOCAL_BACKUP_PREFIX}${backupChecksum(payload)}:${payload}`,
+    };
+  }
+
+  importBackup(backupCode: string, now = new Date()): LocalLoadResult {
+    const imported = parseLocalBackupCode(backupCode);
+    this.checkpoint(now);
+    const current = this.requireSave();
+    if (
+      !this.platform.save(
+        CLIENT_CONFIG.localImportRecoveryStorageKey,
+        current,
+      )
+    ) {
+      throw new LocalGameError("无法创建当前进度的回退备份，导入已取消");
+    }
+    return this.activateImportedSave(imported, current, now, "导入存档写入失败");
+  }
+
+  hasImportRecovery(): boolean {
+    return (
+      parseLocalGameSave(
+        this.platform.load<unknown>(
+          CLIENT_CONFIG.localImportRecoveryStorageKey,
+        ),
+      ) !== null
+    );
+  }
+
+  restoreImportRecovery(now = new Date()): LocalLoadResult {
+    const recovery = parseLocalGameSave(
+      this.platform.load<unknown>(CLIENT_CONFIG.localImportRecoveryStorageKey),
+    );
+    if (!recovery) throw new LocalGameError("没有可恢复的导入前存档");
+    this.checkpoint(now);
+    const current = this.requireSave();
+    const result = this.activateImportedSave(
+      recovery,
+      current,
+      now,
+      "回退存档写入失败",
+    );
+    this.platform.remove(CLIENT_CONFIG.localImportRecoveryStorageKey);
+    return result;
+  }
+
   reset(): LocalLoadResult {
     const previous = this.snapshot;
     this.platform.remove(CLIENT_CONFIG.localSaveStorageKey);
+    this.platform.remove(CLIENT_CONFIG.localImportRecoveryStorageKey);
     this.saveData = createInitialSave(new Date());
     const persisted = this.persist();
     return {
@@ -666,16 +2006,52 @@ export class LocalGameService {
   ): LocalMutationResult {
     this.settleTo(new Date(), BASIS_POINTS, false);
     const previous = this.snapshot;
-    const result = operation(previous);
-    const now = new Date();
-    this.setSnapshot(refreshSnapshot(result.snapshot), now);
-    this.persist();
+    try {
+      const result = operation(previous);
+      // A milestone the action itself just satisfied settles inside the same
+      // transaction: a cleared tower floor or a fresh breakthrough should show
+      // up in the task panel immediately rather than waiting for the next idle
+      // tick, which is the only other place tasks are synced.
+      const tasks = syncProgressionTasks(result.snapshot);
+      const now = new Date();
+      this.setSnapshot(refreshSnapshot(tasks.snapshot), now);
+      this.persist();
+      return {
+        previous,
+        snapshot: this.snapshot,
+        events: result.events,
+        sourceId: createLocalId(),
+        ...(result.message ? { message: result.message } : {}),
+      };
+    } catch (error) {
+      // The idle settlement precedes every action and remains valid even when
+      // the requested mutation is rejected.
+      this.persist();
+      throw error;
+    }
+  }
+
+  private activateImportedSave(
+    imported: LocalGameSave,
+    current: LocalGameSave,
+    now: Date,
+    failureMessage: string,
+  ): LocalLoadResult {
+    this.saveData = imported;
+    this.setSnapshot(imported.snapshot, now);
+    if (!this.persist()) {
+      this.saveData = current;
+      this.persist();
+      throw new LocalGameError(`${failureMessage}，当前进度未改变`);
+    }
     return {
-      previous,
+      previous: current.snapshot,
       snapshot: this.snapshot,
-      events: result.events,
+      savedAt: this.requireSave().savedAt,
+      persisted: true,
+      events: [],
       sourceId: createLocalId(),
-      ...(result.message ? { message: result.message } : {}),
+      created: false,
     };
   }
 
@@ -762,7 +2138,7 @@ export class LocalGameService {
           .toFixed(0),
       },
     });
-    const taskResult = syncNewcomerTasks(next);
+    const taskResult = syncProgressionTasks(next);
     next = taskResult.snapshot;
     const effectiveSeconds = Math.floor(elapsedMilliseconds / 1_000);
     const shouldShow =
@@ -816,163 +2192,6 @@ export class LocalGameService {
   }
 }
 
-function createInitialSave(now: Date): LocalGameSave {
-  const nowIso = now.toISOString();
-  const snapshot = refreshSnapshot({
-    account: { id: createLocalId() },
-    player: {
-      id: createLocalId(),
-      displayName: "青岚子",
-      avatarVariant: "neutral",
-      freeRenameAvailable: true,
-    },
-    progress: {
-      level: 1,
-      realmId: "qi_refining",
-      realmName: "练气期",
-      stage: "early",
-      title: "练气初期",
-      experience: "0",
-      requiredExperience: requiredExperienceForLevel(1),
-      settledAt: nowIso,
-      experienceRemainderMicros: 0,
-      status: "gaining",
-      totalPower: "100",
-      cultivationReserve: "0",
-      experiencePerSecond: "1",
-      spiritStonePerMinute: "1",
-      loadoutFixedPower: "0",
-      experienceBonusBp: 0,
-      spiritStoneBonusBp: 0,
-      dropBonusBp: 0,
-    },
-    wallet: {
-      spiritStone: "0",
-      immortalJade: "0",
-      lifetimeSpiritStoneEarned: "0",
-    },
-    inventory: { bagCapacity: BAG_INITIAL_CAPACITY, stacks: [] },
-    techniques: [],
-    equipment: [],
-    harvestChest: { pendingCount: 0, entries: [] },
-    cave: { buildings: createEmptyCaveBuildings() },
-    newcomerTasks: NEWCOMER_TASK_CONFIGS.map((task) => ({
-      taskConfigId: task.id,
-      progress: "1",
-      completedAt: null,
-      claimedAt: null,
-    })),
-    unlocks: { partner: false, cave: false },
-    settings: {
-      autoSalvageCommon: false,
-      autoSalvageUncommon: false,
-      partnerUnlockNoticeSeen: false,
-      selectedTab: "cultivation",
-    },
-    activeEffects: [],
-    config: { version: GAME_CONFIG_VERSION, maxLevel: MAX_LEVEL },
-    offlineSettlement: null,
-  });
-  return {
-    schemaVersion: LOCAL_SAVE_SCHEMA_VERSION,
-    savedAt: nowIso,
-    spiritStoneRemainderMicros: 0,
-    dropClockRemainderMicros: 0,
-    snapshot,
-  };
-}
-
-function refreshSnapshot(snapshot: BootstrapSnapshot): BootstrapSnapshot {
-  const loadout = calculateLoadoutBonuses({
-    techniques: snapshot.techniques
-      .filter((item) => item.equippedSlot !== null)
-      .map((item) => ({ techniqueConfigId: item.techniqueConfigId, star: item.star })),
-    equipment: snapshot.equipment
-      .filter((item) => item.equippedSlot !== null && isAssetQuality(item.quality))
-      .map((item) => ({
-        equipmentConfigId: item.equipmentConfigId,
-        quality: item.quality as AssetQuality,
-        enhanceLevel: item.enhanceLevel,
-        rolledAffixes: item.rolledAffixes,
-      })),
-  });
-  const bonuses = addLoadoutBonuses(
-    loadout,
-    calculateCaveBonuses(snapshot.cave.buildings),
-  );
-  const level = snapshot.progress.level;
-  const realm = getRealmConfigForLevel(level);
-  const unlocked = level >= 11;
-  return {
-    ...snapshot,
-    progress: {
-      ...snapshot.progress,
-      realmId: realm.id,
-      realmName: realm.displayName,
-      stage: getRealmStage(level),
-      title: getRealmTitle(level),
-      requiredExperience: requiredExperienceForLevel(level),
-      totalPower: calculateTotalPower(level, { fixedPower: bonuses.fixedPower }),
-      experiencePerSecond: calculateOnlineExperiencePerSecond(
-        level,
-        bonuses.experienceBonusBp,
-      ),
-      spiritStonePerMinute: calculateSpiritStonePerMinute(
-        level,
-        bonuses.spiritStoneBonusBp,
-      ),
-      loadoutFixedPower: bonuses.fixedPower,
-      experienceBonusBp: bonuses.experienceBonusBp,
-      spiritStoneBonusBp: bonuses.spiritStoneBonusBp,
-      dropBonusBp: bonuses.dropBonusBp,
-    },
-    unlocks: { partner: unlocked, cave: unlocked },
-    harvestChest: {
-      ...snapshot.harvestChest,
-      pendingCount: snapshot.harvestChest.entries.length,
-    },
-  };
-}
-
-function syncNewcomerTasks(snapshot: BootstrapSnapshot): {
-  snapshot: BootstrapSnapshot;
-  rewardGranted: boolean;
-} {
-  const now = new Date().toISOString();
-  let rewardGranted = false;
-  let inventory = snapshot.inventory;
-  const existing = new Map(
-    snapshot.newcomerTasks.map((task) => [task.taskConfigId, task] as const),
-  );
-  const newcomerTasks = NEWCOMER_TASK_CONFIGS.map((config) => {
-    const previous = existing.get(config.id);
-    const completed = snapshot.progress.level >= config.targetLevel;
-    const newlyCompleted = completed && previous?.completedAt == null;
-    const claimedAt =
-      config.id === NEWCOMER_REACH_LEVEL_8_TASK_ID && completed
-        ? previous?.claimedAt ?? now
-        : previous?.claimedAt ?? null;
-    if (
-      config.id === NEWCOMER_REACH_LEVEL_8_TASK_ID &&
-      newlyCompleted &&
-      previous?.claimedAt == null
-    ) {
-      inventory = addStack(inventory, "breakthrough_pill", 1);
-      rewardGranted = true;
-    }
-    return {
-      taskConfigId: config.id,
-      progress: Math.min(snapshot.progress.level, config.targetLevel).toString(),
-      completedAt: completed ? previous?.completedAt ?? now : null,
-      claimedAt,
-    };
-  });
-  return {
-    snapshot: { ...snapshot, inventory, newcomerTasks },
-    rewardGranted,
-  };
-}
-
 function applyIdleDrops(
   snapshot: BootstrapSnapshot,
   attempts: number,
@@ -980,34 +2199,54 @@ function applyIdleDrops(
 ): { snapshot: BootstrapSnapshot; summary: DropRewardSummary } {
   const summary = emptyDropSummary();
   let next = snapshot;
-  const materialIds = ["wood", "stone", "spiritual_soil", "spiritual_herb", "ore"];
   const stackRewards = new Map<string, number>();
+  // Drops never change the level, so the band is resolved once for the whole
+  // run. The pool is this band's five configs and nothing else: a 凡阶 player
+  // cannot find a 天阶 sword, and a 天阶 player stops finding 凡阶 ones.
+  const band = equipmentBandForLevel(snapshot.progress.level);
+  const bandEquipmentConfigs = equipmentConfigsForBand(band);
 
   for (let attempt = 0; attempt < attempts; attempt += 1) {
-    if (roll(350_000, randomInt)) {
-      const itemId = materialIds[randomInt(materialIds.length)]!;
+    // One draw over the whole span decides at most one stack reward. The id and
+    // the quantity only draw when there is something to choose, because a seeded
+    // stream turns every wasted draw into a different day's loot.
+    const stackDrop = pickIdleStackDrop(randomInt(IDLE_DROP_ROLL_SPAN));
+    if (stackDrop) {
+      const itemConfigId =
+        stackDrop.itemConfigIds.length === 1
+          ? stackDrop.itemConfigIds[0]!
+          : stackDrop.itemConfigIds[randomInt(stackDrop.itemConfigIds.length)]!;
+      const quantitySpan = idleStackDropQuantitySpan(stackDrop);
+      // The band multiplies the quantity *after* it is drawn. Folding it into
+      // the table's min/max would widen `randomInt(quantitySpan)` and hand the
+      // same seed a different day's loot from this attempt onward.
+      const rolledQuantity =
+        quantitySpan === 1
+          ? stackDrop.minQuantity
+          : stackDrop.minQuantity + randomInt(quantitySpan);
+      const quantity =
+        rolledQuantity * idleStackDropBandMultiplier(stackDrop, band);
       stackRewards.set(
-        itemId,
-        (stackRewards.get(itemId) ?? 0) + 1 + randomInt(3),
+        itemConfigId,
+        (stackRewards.get(itemConfigId) ?? 0) + quantity,
       );
     }
-    if (roll(10_000, randomInt)) {
-      stackRewards.set(
-        "enhance_stone",
-        (stackRewards.get("enhance_stone") ?? 0) + 1,
-      );
+    for (const itemDrop of IDLE_ITEM_DROPS) {
+      if (roll(itemDrop.chance, randomInt)) {
+        const quantity =
+          itemDrop.quantity * idleItemDropBandMultiplier(itemDrop, band);
+        stackRewards.set(
+          itemDrop.itemConfigId,
+          (stackRewards.get(itemDrop.itemConfigId) ?? 0) + quantity,
+        );
+      }
     }
-    if (roll(500, randomInt)) {
-      stackRewards.set(
-        "breakthrough_pill",
-        (stackRewards.get("breakthrough_pill") ?? 0) + 1,
-      );
-    }
-    if (roll(4_000, randomInt)) {
-      const config = EQUIPMENT_CONFIGS[randomInt(EQUIPMENT_CONFIGS.length)]!;
-      const quality: AssetQuality = randomInt(10_000) < 7_500 ? "common" : "uncommon";
+    if (roll(IDLE_EQUIPMENT_DROP_CHANCE, randomInt)) {
+      const config =
+        bandEquipmentConfigs[randomInt(bandEquipmentConfigs.length)]!;
+      const quality = rollDropQuality(band, randomInt);
       const valueScore = Math.floor(
-        (config.basePower * (quality === "common" ? 10_000 : 15_000)) / 10_000,
+        (config.basePower * ASSET_QUALITY_MULTIPLIER_BP[quality]) / 10_000,
       ).toString();
       const instanceId = createLocalId();
       const candidate = {
@@ -1027,23 +2266,23 @@ function applyIdleDrops(
         displayName: config.displayName,
         quality,
         slot: config.slot,
-        fixedPower: valueScore,
+        powerBonusBp: 0,
         enhanceLevel: 0,
-        rolledAffixes:
-          quality === "uncommon"
-            ? [{ stat: "experience_bonus", valueBp: 100 }]
-            : [],
+        rolledAffixes: rollEquipmentAffixes(quality, band, randomInt),
         location: "harvest",
         equippedSlot: null,
-        isLocked: false,
+        isLocked: shouldAutoLockEquipment(quality),
         configVersion: DROP_CONFIG_VERSION,
       });
       next = accepted.snapshot;
       summary.equipmentCount += 1;
       accountHarvestResult(summary, accepted);
     }
-    if (roll(1_200, randomInt)) {
-      const quality: AssetQuality = randomInt(10_000) < 8_000 ? "common" : "uncommon";
+    if (roll(IDLE_TECHNIQUE_DROP_CHANCE, randomInt)) {
+      const quality = pickWeightedQuality(
+        IDLE_TECHNIQUE_DROP_QUALITY_WEIGHTS,
+        randomInt,
+      );
       const candidates = TECHNIQUE_CONFIGS.filter((item) => item.quality === quality);
       const config = candidates[randomInt(candidates.length)]!;
       const accepted = addHarvestCandidate(next, {
@@ -1064,8 +2303,29 @@ function applyIdleDrops(
   }
 
   for (const [itemConfigId, quantity] of stackRewards) {
-    next = { ...next, inventory: addStack(next.inventory, itemConfigId, quantity) };
-    summary.stackItems.push({ itemConfigId, quantity: quantity.toString() });
+    if (hasStackOutputCapacity(next, itemConfigId)) {
+      next = {
+        ...next,
+        inventory: addStack(next.inventory, itemConfigId, quantity),
+      };
+      summary.stackItems.push({ itemConfigId, quantity: quantity.toString() });
+      continue;
+    }
+
+    const compensation = decimal(quantity)
+      .times(IDLE_STACK_OVERFLOW_SPIRIT_STONE_VALUE)
+      .toFixed(0);
+    next = {
+      ...next,
+      wallet: {
+        ...next.wallet,
+        spiritStone: decimal(next.wallet.spiritStone).plus(compensation).toFixed(0),
+      },
+    };
+    summary.autoSalvagedCount += quantity;
+    summary.autoSalvageSpiritStone = decimal(summary.autoSalvageSpiritStone)
+      .plus(compensation)
+      .toFixed(0);
   }
   return { snapshot: next, summary };
 }
@@ -1087,24 +2347,19 @@ function addHarvestCandidate(
     (quality === "uncommon" && snapshot.settings.autoSalvageUncommon);
   if (autoSalvage) {
     const salvage = salvageValue(entry.entryType, quality);
-    const inventory =
-      salvage.enhanceStone > 0
-        ? addStack(snapshot.inventory, "enhance_stone", salvage.enhanceStone)
-        : snapshot.inventory;
+    const applied = resolveSalvageReward(snapshot, salvage, {
+      releasesBagSlot: false,
+      accountLifetimeImmediately: false,
+    });
     return {
       snapshot: {
         ...snapshot,
-        inventory,
-        wallet: {
-          ...snapshot.wallet,
-          spiritStone: decimal(snapshot.wallet.spiritStone)
-            .plus(salvage.spiritStone)
-            .toFixed(0),
-        },
+        inventory: applied.inventory,
+        wallet: applied.wallet,
       },
       added: false,
-      autoSalvageSpiritStone: salvage.spiritStone,
-      autoSalvageEnhanceStone: salvage.enhanceStone,
+      autoSalvageSpiritStone: applied.spiritStone,
+      autoSalvageEnhanceStone: applied.enhanceStone,
     };
   }
   const entries = [...snapshot.harvestChest.entries, entry];
@@ -1165,12 +2420,164 @@ function createTechniqueSnapshot(
     star: 1,
     duplicateCount: 0,
     equippedSlot: null,
-    fixedPower: config.fixedPower.toString(),
+    powerBonusBp: 0,
     experienceBonusBp: config.experienceBonusBp,
     spiritStoneBonusBp: config.spiritStoneBonusBp,
     dropBonusBp: config.dropBonusBp,
     configVersion: DROP_CONFIG_VERSION,
   };
+}
+
+function ensureStackOutputCapacity(
+  snapshot: BootstrapSnapshot,
+  itemConfigId: string,
+  errorMessage = "行囊空间不足，无法收取炼丹产物",
+): void {
+  if (!hasStackOutputCapacity(snapshot, itemConfigId)) {
+    throw new LocalGameError(errorMessage);
+  }
+}
+
+function hasStackOutputCapacity(
+  snapshot: BootstrapSnapshot,
+  itemConfigId: string,
+): boolean {
+  return (
+    snapshot.inventory.stacks.some(
+      (stack) => stack.itemConfigId === itemConfigId,
+    ) || countOccupiedBagSlots(snapshot) < snapshot.inventory.bagCapacity
+  );
+}
+
+function addStackRewards(
+  snapshot: BootstrapSnapshot,
+  inventory: BootstrapSnapshot["inventory"],
+  rewards: readonly { readonly itemConfigId: string; readonly quantity: number }[],
+  capacityErrorMessage: string,
+): BootstrapSnapshot["inventory"] {
+  let next = inventory;
+  for (const reward of rewards) {
+    ensureStackOutputCapacity(
+      { ...snapshot, inventory: next },
+      reward.itemConfigId,
+      capacityErrorMessage,
+    );
+    next = addStack(next, reward.itemConfigId, reward.quantity);
+  }
+  return next;
+}
+
+function ensureEquipmentCapacity(snapshot: BootstrapSnapshot): void {
+  if (countOccupiedBagSlots(snapshot) >= snapshot.inventory.bagCapacity) {
+    throw new LocalGameError("行囊空间不足，无法收取炼器产物");
+  }
+}
+
+/** Picks one entry out of a weighted table with a single random draw. */
+function pickWeightedQuality(
+  weights: readonly { readonly quality: AssetQuality; readonly weight: number }[],
+  randomInt: (maxExclusive: number) => number,
+): AssetQuality {
+  const totalWeight = weights.reduce((total, entry) => total + entry.weight, 0);
+  let rollValue = randomInt(totalWeight);
+  for (const entry of weights) {
+    if (rollValue < entry.weight) return entry.quality;
+    rollValue -= entry.weight;
+  }
+  return "common";
+}
+
+/**
+ * The quality an idle drop rolls. Band 1's table totals the same 10,000 and
+ * splits at the same 7,500 the fixed roll used, so early-game drops come out of
+ * a seeded run exactly as they did before bands existed.
+ */
+function rollDropQuality(
+  band: EquipmentBand,
+  randomInt: (maxExclusive: number) => number,
+): AssetQuality {
+  return pickWeightedQuality(equipmentDropQualityWeights(band), randomInt);
+}
+
+function rollCraftingQuality(
+  craftingRoomLevel: number,
+  band: EquipmentBand,
+  randomInt: (maxExclusive: number) => number,
+): AssetQuality {
+  return pickWeightedQuality(
+    CRAFTING_QUALITY_WEIGHTS.map(({ quality }) => ({
+      quality,
+      weight: craftingQualityWeight(quality, craftingRoomLevel, band),
+    })),
+    randomInt,
+  );
+}
+
+function createCraftedEquipment(
+  equipmentConfigId: string,
+  quality: AssetQuality,
+): BootstrapSnapshot["equipment"][number] {
+  const config = getEquipmentConfig(equipmentConfigId);
+  return {
+    id: createLocalId(),
+    equipmentConfigId,
+    displayName: config.displayName,
+    quality,
+    slot: config.slot,
+    powerBonusBp: 0,
+    enhanceLevel: 0,
+    rolledAffixes: rollEquipmentAffixes(
+      quality,
+      equipmentBandForConfig(equipmentConfigId),
+      randomInteger,
+    ),
+    location: "bag",
+    equippedSlot: null,
+    isLocked: shouldAutoLockEquipment(quality),
+    configVersion: DROP_CONFIG_VERSION,
+  };
+}
+
+function qualityDisplayName(quality: AssetQuality): string {
+  return ASSET_QUALITY_DISPLAY_NAMES[quality];
+}
+
+function formatAffixScore(scoreBp: number): string {
+  return `${affixScorePercent(scoreBp)}%`;
+}
+
+/**
+ * 单次批量玩法操作能做的份数：灵石和每种材料各自够几份，取最小值，再压到批量上限。
+ * 调用方已经校验过至少够一份，因此返回值不会小于 1。
+ */
+function maxAffordableBatchCount(
+  spiritStone: string,
+  spiritStoneCost: number,
+  materialCosts: ReadonlyArray<{ readonly owned: string; readonly cost: number }>,
+): number {
+  let count = LOCAL_BATCH_ACTION_CAP;
+  const costs = [{ owned: spiritStone, cost: spiritStoneCost }, ...materialCosts];
+  for (const entry of costs) {
+    if (entry.cost <= 0) continue;
+    count = Math.min(
+      count,
+      decimal(entry.owned).dividedToIntegerBy(entry.cost).toNumber(),
+    );
+  }
+  return count;
+}
+
+function formatQualityCounts(counts: ReadonlyMap<AssetQuality, number>): string {
+  // Map.forEach rather than spreading counts.entries(): the Cocos build
+  // transpiles array spread to [].concat(...), which appends an iterator as a
+  // single element instead of expanding it, so the spread form renders
+  // "undefined xundefined" in the built game while passing here.
+  const entries: Array<readonly [AssetQuality, number]> = [];
+  counts.forEach((count, quality) => entries.push([quality, count]));
+  return entries
+    .sort(([left], [right]) => ASSET_QUALITY_ORDER[left] - ASSET_QUALITY_ORDER[right])
+    .map(([quality, count]) => `${qualityDisplayName(quality)} x${count}`)
+    .join("、");
 }
 
 function addStack(
@@ -1232,13 +2639,75 @@ function salvageValue(entryType: string, quality: AssetQuality): {
 } {
   const uncommon = quality !== "common";
   if (entryType === "equipment") {
-    return uncommon
-      ? { spiritStone: 250, enhanceStone: 2 }
-      : { spiritStone: 100, enhanceStone: 1 };
+    return equipmentSalvageReward(quality, 0);
   }
   return uncommon
     ? { spiritStone: 200, enhanceStone: 0 }
     : { spiritStone: 80, enhanceStone: 0 };
+}
+
+function resolveSalvageReward(
+  snapshot: BootstrapSnapshot,
+  reward: { readonly spiritStone: number; readonly enhanceStone: number },
+  options: {
+    readonly releasesBagSlot: boolean;
+    readonly accountLifetimeImmediately: boolean;
+  },
+): {
+  readonly inventory: BootstrapSnapshot["inventory"];
+  readonly wallet: BootstrapSnapshot["wallet"];
+  readonly spiritStone: number;
+  readonly enhanceStone: number;
+  readonly convertedEnhanceStone: number;
+} {
+  const hasEnhanceStoneStack = snapshot.inventory.stacks.some(
+    (stack) => stack.itemConfigId === "enhance_stone",
+  );
+  const canStoreEnhanceStone =
+    reward.enhanceStone === 0 ||
+    hasEnhanceStoneStack ||
+    options.releasesBagSlot ||
+    countOccupiedBagSlots(snapshot) < snapshot.inventory.bagCapacity;
+  const enhanceStone = canStoreEnhanceStone ? reward.enhanceStone : 0;
+  const convertedEnhanceStone = reward.enhanceStone - enhanceStone;
+  const spiritStone =
+    reward.spiritStone +
+    convertedEnhanceStone * ENHANCE_STONE_OVERFLOW_SPIRIT_STONE_VALUE;
+  return {
+    inventory:
+      enhanceStone > 0
+        ? addStack(snapshot.inventory, "enhance_stone", enhanceStone)
+        : snapshot.inventory,
+    wallet: {
+      ...snapshot.wallet,
+      spiritStone: decimal(snapshot.wallet.spiritStone).plus(spiritStone).toFixed(0),
+      lifetimeSpiritStoneEarned: decimal(
+        snapshot.wallet.lifetimeSpiritStoneEarned,
+      )
+        .plus(options.accountLifetimeImmediately ? spiritStone : 0)
+        .toFixed(0),
+    },
+    spiritStone,
+    enhanceStone,
+    convertedEnhanceStone,
+  };
+}
+
+function salvageRewardMessage(
+  displayName: string,
+  reward: {
+    readonly spiritStone: number;
+    readonly enhanceStone: number;
+    readonly convertedEnhanceStone: number;
+  },
+): string {
+  const enhancementReward =
+    reward.enhanceStone > 0 ? `和 ${reward.enhanceStone} 枚强化石` : "";
+  const conversionNotice =
+    reward.convertedEnhanceStone > 0
+      ? `（${reward.convertedEnhanceStone} 枚强化石因行囊已满折为灵石）`
+      : "";
+  return `分解 ${displayName}，获得 ${reward.spiritStone} 灵石${enhancementReward}${conversionNotice}`;
 }
 
 function equipmentFitsSlot(slot: string, equippedSlot: EquippedEquipmentSlot): boolean {
@@ -1247,22 +2716,315 @@ function equipmentFitsSlot(slot: string, equippedSlot: EquippedEquipmentSlot): b
     : slot === equippedSlot;
 }
 
-/**
- * Only `local-1.0.0` is migrated, and only by adding the cave field it predates.
- * Anything else is returned untouched so that a genuinely corrupt save still
- * fails validation instead of being silently repaired.
- */
 function migrateSnapshot(snapshot: unknown): unknown {
   if (!isRecord(snapshot)) return snapshot;
-  const config = snapshot.config;
-  if (!isRecord(config) || config.version !== GAME_CONFIG_VERSION_PRE_CAVE) {
-    return snapshot;
+  let migrated = snapshot;
+  let config = migrated.config;
+  if (!isRecord(config)) return snapshot;
+
+  if (config.version === GAME_CONFIG_VERSION_PRE_CAVE) {
+    migrated = {
+      ...migrated,
+      cave: { buildings: createEmptyCaveBuildings() },
+      config: { ...config, version: GAME_CONFIG_VERSION_PRE_EXPEDITION },
+    };
+    config = migrated.config;
   }
+  if (
+    isRecord(config) &&
+    config.version === GAME_CONFIG_VERSION_PRE_EXPEDITION
+  ) {
+    migrated = {
+      ...migrated,
+      expedition: { clearedStageIds: [] },
+      config: { ...config, version: GAME_CONFIG_VERSION_PRE_FEATURE_COMPLETION },
+    };
+    config = migrated.config;
+  }
+  if (
+    isRecord(config) &&
+    config.version === GAME_CONFIG_VERSION_PRE_FEATURE_COMPLETION
+  ) {
+    migrated = {
+      ...migrated,
+      partner: { partnerId: null, level: 0, bond: 0 },
+      sect: { sectId: null, level: 0, contribution: 0 },
+      config: { ...config, version: GAME_CONFIG_VERSION_PRE_ITEM_COMPLETION },
+    };
+    config = migrated.config;
+  }
+  if (
+    isRecord(config) &&
+    config.version === GAME_CONFIG_VERSION_PRE_ITEM_COMPLETION
+  ) {
+    const inventory = isRecord(migrated.inventory) ? migrated.inventory : null;
+    migrated = {
+      ...migrated,
+      ...(inventory && Array.isArray(inventory.stacks)
+        ? {
+            inventory: {
+              ...inventory,
+              stacks: inventory.stacks.filter(
+                (stack) =>
+                  !isRecord(stack) ||
+                  stack.itemConfigId !== "protection_talisman",
+              ),
+            },
+          }
+        : {}),
+      config: {
+        ...config,
+        version: GAME_CONFIG_VERSION_PRE_EXPEDITION_SWEEPS,
+      },
+    };
+    config = migrated.config;
+  }
+  if (
+    isRecord(config) &&
+    config.version === GAME_CONFIG_VERSION_PRE_EXPEDITION_SWEEPS
+  ) {
+    const expedition = isRecord(migrated.expedition)
+      ? migrated.expedition
+      : null;
+    migrated = {
+      ...migrated,
+      ...(expedition
+        ? { expedition: { ...expedition, sweepCounts: [] } }
+        : {}),
+      config: {
+        ...config,
+        version: GAME_CONFIG_VERSION_PRE_EQUIPMENT_MANAGEMENT,
+      },
+    };
+    config = migrated.config;
+  }
+  if (
+    isRecord(config) &&
+    config.version === GAME_CONFIG_VERSION_PRE_EQUIPMENT_MANAGEMENT
+  ) {
+    migrated = {
+      ...migrated,
+      ...(Array.isArray(migrated.equipment)
+        ? {
+            equipment: migrated.equipment.map((item) =>
+              isRecord(item) &&
+              isAssetQualityValue(item.quality) &&
+              shouldAutoLockEquipment(item.quality)
+                ? { ...item, isLocked: true }
+                : item,
+            ),
+          }
+        : {}),
+      config: { ...config, version: GAME_CONFIG_VERSION_PRE_POWER_MODEL },
+    };
+    config = migrated.config;
+  }
+  if (isRecord(config) && config.version === GAME_CONFIG_VERSION_PRE_POWER_MODEL) {
+    // Loadout power became a percentage of base power, so the three derived
+    // display fields changed both name and type. They are rewritten from
+    // config on every load, which is why zero is a safe placeholder: it only
+    // has to survive validation until `refreshSnapshot` recomputes it. Written
+    // unconditionally rather than renamed in place, because a save reaching
+    // this step may already carry the new names.
+    migrated = {
+      ...migrated,
+      ...(isRecord(migrated.progress)
+        ? {
+            progress: replacePowerField(
+              migrated.progress,
+              "loadoutFixedPower",
+              "loadoutPowerBonusBp",
+            ),
+          }
+        : {}),
+      ...(Array.isArray(migrated.techniques)
+        ? { techniques: migrated.techniques.map(renameItemPowerField) }
+        : {}),
+      ...(Array.isArray(migrated.equipment)
+        ? { equipment: migrated.equipment.map(renameItemPowerField) }
+        : {}),
+      config: { ...config, version: GAME_CONFIG_VERSION_PRE_TRIAL_TOWER },
+    };
+    config = migrated.config;
+  }
+  if (
+    isRecord(config) &&
+    config.version === GAME_CONFIG_VERSION_PRE_TRIAL_TOWER
+  ) {
+    // Padding the task list is mandatory, not cosmetic: `isProgressionTaskList`
+    // requires the stored count to equal the config length exactly, so the
+    // table growing from 3 rows to 22 would condemn every existing save as
+    // corrupt and hand the player a new one.
+    migrated = {
+      ...migrated,
+      trialTower: { highestFloor: 0 },
+      progressionTasks: padProgressionTasks(migrated.newcomerTasks),
+      unlocks: seedTrialTowerUnlock(migrated.unlocks, migrated.progress),
+      config: { ...config, version: GAME_CONFIG_VERSION_PRE_AFFIX_ROLL },
+    };
+    delete (migrated as Record<string, unknown>).newcomerTasks;
+    config = migrated.config;
+  }
+  if (
+    isRecord(config) &&
+    config.version === GAME_CONFIG_VERSION_PRE_AFFIX_ROLL
+  ) {
+    // Affixes became random, but stored ones are left exactly as they are: the
+    // old fixed values sit at the center of the new ranges and already satisfy
+    // the tightened validation, and rerolling on load would silently change an
+    // equipped piece's idle bonuses without the player doing anything.
+    migrated = {
+      ...migrated,
+      config: { ...config, version: GAME_CONFIG_VERSION_PRE_EQUIPMENT_BANDS },
+    };
+    config = migrated.config;
+  }
+  if (
+    isRecord(config) &&
+    config.version === GAME_CONFIG_VERSION_PRE_EQUIPMENT_BANDS
+  ) {
+    // Bands only bump the version. Every id an old save can hold is a band 1 id
+    // and all five survive; the band itself is derived from the id, never
+    // stored; and band 1's affix window is unchanged, so stored affixes and the
+    // scores read off them stay byte-identical.
+    migrated = {
+      ...migrated,
+      config: { ...config, version: GAME_CONFIG_VERSION_PRE_MATERIAL_CURVE },
+    };
+    config = migrated.config;
+  }
+  if (
+    isRecord(config) &&
+    config.version === GAME_CONFIG_VERSION_PRE_MATERIAL_CURVE
+  ) {
+    // The material band multiplier only bumps the version. It is read off
+    // `progress.level` at settlement time and never stored, stack quantities
+    // have no upper bound in validation, and nothing already in the bag changes
+    // meaning — so an old save simply starts earning its own band's rate on the
+    // next settlement. No back-pay, in line with every migration before it.
+    migrated = {
+      ...migrated,
+      config: { ...config, version: GAME_CONFIG_VERSION_PRE_TASK_CHAIN },
+    };
+    config = migrated.config;
+  }
+  if (isRecord(config) && config.version === GAME_CONFIG_VERSION_PRE_TASK_CHAIN) {
+    // Same mandatory padding as the trial-tower step, for the same reason: the
+    // chain grew from 22 rows to 42, and `isProgressionTaskList` demands the
+    // stored count equal the config length exactly. Padding also reorders the
+    // stored rows into the interleaved config order, which is lawful because
+    // validation never compares positions and claim marks travel by id.
+    //
+    // Milestones the player already passed complete on the next settlement and
+    // pay out then. That is `syncProgressionTasks`'s standing behaviour and the
+    // precedent this same step set at `local-2.5.0`; the alternative would have
+    // the migration forge a claim timestamp for a reward it never granted.
+    migrated = {
+      ...migrated,
+      progressionTasks: padProgressionTasks(migrated.progressionTasks),
+      config: { ...config, version: GAME_CONFIG_VERSION_PRE_ENHANCE_STONE_CURVE },
+    };
+    config = migrated.config;
+  }
+  if (
+    isRecord(config) &&
+    config.version === GAME_CONFIG_VERSION_PRE_ENHANCE_STONE_CURVE
+  ) {
+    // Version only, for the same reasons as the material curve step: the enhance
+    // stone band multiplier is derived from `progress.level` at settlement time
+    // and never stored, and a stone already in the bag does not change meaning.
+    // No back-pay for the stones an old save would have earned at its band.
+    migrated = {
+      ...migrated,
+      config: { ...config, version: GAME_CONFIG_VERSION_PRE_REALM_SPLIT },
+    };
+    config = migrated.config;
+  }
+  if (isRecord(config) && config.version === GAME_CONFIG_VERSION_PRE_REALM_SPLIT) {
+    // Version only. Splitting Lv.501-1000 into five realms moves no stored
+    // field: `realmId`, `realmName`, `stage` and `title` are shape-checked and
+    // then rebuilt from the level by `refreshSnapshot` on every load, and the
+    // three numeric knobs are equal across the split, so `requiredExperience`
+    // is unchanged at every level and no save can exceed its own bar.
+    //
+    // A save already past Lv.600 is not credited with the breakthroughs it
+    // "should" have had, and keeps whatever pills it holds: crediting them would
+    // either gift a breakthrough or debit a resource the player may have spent.
+    // Its first new breakthrough is the next hundred it reaches.
+    migrated = {
+      ...migrated,
+      config: { ...config, version: GAME_CONFIG_VERSION_PRE_DAO },
+    };
+    config = migrated.config;
+  }
+  if (isRecord(config) && config.version === GAME_CONFIG_VERSION_PRE_DAO) {
+    // The first step in this chain that actually adds a stored field. `dao` is
+    // not derivable from anything already on the save, so it is written in at
+    // level 0 rather than rebuilt by `refreshSnapshot`.
+    //
+    // No 道行 is back-credited. The reserve an old save has been piling up since
+    // it capped is exactly the currency this track spends, so the save keeps it
+    // and buys its own levels — a capped save will open the game to a large
+    // reserve and a run of levels it can take immediately, which is the
+    // intended behaviour, not a shortfall to compensate for.
+    migrated = {
+      ...migrated,
+      dao: { level: 0 },
+      config: { ...config, version: GAME_CONFIG_VERSION },
+    };
+  }
+  return migrated;
+}
+
+function padProgressionTasks(value: unknown): unknown[] {
+  const existing = new Map<string, unknown>();
+  if (Array.isArray(value)) {
+    for (const task of value) {
+      if (isRecord(task) && typeof task.taskConfigId === "string") {
+        existing.set(task.taskConfigId, task);
+      }
+    }
+  }
+  return PROGRESSION_TASK_CONFIGS.map(
+    (config) =>
+      existing.get(config.id) ?? {
+        taskConfigId: config.id,
+        progress: "0",
+        completedAt: null,
+        claimedAt: null,
+      },
+  );
+}
+
+/**
+ * Unlocks became stored and monotonic in this version. The other two bits are
+ * already on disk from when they were derived, so only the tower's needs a
+ * value, and the current level is the only fair thing to seed it from.
+ */
+function seedTrialTowerUnlock(
+  unlocks: unknown,
+  progress: unknown,
+): Record<string, unknown> {
+  const level =
+    isRecord(progress) && typeof progress.level === "number" ? progress.level : 1;
   return {
-    ...snapshot,
-    cave: { buildings: createEmptyCaveBuildings() },
-    config: { ...config, version: GAME_CONFIG_VERSION },
+    ...(isRecord(unlocks) ? unlocks : { partner: false, cave: false }),
+    trialTower: level >= TRIAL_TOWER_UNLOCK_LEVEL,
   };
+}
+
+function renameItemPowerField(item: unknown): unknown {
+  return isRecord(item) ? replacePowerField(item, "fixedPower", "powerBonusBp") : item;
+}
+
+function replacePowerField(
+  record: Record<string, unknown>,
+  oldKey: string,
+  newKey: string,
+): Record<string, unknown> {
+  const next = { ...record, [newKey]: 0 };
+  delete next[oldKey];
+  return next;
 }
 
 function parseLocalGameSave(value: unknown): LocalGameSave | null {
@@ -1299,6 +3061,48 @@ function parseLocalGameSave(value: unknown): LocalGameSave | null {
   }
 }
 
+function parseLocalBackupCode(rawCode: string): LocalGameSave {
+  if (typeof rawCode !== "string" || rawCode.length > LOCAL_BACKUP_MAX_LENGTH) {
+    throw new LocalGameError("存档备份内容过长或格式无效");
+  }
+  const code = rawCode.trim();
+  const checksumStart = LOCAL_BACKUP_PREFIX.length;
+  const checksumEnd = checksumStart + LOCAL_BACKUP_CHECKSUM_LENGTH;
+  if (
+    !code.startsWith(LOCAL_BACKUP_PREFIX) ||
+    code.charAt(checksumEnd) !== ":"
+  ) {
+    throw new LocalGameError("剪贴板中没有可识别的修仙存档备份");
+  }
+  const checksum = code.slice(checksumStart, checksumEnd);
+  const payload = code.slice(checksumEnd + 1);
+  if (!/^[0-9a-f]{8}$/.test(checksum) || backupChecksum(payload) !== checksum) {
+    throw new LocalGameError("存档备份校验失败，内容可能不完整或已被修改");
+  }
+
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(payload);
+  } catch {
+    throw new LocalGameError("存档备份内容不是有效数据");
+  }
+  const save = parseLocalGameSave(decoded);
+  if (!save) {
+    throw new LocalGameError("存档备份内容无效或版本不兼容");
+  }
+  return save;
+}
+
+function backupChecksum(value: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    hash = Math.imul(hash ^ (code & 0xff), 0x01000193);
+    hash = Math.imul(hash ^ (code >>> 8), 0x01000193);
+  }
+  return `00000000${(hash >>> 0).toString(16)}`.slice(-8);
+}
+
 function isBootstrapSnapshot(value: unknown): value is BootstrapSnapshot {
   if (!isRecord(value)) return false;
   const player = value.player;
@@ -1326,10 +3130,16 @@ function isBootstrapSnapshot(value: unknown): value is BootstrapSnapshot {
     isEquipmentList(value.equipment) &&
     isHarvestChest(chest) &&
     isCaveSnapshot(value.cave) &&
-    isNewcomerTaskList(value.newcomerTasks) &&
+    isExpeditionSnapshot(value.expedition) &&
+    isTrialTowerSnapshot(value.trialTower) &&
+    isPartnerSnapshot(value.partner) &&
+    isSectSnapshot(value.sect) &&
+    isDaoSnapshot(value.dao) &&
+    isProgressionTaskList(value.progressionTasks) &&
     isRecord(value.unlocks) &&
     typeof value.unlocks.partner === "boolean" &&
     typeof value.unlocks.cave === "boolean" &&
+    typeof value.unlocks.trialTower === "boolean" &&
     isRecord(settings) &&
     typeof settings.autoSalvageCommon === "boolean" &&
     typeof settings.autoSalvageUncommon === "boolean" &&
@@ -1343,6 +3153,89 @@ function isBootstrapSnapshot(value: unknown): value is BootstrapSnapshot {
     isOfflineSettlement(value.offlineSettlement) &&
     hasConsistentInventory(value)
   );
+}
+
+/**
+ * 道行 needs no cross-check against the level. The reserve it spends only
+ * accrues at the cap, and the level never decreases, so a positive 道行 on a
+ * low-level save is unreachable rather than illegal.
+ */
+function isDaoSnapshot(value: unknown): boolean {
+  return isRecord(value) && isIntegerBetween(value.level, 0, DAO_MAX_LEVEL);
+}
+
+function isPartnerSnapshot(value: unknown): boolean {
+  if (!isRecord(value) || !isIntegerBetween(value.bond, 0, 1_000_000_000)) {
+    return false;
+  }
+  if (value.partnerId === null) {
+    return value.level === 0 && value.bond === 0;
+  }
+  if (typeof value.partnerId !== "string") return false;
+  try {
+    getPartnerConfig(value.partnerId);
+  } catch {
+    return false;
+  }
+  if (!isIntegerBetween(value.level, 1, PARTNER_MAX_LEVEL)) return false;
+  if (value.level === PARTNER_MAX_LEVEL) return value.bond === 0;
+  return Number(value.bond) < partnerBondRequirement(Number(value.level) + 1);
+}
+
+function isSectSnapshot(value: unknown): boolean {
+  if (
+    !isRecord(value) ||
+    !isIntegerBetween(value.contribution, 0, 1_000_000_000)
+  ) {
+    return false;
+  }
+  if (value.sectId === null) {
+    return value.level === 0 && value.contribution === 0;
+  }
+  if (typeof value.sectId !== "string") return false;
+  try {
+    getSectConfig(value.sectId);
+  } catch {
+    return false;
+  }
+  if (!isIntegerBetween(value.level, 1, SECT_MAX_LEVEL)) return false;
+  if (value.level === SECT_MAX_LEVEL) return value.contribution === 0;
+  return Number(value.contribution) < sectContributionRequirement(Number(value.level) + 1);
+}
+
+function isExpeditionSnapshot(value: unknown): boolean {
+  if (
+    !isRecord(value) ||
+    !Array.isArray(value.clearedStageIds) ||
+    !Array.isArray(value.sweepCounts)
+  ) {
+    return false;
+  }
+  if (value.clearedStageIds.length > EXPEDITION_STAGE_CONFIGS.length) return false;
+  if (
+    !value.clearedStageIds.every(
+      (stageId, index) =>
+        typeof stageId === "string" &&
+        stageId === EXPEDITION_STAGE_CONFIGS[index]?.id,
+    ) ||
+    value.sweepCounts.length > value.clearedStageIds.length
+  ) {
+    return false;
+  }
+  const sweepStageIds = new Set<string>();
+  for (const entry of value.sweepCounts) {
+    if (
+      !isRecord(entry) ||
+      typeof entry.stageConfigId !== "string" ||
+      value.clearedStageIds.indexOf(entry.stageConfigId) < 0 ||
+      sweepStageIds.has(entry.stageConfigId) ||
+      !isIntegerBetween(entry.count, 1, EXPEDITION_SWEEP_MAX_COUNT)
+    ) {
+      return false;
+    }
+    sweepStageIds.add(entry.stageConfigId);
+  }
+  return true;
 }
 
 function isCaveSnapshot(value: unknown): boolean {
@@ -1385,7 +3278,7 @@ function isProgressSnapshot(value: unknown): boolean {
     isDecimalString(value.cultivationReserve) &&
     isRateString(value.experiencePerSecond) &&
     isRateString(value.spiritStonePerMinute) &&
-    isDecimalString(value.loadoutFixedPower) &&
+    isNonNegativeSafeInteger(value.loadoutPowerBonusBp) &&
     isNonNegativeSafeInteger(value.experienceBonusBp) &&
     isNonNegativeSafeInteger(value.spiritStoneBonusBp) &&
     isNonNegativeSafeInteger(value.dropBonusBp)
@@ -1453,10 +3346,10 @@ function isTechniqueList(value: unknown): boolean {
       technique.displayName !== config.displayName ||
       technique.quality !== config.quality ||
       technique.slot !== config.slot ||
-      !isIntegerBetween(technique.star, 1, 10) ||
+      !isIntegerBetween(technique.star, 1, TECHNIQUE_MAX_STAR) ||
       !isIntegerBetween(technique.duplicateCount, 0, 1_000_000_000) ||
       (equippedSlot !== null && equippedSlot !== config.slot) ||
-      !isDecimalString(technique.fixedPower) ||
+      !isNonNegativeSafeInteger(technique.powerBonusBp) ||
       !isNonNegativeSafeInteger(technique.experienceBonusBp) ||
       !isNonNegativeSafeInteger(technique.spiritStoneBonusBp) ||
       !isNonNegativeSafeInteger(technique.dropBonusBp) ||
@@ -1496,8 +3389,12 @@ function isEquipmentList(value: unknown): boolean {
       equipment.displayName !== config.displayName ||
       !isAssetQualityValue(equipment.quality) ||
       equipment.slot !== config.slot ||
-      !isDecimalString(equipment.fixedPower) ||
-      !isIntegerBetween(equipment.enhanceLevel, 0, 20) ||
+      !isNonNegativeSafeInteger(equipment.powerBonusBp) ||
+      !isIntegerBetween(
+        equipment.enhanceLevel,
+        0,
+        EQUIPMENT_MAX_ENHANCE_LEVEL,
+      ) ||
       !isRolledAffixes(equipment.rolledAffixes) ||
       (location !== "bag" && location !== "equipped" && location !== "harvest") ||
       !isEquipmentSlotOrNull(equippedSlot) ||
@@ -1575,8 +3472,15 @@ function isHarvestChest(value: unknown): boolean {
   });
 }
 
-function isNewcomerTaskList(value: unknown): boolean {
-  if (!Array.isArray(value) || value.length !== NEWCOMER_TASK_CONFIGS.length) {
+function isTrialTowerSnapshot(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    isIntegerBetween(value.highestFloor, 0, TRIAL_TOWER_MAX_FLOOR)
+  );
+}
+
+function isProgressionTaskList(value: unknown): boolean {
+  if (!Array.isArray(value) || value.length !== PROGRESSION_TASK_CONFIGS.length) {
     return false;
   }
   const taskIds = new Set<string>();
@@ -1589,7 +3493,7 @@ function isNewcomerTaskList(value: unknown): boolean {
       !isNullableIsoTimestamp(task.completedAt) ||
       !isNullableIsoTimestamp(task.claimedAt) ||
       (task.claimedAt !== null && task.completedAt === null) ||
-      !NEWCOMER_TASK_CONFIGS.some((config) => config.id === task.taskConfigId)
+      !PROGRESSION_TASK_CONFIGS.some((config) => config.id === task.taskConfigId)
     ) {
       return false;
     }
@@ -1710,18 +3614,23 @@ function hasConsistentInventory(snapshot: Record<string, unknown>): boolean {
 }
 
 function isRolledAffixes(value: unknown): boolean {
-  return (
-    Array.isArray(value) &&
-    value.length <= 16 &&
-    value.every(
-      (affix) =>
-        isRecord(affix) &&
-        (affix.stat === "experience_bonus" ||
-          affix.stat === "spirit_stone_bonus" ||
-          affix.stat === "drop_bonus") &&
-        isIntegerBetween(affix.valueBp, 0, 1_000_000),
-    )
-  );
+  if (!Array.isArray(value) || value.length > AFFIX_STATS.length) return false;
+  const seen = new Set<unknown>();
+  for (const affix of value) {
+    if (
+      !isRecord(affix) ||
+      !AFFIX_STATS.some((stat) => stat === affix.stat) ||
+      !isIntegerBetween(affix.valueBp, 0, 1_000_000) ||
+      seen.has(affix.stat)
+    ) {
+      return false;
+    }
+    seen.add(affix.stat);
+  }
+  // Deliberately not range-checked against the quality's roll table: that would
+  // make load validation depend on the value tables, so any later retune would
+  // condemn existing saves. Ranges constrain new rolls, not stored ones.
+  return true;
 }
 
 function isEquipmentSlotOrNull(value: unknown): value is EquippedEquipmentSlot | null {
@@ -1733,15 +3642,6 @@ function isEquipmentSlotOrNull(value: unknown): value is EquippedEquipmentSlot |
     value === "accessory_right" ||
     value === "mount" ||
     value === "pet"
-  );
-}
-
-function isMainTab(value: unknown): boolean {
-  return (
-    value === "cultivation" ||
-    value === "partner" ||
-    value === "ranking" ||
-    value === "cave"
   );
 }
 

@@ -42,8 +42,17 @@ export function formatLargeNumber(value: string): string {
   return `${sign}${parsed.digits.replace(/\B(?=(\d{3})+(?!\d))/g, ",")}`;
 }
 
-export function sumBigNumberStrings(values: readonly string[]): string {
-  let total: ParsedInteger = { negative: false, digits: "0" };
+/**
+ * A basis-point bonus as a percentage: whole percents print without decimals,
+ * everything else with two, so a rolled affix keeps the precision it was rolled
+ * at while round numbers stay short.
+ */
+export function formatBasisPoints(value: number): string {
+  const percent = value / 100;
+  return `${Number.isInteger(percent) ? percent.toFixed(0) : percent.toFixed(2)}%`;
+}
+
+export function sumBigNumberStrings(values: readonly string[]): string {  let total: ParsedInteger = { negative: false, digits: "0" };
   for (const value of values) total = addIntegers(total, parseInteger(value));
   return stringifyInteger(total);
 }

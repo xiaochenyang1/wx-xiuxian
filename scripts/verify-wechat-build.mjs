@@ -13,6 +13,7 @@ import {
   sourceFingerprint,
   validateBuildFacts,
 } from "./wechat-build-manifest.mjs";
+import { bundleHazardPatterns } from "./transpile-hazards.mjs";
 
 const workspace = process.cwd();
 const rawArgs = process.argv.slice(2);
@@ -44,6 +45,7 @@ const runtimeMarkers = [
   "cultivation-diary.local-save.v1",
   "LocalGameService",
 ];
+const forbiddenRuntimePatterns = bundleHazardPatterns;
 const requiredEntries = [
   "game.js",
   "game.json",
@@ -99,6 +101,13 @@ for (const marker of runtimeMarkers) {
   for (const build of [debugBuild, releaseBuild]) {
     if (!build.allSource.includes(marker)) {
       throw new Error(build.mode + " build is missing runtime marker: " + marker);
+    }
+  }
+}
+for (const { pattern, reason } of forbiddenRuntimePatterns) {
+  for (const build of [debugBuild, releaseBuild]) {
+    if (pattern.test(build.allSource)) {
+      throw new Error(build.mode + " build contains unsupported runtime code: " + reason);
     }
   }
 }

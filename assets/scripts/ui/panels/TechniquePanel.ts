@@ -1,3 +1,4 @@
+import { getTechniqueUpgradeDisplay } from "../../core/AssetUpgradeDisplay";
 import { formatLargeNumber } from "../../core/ClientNumber";
 import type { AppState } from "../../core/ClientTypes";
 import { canRunLocalMutation } from "../../core/ClientTypes";
@@ -9,7 +10,7 @@ import {
   drawBand,
   drawPagination,
 } from "../primitives/Draw";
-import { qualityColor } from "../primitives/Format";
+import { formatBasisPoints, qualityColor } from "../primitives/Format";
 import { HorizontalTextAlignment, Node } from "cc";
 
 export interface TechniqueSlotLabelLayout {
@@ -40,7 +41,7 @@ export function drawTechniquePanel(
   const techniqueWindow = paging.window("techniques", techniques.length, 8);
   addLabel(
     overlay,
-    `功法 ${techniques.length} 本 · 装备战力 +${formatLargeNumber(state.bootstrap!.progress.loadoutFixedPower)} · 修炼 +${formatBasisPoints(state.bootstrap!.progress.experienceBonusBp)}`,
+    `功法 ${techniques.length} 本 · 残页 ${formatLargeNumber(state.bootstrap!.inventory.stacks.find((stack) => stack.itemConfigId === "technique_page")?.quantity ?? "0")} · 装备战力 +${formatBasisPoints(state.bootstrap!.progress.loadoutPowerBonusBp)}`,
     0,
     393,
     590,
@@ -87,15 +88,16 @@ export function drawTechniquePanel(
   }
   techniques.slice(techniqueWindow.start, techniqueWindow.end).forEach((technique, index) => {
     const y = 222 - index * 75;
+    const upgrade = getTechniqueUpgradeDisplay(state.bootstrap!, technique);
     drawBand(overlay, `Technique-${technique.techniqueConfigId}`, 0, y, 600, 62, COLORS.panel);
     addLabel(
       overlay,
       technique.displayName,
-      -190,
+      -225,
       y,
-      210,
+      135,
       34,
-      18,
+      17,
       qualityColor(technique.quality),
       true,
       1,
@@ -103,16 +105,41 @@ export function drawTechniquePanel(
     );
     addLabel(
       overlay,
-      `${technique.star}星 · 战力 +${formatLargeNumber(technique.fixedPower)}`,
-      25,
+      `${technique.star}星 · 战力 +${formatBasisPoints(technique.powerBonusBp)}`,
+      -90,
       y,
-      190,
+      130,
       32,
-      17,
+      15,
       COLORS.gold,
       false,
       1,
       HorizontalTextAlignment.CENTER,
+    );
+    addLabel(
+      overlay,
+      upgrade.costText,
+      52,
+      y,
+      142,
+      32,
+      14,
+      upgrade.affordable || upgrade.maxed ? COLORS.textMuted : COLORS.red,
+    );
+    createButton(
+      overlay,
+      upgrade.actionText,
+      158,
+      y,
+      64,
+      44,
+      {
+        fill: upgrade.affordable ? COLORS.inkGreenLight : COLORS.panel,
+        stroke: upgrade.affordable ? COLORS.gold : COLORS.goldMuted,
+        fontSize: 14,
+        enabled: mutationsEnabled && upgrade.actionEnabled,
+      },
+      () => actions.upgradeTechnique(technique.techniqueConfigId),
     );
     const equipped = technique.equippedSlot !== null;
     createButton(
@@ -122,9 +149,9 @@ export function drawTechniquePanel(
         : techniques.some((candidate) => candidate.equippedSlot === technique.slot)
           ? "替换"
           : "装备",
-      245,
+      255,
       y,
-      92,
+      78,
       44,
       {
         fill: equipped ? COLORS.red : COLORS.inkGreenLight,
@@ -148,9 +175,4 @@ export function drawTechniquePanel(
     () => paging.show("techniques", techniqueWindow.page - 1),
     () => paging.show("techniques", techniqueWindow.page + 1),
   );
-}
-
-function formatBasisPoints(value: number): string {
-  const percent = value / 100;
-  return `${Number.isInteger(percent) ? percent.toFixed(0) : percent.toFixed(2)}%`;
 }

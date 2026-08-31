@@ -12,8 +12,10 @@
 | 素材 | 文件位置 | 推荐尺寸 | 画面位置 | 要求 |
 | --- | --- | --- | --- | --- |
 | 修炼场景背景 | `assets/resources/art/backgrounds/cultivation.png` | `750 x 1334` | `(0, 0)` 全屏 | 只要山水、建筑、天空，不要人物、按钮、文字和数值 |
-| 修炼人物 | `assets/resources/art/characters/cultivator.png` | `640 x 900` | 中心约 `(375, 625)` | 透明 PNG，人物完整，不要光环和界面 |
-| 玩家头像 | `assets/resources/art/avatars/player.png` | `256 x 256` | 显示区约 `x=12..126, y=12..142` | 透明或正方形头像，不要等级、VIP 和边框 |
+| 男修人物 | `assets/resources/art/characters/cultivator-male.png` | `640 x 900` | 中心约 `(375, 625)` | 透明 PNG，人物完整，不要光环和界面 |
+| 女修人物 | `assets/resources/art/characters/cultivator-female.png` | `640 x 900` | 中心约 `(375, 625)` | 与男修保持相同构图、比例和光照 |
+| 男修头像 | `assets/resources/art/avatars/player-male.png` | `256 x 256` | 显示区约 `x=12..126, y=12..142` | 透明或正方形头像，不要等级、VIP 和边框 |
+| 女修头像 | `assets/resources/art/avatars/player-female.png` | `256 x 256` | 显示区约 `x=12..126, y=12..142` | 与女修人物的面貌、服饰和配色一致 |
 
 ## 右侧一级导航
 
@@ -38,9 +40,20 @@
 | 法宝 | `assets/resources/art/navigation/features/treasure.png` | `(161, 1247)` |
 | 炼丹 | `assets/resources/art/navigation/features/alchemy.png` | `(268, 1247)` |
 | 炼器 | `assets/resources/art/navigation/features/crafting.png` | `(375, 1247)` |
-| 灵宠 | `assets/resources/art/navigation/features/pet.png` | `(482, 1247)` |
+| 试炼塔 | `assets/resources/art/navigation/features/trial-tower.png` | `(482, 1247)` |
 | 宗门 | `assets/resources/art/navigation/features/sect.png` | `(589, 1247)` |
 | 历练 | `assets/resources/art/navigation/features/training.png` | `(696, 1247)` |
+
+## 修炼页左侧快捷
+
+同样是 `256 x 256` 透明 PNG，与底栏共用一套图标目录。这两格只在修炼页出现，各带一个程序绘制的数字角标（待领任务数、收获箱件数），角标压在图标右上角外侧，图案本身不要画红点。
+
+| 入口 | 文件位置 | 按钮中心坐标 |
+| --- | --- | --- |
+| 任务 | `assets/resources/art/navigation/features/tasks.png` | `(53, 412)` |
+| 行囊 | `assets/resources/art/navigation/features/inventory.png` | `(53, 517)` |
+
+档案不在这张表里：它的入口是顶栏头像，用的是上面那两张 `player-*.png`。
 
 ## 可选增强素材
 
@@ -57,6 +70,7 @@
 ## 导出检查
 
 - 所有透明图片使用直边透明，不要带白边、黑底或整张截图背景。
+- 男修、女修素材文件名必须带 `-male`、`-female` 后缀，程序按存档中的角色形象加载，不能用一张通用图覆盖两种选择。
 - 同一组图标保持一致的光照方向、描边粗细和视觉占比。
 - 主背景必须是无界面的干净底图，才能让名字、等级、战力、货币和进度显示真实本地数据。
 - 如果提供两套按钮状态，文件名后缀使用 `-normal.png` 和 `-selected.png`。

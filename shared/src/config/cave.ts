@@ -24,6 +24,9 @@ export interface CaveBuildingConfig {
 
 export const CAVE_MAX_LEVEL = 10;
 
+/** The first large system to unlock; the tower and the partner follow later. */
+export const CAVE_UNLOCK_LEVEL = 11;
+
 export const CAVE_BUILDING_CONFIGS: readonly CaveBuildingConfig[] = [
   {
     id: "spirit_array",
@@ -66,7 +69,7 @@ export const CAVE_BUILDING_CONFIGS: readonly CaveBuildingConfig[] = [
     displayName: "炼器室",
     maxLevel: CAVE_MAX_LEVEL,
     bonusStat: "power",
-    bonusPerLevelBp: 50,
+    bonusPerLevelBp: 200,
     baseSpiritStoneCost: 3_000,
     materials: [
       { itemConfigId: "ore", baseQuantity: 5 },

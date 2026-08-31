@@ -1,5 +1,10 @@
 import type { BootstrapSnapshot } from "@cultivation-diary/shared";
-import type { AppState, FeaturePanel, MainTab } from "../core/ClientTypes";
+import {
+  resolveRestoredTab,
+  type AppState,
+  type FeaturePanel,
+  type MainTab,
+} from "../core/ClientTypes";
 
 type StateListener = (state: Readonly<AppState>) => void;
 
@@ -52,9 +57,12 @@ export class AppStore {
       lastSavedAt,
       bootstrap,
       errorMessage: null,
+      // Every path by which a save becomes the current save — launch, import,
+      // reset — arrives here, so restoring the tab once here covers all three.
+      // A fresh save reads "cultivation", which is what a reset should show.
+      selectedTab: resolveRestoredTab(bootstrap),
       ...(identityChanged
         ? {
-            selectedTab: "cultivation" as const,
             activeFeature: null,
             featureMessage: null,
           }
@@ -88,7 +96,9 @@ export class AppStore {
   }
 
   selectTab(tab: MainTab): void {
-    if (this.state.selectedTab !== tab) this.update({ selectedTab: tab });
+    if (this.state.selectedTab !== tab) {
+      this.update({ selectedTab: tab, featureMessage: null });
+    }
   }
 
   openFeature(feature: FeaturePanel): void {

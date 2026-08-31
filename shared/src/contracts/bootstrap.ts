@@ -1,9 +1,11 @@
 import type { RealmId, RealmStage } from "../config/realms";
+import type { ExpeditionStageId } from "../config/expedition";
 import type { ProgressionStatus } from "../domain/progression";
 import type { BigNumberString } from "../types";
 import type { OfflineSettlementSummary } from "./offline";
 
 export type AvatarVariant = "neutral" | "male" | "female";
+export type AutoSalvageQuality = "common" | "uncommon";
 
 export interface BootstrapSnapshot {
   account: {
@@ -30,7 +32,7 @@ export interface BootstrapSnapshot {
     cultivationReserve: BigNumberString;
     experiencePerSecond: BigNumberString;
     spiritStonePerMinute: BigNumberString;
-    loadoutFixedPower: BigNumberString;
+    loadoutPowerBonusBp: number;
     experienceBonusBp: number;
     spiritStoneBonusBp: number;
     dropBonusBp: number;
@@ -56,7 +58,7 @@ export interface BootstrapSnapshot {
     star: number;
     duplicateCount: number;
     equippedSlot: string | null;
-    fixedPower: BigNumberString;
+    powerBonusBp: number;
     experienceBonusBp: number;
     spiritStoneBonusBp: number;
     dropBonusBp: number;
@@ -68,9 +70,17 @@ export interface BootstrapSnapshot {
     displayName: string;
     quality: string;
     slot: string;
-    fixedPower: BigNumberString;
+    powerBonusBp: number;
     enhanceLevel: number;
-    rolledAffixes: unknown;
+    /**
+     * Affixes stay `stat: string` here and are narrowed in the domain layer,
+     * the same way `quality` and `slot` are. Load validation guarantees at most
+     * one entry per stat.
+     */
+    rolledAffixes: Array<{
+      stat: string;
+      valueBp: number;
+    }>;
     location: string;
     equippedSlot: string | null;
     isLocked: boolean;
@@ -96,7 +106,35 @@ export interface BootstrapSnapshot {
       level: number;
     }>;
   };
-  newcomerTasks: Array<{
+  expedition: {
+    clearedStageIds: ExpeditionStageId[];
+    sweepCounts: Array<{
+      stageConfigId: ExpeditionStageId;
+      count: number;
+    }>;
+  };
+  trialTower: {
+    /** `0` means no floor has been cleared; the tower is climbed in order. */
+    highestFloor: number;
+  };
+  partner: {
+    partnerId: string | null;
+    level: number;
+    bond: number;
+  };
+  sect: {
+    sectId: string | null;
+    level: number;
+    contribution: number;
+  };
+  dao: {
+    /**
+     * `0` until the level cap is reached: `cultivationReserve`, the only
+     * currency this track spends, accrues nowhere else.
+     */
+    level: number;
+  };
+  progressionTasks: Array<{
     taskConfigId: string;
     progress: BigNumberString;
     completedAt: string | null;
@@ -105,6 +143,7 @@ export interface BootstrapSnapshot {
   unlocks: {
     partner: boolean;
     cave: boolean;
+    trialTower: boolean;
   };
   settings: {
     autoSalvageCommon: boolean;

@@ -1,14 +1,16 @@
 import { _decorator, Component, Node, ResolutionPolicy, view } from "cc";
 import { DEBUG } from "cc/env";
 import type {
+  AutoSalvageQuality,
   BootstrapSnapshot,
   ChosenAvatarVariant,
   DebugGrantTarget,
   EquippedEquipmentSlot,
   ProgressionEvent,
 } from "@cultivation-diary/shared";
-import { loadMainBackgroundArt } from "../core/AppArt";
+import { loadMainBackgroundArt, loadSupplementalArt } from "../core/AppArt";
 import { CLIENT_CONFIG } from "../core/ClientConfig";
+import type { MainTab } from "../core/ClientTypes";
 import {
   planCultivationPresentation,
   type CultivationPresentationTrigger,
@@ -17,6 +19,7 @@ import {
   DEFAULT_DESIGN_SAFE_AREA_LAYOUT,
   DESIGN_VIEWPORT_HEIGHT,
   DESIGN_VIEWPORT_WIDTH,
+  resolveDesignResolutionMode,
 } from "../core/SafeArea";
 import { createPlatformAdapter } from "../platform/PlatformAdapter";
 import {
@@ -42,10 +45,14 @@ export class GameBootstrap extends Component {
   private destroyed = false;
 
   onLoad(): void {
+    const safeAreaLayout =
+      this.platform.getSafeAreaLayout?.() ?? DEFAULT_DESIGN_SAFE_AREA_LAYOUT;
     view.setDesignResolutionSize(
       DESIGN_VIEWPORT_WIDTH,
       DESIGN_VIEWPORT_HEIGHT,
-      ResolutionPolicy.FIXED_WIDTH,
+      resolveDesignResolutionMode(safeAreaLayout) === "fixed-height"
+        ? ResolutionPolicy.FIXED_HEIGHT
+        : ResolutionPolicy.FIXED_WIDTH,
     );
 
     const appRoot = new Node("AppRoot");
@@ -56,11 +63,17 @@ export class GameBootstrap extends Component {
       {
         retry: () => this.startGame(),
         resetProgress: () => this.resetProgress(),
-        selectTab: (tab) => this.store.selectTab(tab),
+        exportProgressBackup: () => void this.exportProgressBackup(),
+        importProgressBackup: () => void this.importProgressBackup(),
+        restoreImportRecovery: () => this.restoreImportRecovery(),
+        hasImportRecovery: () => this.localGame.hasImportRecovery(),
+        selectTab: (tab) => this.selectTab(tab),
         openFeature: (feature) => this.store.openFeature(feature),
         closeFeature: () => this.store.closeFeature(),
         breakthrough: () =>
           this.runMutation(() => this.localGame.breakthrough(), "breakthrough"),
+        cultivateDao: (times) =>
+          this.runMutation(() => this.localGame.cultivateDao(times)),
         chooseAvatar: (avatarVariant) => this.chooseAvatar(avatarVariant),
         renamePlayer: (displayName) => this.renamePlayer(displayName),
         markPartnerUnlockNoticeSeen: () =>
@@ -72,12 +85,55 @@ export class GameBootstrap extends Component {
             () => this.localGame.upgradeCaveBuilding(buildingConfigId),
             "power_change",
           ),
+        challengeExpedition: (stageConfigId) =>
+          this.runMutation(() => this.localGame.challengeExpedition(stageConfigId)),
+        sweepExpedition: (stageConfigId) =>
+          this.runMutation(() => this.localGame.sweepExpedition(stageConfigId)),
+        challengeTrialTower: (floor) =>
+          this.runMutation(() => this.localGame.challengeTrialTower(floor)),
+        huntTreasure: () =>
+          this.runMutation(() => this.localGame.huntTreasure()),
+        brewAlchemy: (recipeId) =>
+          this.runMutation(() => this.localGame.brewAlchemy(recipeId)),
+        brewAlchemyBatch: (recipeId) =>
+          this.runMutation(() => this.localGame.brewAlchemyBatch(recipeId)),
+        craftEquipment: (recipeId) =>
+          this.runMutation(() => this.localGame.craftEquipment(recipeId)),
+        craftEquipmentBatch: (recipeId) =>
+          this.runMutation(() => this.localGame.craftEquipmentBatch(recipeId)),
+        choosePartner: (partnerId) =>
+          this.runMutation(
+            () => this.localGame.choosePartner(partnerId),
+            "power_change",
+          ),
+        cultivateWithPartner: () =>
+          this.runMutation(
+            () => this.localGame.cultivateWithPartner(),
+            "power_change",
+          ),
+        joinSect: (sectId) =>
+          this.runMutation(() => this.localGame.joinSect(sectId), "power_change"),
+        donateToSect: () =>
+          this.runMutation(() => this.localGame.donateToSect(), "power_change"),
+        upgradeTechnique: (techniqueConfigId) =>
+          this.runMutation(
+            () => this.localGame.upgradeTechnique(techniqueConfigId),
+            "power_change",
+          ),
         useInventoryItem: (itemConfigId) =>
           this.runMutation(() => this.localGame.useInventoryItem(itemConfigId)),
+        useAllInventoryItems: (itemConfigId) =>
+          this.runMutation(() => this.localGame.useAllInventoryItems(itemConfigId)),
         transferHarvest: (entryId) =>
           this.runMutation(() => this.localGame.transferHarvest(entryId)),
+        collectAllHarvest: () =>
+          this.runMutation(() => this.localGame.collectAllHarvest()),
         salvageHarvest: (entryId) =>
           this.runMutation(() => this.localGame.salvageHarvest(entryId)),
+        salvageLowQualityHarvest: () =>
+          this.runMutation(() => this.localGame.salvageLowQualityHarvest()),
+        toggleAutoSalvage: (quality: AutoSalvageQuality) =>
+          this.runMutation(() => this.localGame.toggleAutoSalvage(quality)),
         equipTechnique: (techniqueConfigId) =>
           this.runMutation(
             () => this.localGame.equipTechnique(techniqueConfigId),
@@ -95,6 +151,30 @@ export class GameBootstrap extends Component {
             () => this.localGame.unequipEquipment(equipmentInstanceId),
             "power_change",
           ),
+        enhanceEquipment: (equipmentInstanceId) =>
+          this.runMutation(
+            () => this.localGame.enhanceEquipment(equipmentInstanceId),
+            "power_change",
+          ),
+        // Rerolling never touches power, so it takes the default trigger: the
+        // affix line and the toast carry the whole result.
+        rerollEquipmentAffixes: (equipmentInstanceId) =>
+          this.runMutation(() =>
+            this.localGame.rerollEquipmentAffixes(equipmentInstanceId),
+          ),
+        ascendEquipment: (equipmentInstanceId) =>
+          this.runMutation(
+            () => this.localGame.ascendEquipment(equipmentInstanceId),
+            "power_change",
+          ),
+        toggleEquipmentLock: (equipmentInstanceId) =>
+          this.runMutation(() =>
+            this.localGame.toggleEquipmentLock(equipmentInstanceId),
+          ),
+        salvageEquipment: (equipmentInstanceId) =>
+          this.runMutation(() =>
+            this.localGame.salvageEquipment(equipmentInstanceId),
+          ),
         dismissOfflineSettlement: () => this.dismissOfflineSettlement(),
         simulateOffline: (seconds, seed) => this.debugSimulateOffline(seconds, seed),
         grantDebug: (target) => this.debugGrant(target),
@@ -102,7 +182,7 @@ export class GameBootstrap extends Component {
           this.debugResetSave(playerId, confirmation),
         feedback: () => this.platform.feedback(),
       },
-      this.platform.getSafeAreaLayout?.() ?? DEFAULT_DESIGN_SAFE_AREA_LAYOUT,
+      safeAreaLayout,
     );
     this.appView = appView;
     this.unsubscribeStore = this.store.subscribe((state) => appView.render(state));
@@ -114,6 +194,10 @@ export class GameBootstrap extends Component {
       .catch((error: unknown) => {
         if (DEBUG) console.warn("Main background art unavailable", error);
       });
+
+    void loadSupplementalArt().then((art) => {
+      if (!this.destroyed && this.appView === appView) appView.setSupplementalArt(art);
+    });
 
     this.schedule(
       (deltaSeconds: number) => this.appView?.updateIdleAnimation(deltaSeconds),
@@ -260,10 +344,26 @@ export class GameBootstrap extends Component {
       );
       if (result.message) this.store.setFeatureMessage(result.message);
     } catch (error) {
+      this.store.replaceSnapshot(
+        this.localGame.snapshot,
+        this.localGame.savedAt,
+        this.localGame.persistenceAvailable ? "saved" : "volatile",
+      );
       this.store.setFeatureMessage(localErrorMessage(error, "本地操作未完成"));
     } finally {
       this.mutationInFlight = false;
     }
+  }
+
+  /**
+   * The store moves first so the page swaps on the tap's own frame; recording
+   * it is best effort. If the write is skipped or fails the view is already
+   * right and only this one switch goes unremembered.
+   */
+  private selectTab(tab: MainTab): void {
+    if (this.store.snapshot.selectedTab === tab) return;
+    this.store.selectTab(tab);
+    this.runMutation(() => this.localGame.selectTab(tab));
   }
 
   private chooseAvatar(avatarVariant: ChosenAvatarVariant): void {
@@ -278,6 +378,130 @@ export class GameBootstrap extends Component {
     if (currentName && currentName !== previousName) {
       this.appView?.acceptProfileName(currentName);
     }
+  }
+
+  private async exportProgressBackup(): Promise<void> {
+    if (
+      this.destroyed ||
+      this.mutationInFlight ||
+      this.store.snapshot.phase !== "ready"
+    ) {
+      return;
+    }
+    this.mutationInFlight = true;
+    this.appView?.setBackupInFlight(true);
+    this.store.setFeatureMessage(null);
+    try {
+      const result = this.localGame.exportBackup();
+      this.store.replaceSnapshot(
+        result.snapshot,
+        result.savedAt,
+        result.persisted ? "saved" : "volatile",
+      );
+      const copied = await this.platform.writeClipboard(result.backupCode);
+      if (this.destroyed) return;
+      if (!copied) {
+        throw new LocalGameError("无法写入剪贴板，请检查剪贴板权限");
+      }
+      this.store.setFeatureMessage("存档备份已复制到剪贴板");
+    } catch (error) {
+      if (!this.destroyed) {
+        this.store.replaceSnapshot(
+          this.localGame.snapshot,
+          this.localGame.savedAt,
+          this.localGame.persistenceAvailable ? "saved" : "volatile",
+        );
+        this.store.setFeatureMessage(
+          localErrorMessage(error, "存档备份复制失败"),
+        );
+      }
+    } finally {
+      this.mutationInFlight = false;
+      this.appView?.setBackupInFlight(false);
+    }
+  }
+
+  private async importProgressBackup(): Promise<void> {
+    if (
+      this.destroyed ||
+      this.mutationInFlight ||
+      this.store.snapshot.phase !== "ready"
+    ) {
+      return;
+    }
+    this.mutationInFlight = true;
+    this.appView?.setBackupInFlight(true);
+    this.store.setFeatureMessage(null);
+    try {
+      const backupCode = await this.platform.readClipboard();
+      if (this.destroyed) return;
+      if (backupCode === null || backupCode.trim() === "") {
+        throw new LocalGameError("无法读取剪贴板，请检查剪贴板权限和内容");
+      }
+      const result = this.localGame.importBackup(backupCode);
+      this.applyProgressReplacement(
+        result,
+        "存档已恢复，原进度可通过“恢复导入前”找回",
+      );
+    } catch (error) {
+      if (!this.destroyed) {
+        this.store.replaceSnapshot(
+          this.localGame.snapshot,
+          this.localGame.savedAt,
+          this.localGame.persistenceAvailable ? "saved" : "volatile",
+        );
+        this.store.setFeatureMessage(
+          localErrorMessage(error, "剪贴板存档导入失败"),
+        );
+      }
+    } finally {
+      this.mutationInFlight = false;
+      this.appView?.setBackupInFlight(false);
+    }
+  }
+
+  private restoreImportRecovery(): void {
+    if (
+      this.destroyed ||
+      this.mutationInFlight ||
+      this.store.snapshot.phase !== "ready"
+    ) {
+      return;
+    }
+    this.mutationInFlight = true;
+    this.appView?.setBackupInFlight(true);
+    this.store.setFeatureMessage(null);
+    try {
+      const result = this.localGame.restoreImportRecovery();
+      this.applyProgressReplacement(result, "已恢复上次导入前的本地进度");
+    } catch (error) {
+      this.store.replaceSnapshot(
+        this.localGame.snapshot,
+        this.localGame.savedAt,
+        this.localGame.persistenceAvailable ? "saved" : "volatile",
+      );
+      this.store.setFeatureMessage(
+        localErrorMessage(error, "导入前存档恢复失败"),
+      );
+    } finally {
+      this.mutationInFlight = false;
+      this.appView?.setBackupInFlight(false);
+    }
+  }
+
+  private applyProgressReplacement(
+    result: ReturnType<LocalGameService["importBackup"]>,
+    message: string,
+  ): void {
+    this.appView?.interruptCultivationPresentation(true);
+    this.store.setReady(
+      result.snapshot,
+      result.savedAt,
+      result.persisted ? "saved" : "volatile",
+    );
+    this.appView?.acceptProfileName(result.snapshot.player.displayName);
+    this.store.openFeature("profile");
+    this.store.setFeatureMessage(message);
   }
 
   private equipEquipment(

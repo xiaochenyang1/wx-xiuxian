@@ -1,20 +1,17 @@
 import {
+  ASSET_QUALITY_MULTIPLIER_BP,
   ASSET_QUALITY_ORDER,
+  LOADOUT_POWER_SCALE_BP,
+  equipmentAffixRange,
   getEquipmentConfig,
   getTechniqueConfig,
   type AssetQuality,
+  type EquipmentBand,
 } from "../config/assets";
-import type { BigNumberString } from "../types";
-
-const QUALITY_MULTIPLIER_BP: Readonly<Record<AssetQuality, number>> = {
-  common: 10_000,
-  uncommon: 15_000,
-  rare: 25_000,
-  epic: 40_000,
-  legendary: 70_000,
-  mythic: 120_000,
-  primordial: 200_000,
-};
+import {
+  EQUIPMENT_MAX_ENHANCE_LEVEL,
+  TECHNIQUE_MAX_STAR,
+} from "../config/asset-upgrades";
 
 const TECHNIQUE_STAR_MULTIPLIER_BP = [
   0,
@@ -30,6 +27,27 @@ const TECHNIQUE_STAR_MULTIPLIER_BP = [
   95_000,
 ] as const;
 
+export type AffixStat =
+  | "experience_bonus"
+  | "spirit_stone_bonus"
+  | "drop_bonus";
+
+export interface RolledAffix {
+  readonly stat: AffixStat;
+  readonly valueBp: number;
+}
+
+/**
+ * The stat order affixes are stored and displayed in. A piece never carries the
+ * same stat twice, so this order makes any two pieces directly comparable
+ * without sorting at the display layer.
+ */
+export const AFFIX_STATS: readonly AffixStat[] = [
+  "experience_bonus",
+  "spirit_stone_bonus",
+  "drop_bonus",
+];
+
 export interface EquippedTechniqueInput {
   techniqueConfigId: string;
   star: number;
@@ -43,7 +61,7 @@ export interface EquippedEquipmentInput {
 }
 
 export interface LoadoutBonuses {
-  fixedPower: BigNumberString;
+  powerBonusBp: number;
   experienceBonusBp: number;
   spiritStoneBonusBp: number;
   dropBonusBp: number;
@@ -53,17 +71,24 @@ export function calculateTechniqueContribution(
   input: EquippedTechniqueInput,
 ): LoadoutBonuses {
   const config = getTechniqueConfig(input.techniqueConfigId);
-  const starMultiplierBp = TECHNIQUE_STAR_MULTIPLIER_BP[input.star];
-  if (starMultiplierBp === undefined) {
-    throw new RangeError(`Technique star must be between 1 and 10: ${input.star}`);
+  if (
+    !Number.isInteger(input.star) ||
+    input.star < 1 ||
+    input.star > TECHNIQUE_MAX_STAR
+  ) {
+    throw new RangeError(
+      `Technique star must be between 1 and ${TECHNIQUE_MAX_STAR}: ${input.star}`,
+    );
   }
-  const qualityMultiplierBp = QUALITY_MULTIPLIER_BP[config.quality];
+  const starMultiplierBp = TECHNIQUE_STAR_MULTIPLIER_BP[input.star]!;
+  const qualityMultiplierBp = ASSET_QUALITY_MULTIPLIER_BP[config.quality];
   return {
-    fixedPower: scaleByBasisPoints(
+    powerBonusBp: scaleByBasisPoints(
       config.fixedPower,
+      LOADOUT_POWER_SCALE_BP,
       qualityMultiplierBp,
       starMultiplierBp,
-    ).toString(),
+    ),
     experienceBonusBp: scaleByBasisPoints(
       config.experienceBonusBp,
       qualityMultiplierBp,
@@ -85,23 +110,29 @@ export function calculateTechniqueContribution(
 export function calculateEquipmentContribution(
   input: EquippedEquipmentInput,
 ): LoadoutBonuses {
-  if (!Number.isInteger(input.enhanceLevel) || input.enhanceLevel < 0 || input.enhanceLevel > 20) {
-    throw new RangeError(`Equipment enhance level must be between 0 and 20: ${input.enhanceLevel}`);
+  if (
+    !Number.isInteger(input.enhanceLevel) ||
+    input.enhanceLevel < 0 ||
+    input.enhanceLevel > EQUIPMENT_MAX_ENHANCE_LEVEL
+  ) {
+    throw new RangeError(
+      `Equipment enhance level must be between 0 and ${EQUIPMENT_MAX_ENHANCE_LEVEL}: ${input.enhanceLevel}`,
+    );
   }
   if (!(input.quality in ASSET_QUALITY_ORDER)) {
     throw new RangeError(`Unknown equipment quality: ${input.quality}`);
   }
 
   const config = getEquipmentConfig(input.equipmentConfigId);
-  const fixedPower = scaleByBasisPoints(
+  const bonuses = emptyLoadoutBonuses();
+  bonuses.powerBonusBp = scaleByBasisPoints(
     config.basePower,
-    QUALITY_MULTIPLIER_BP[input.quality],
+    LOADOUT_POWER_SCALE_BP,
+    ASSET_QUALITY_MULTIPLIER_BP[input.quality],
     10_000 + input.enhanceLevel * 1_000,
   );
-  const bonuses = emptyLoadoutBonuses();
-  bonuses.fixedPower = fixedPower.toString();
 
-  for (const affix of parseAffixes(input.rolledAffixes)) {
+  for (const affix of readRolledAffixes(input.rolledAffixes)) {
     if (affix.stat === "experience_bonus") bonuses.experienceBonusBp += affix.valueBp;
     if (affix.stat === "spirit_stone_bonus") bonuses.spiritStoneBonusBp += affix.valueBp;
     if (affix.stat === "drop_bonus") bonuses.dropBonusBp += affix.valueBp;
@@ -123,42 +154,79 @@ export function calculateLoadoutBonuses(input: {
   return total;
 }
 
-function emptyLoadoutBonuses(): LoadoutBonuses {
-  return {
-    fixedPower: "0",
-    experienceBonusBp: 0,
-    spiritStoneBonusBp: 0,
-    dropBonusBp: 0,
-  };
-}
+/**
+ * Rolls the affixes for a freshly created, rerolled or ascended piece.
+ *
+ * Stats are drawn first, without repetition, then values are rolled in stored
+ * order, so a given randomInt sequence always produces the same result. The
+ * caller owns the randomness: the service passes its plain randomInteger and
+ * the idle-drop path passes its seeded one.
+ */
+export function rollEquipmentAffixes(
+  quality: AssetQuality,
+  band: EquipmentBand,
+  randomInt: (maxExclusive: number) => number,
+): RolledAffix[] {
+  const range = equipmentAffixRange(quality, band);
+  if (range.count === 0) return [];
 
-function addContribution(total: LoadoutBonuses, contribution: LoadoutBonuses): void {
-  total.fixedPower = (BigInt(total.fixedPower) + BigInt(contribution.fixedPower)).toString();
-  total.experienceBonusBp += contribution.experienceBonusBp;
-  total.spiritStoneBonusBp += contribution.spiritStoneBonusBp;
-  total.dropBonusBp += contribution.dropBonusBp;
-}
-
-function scaleByBasisPoints(value: number, ...multipliersBp: number[]): number {
-  if (!Number.isSafeInteger(value) || value < 0) {
-    throw new RangeError(`Loadout value must be a non-negative safe integer: ${value}`);
+  const candidates = [...AFFIX_STATS];
+  for (let picked = 0; picked < range.count; picked += 1) {
+    const offset = randomInt(candidates.length - picked);
+    if (!Number.isInteger(offset) || offset < 0 || offset >= candidates.length - picked) {
+      throw new RangeError(`Affix stat roll out of range: ${offset}`);
+    }
+    const swapWith = picked + offset;
+    const held = candidates[picked]!;
+    candidates[picked] = candidates[swapWith]!;
+    candidates[swapWith] = held;
   }
-  const numerator = multipliersBp.reduce(
-    (result, multiplier) => result * BigInt(multiplier),
-    BigInt(value),
-  );
-  const divisor = 10_000n ** BigInt(multipliersBp.length);
-  const result = numerator / divisor;
-  if (result > BigInt(Number.MAX_SAFE_INTEGER)) {
-    throw new RangeError("Calculated loadout value exceeds safe integer range");
-  }
-  return Number(result);
+
+  const span = range.maxValueBp - range.minValueBp + 1;
+  return candidates
+    .slice(0, range.count)
+    .sort((left, right) => AFFIX_STATS.indexOf(left) - AFFIX_STATS.indexOf(right))
+    .map((stat) => {
+      const offset = randomInt(span);
+      if (!Number.isInteger(offset) || offset < 0 || offset >= span) {
+        throw new RangeError(`Affix value roll out of range: ${offset}`);
+      }
+      return { stat, valueBp: range.minValueBp + offset };
+    });
 }
 
-function parseAffixes(value: unknown): Array<{
-  stat: "experience_bonus" | "spirit_stone_bonus" | "drop_bonus";
-  valueBp: number;
-}> {
+/**
+ * Scores a piece's affixes against the best roll its quality can produce in its
+ * own band, in basis points. Derived on demand and never stored, which is the
+ * only way it cannot drift away from the affixes it describes.
+ *
+ * Because each band is measured against its own ceiling, a 天阶 100% is worth
+ * 75% more than a 凡阶 100%. The score compares two pieces of the same band and
+ * quality; it is not a cross-band ranking.
+ */
+export function equipmentAffixScoreBp(
+  quality: AssetQuality,
+  band: EquipmentBand,
+  affixes: readonly RolledAffix[],
+): number {
+  const range = equipmentAffixRange(quality, band);
+  if (range.count === 0) return 0;
+  const best = range.count * range.maxValueBp;
+  const rolled = affixes.reduce((total, affix) => total + affix.valueBp, 0);
+  return Math.floor((rolled * 10_000) / best);
+}
+
+/** The score as the whole percent it is displayed and reported as. */
+export function affixScorePercent(scoreBp: number): number {
+  return Math.floor(scoreBp / 100);
+}
+
+/**
+ * Narrows stored affixes, which come from local storage and are therefore
+ * untrusted even after load validation. Unknown entries are dropped rather
+ * than thrown on: a single odd affix must not take the whole save down.
+ */
+export function readRolledAffixes(value: unknown): RolledAffix[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((candidate) => {
     if (typeof candidate !== "object" || candidate === null) return [];
@@ -175,4 +243,42 @@ function parseAffixes(value: unknown): Array<{
     }
     return [{ stat, valueBp: Number(valueBp) }];
   });
+}
+
+function emptyLoadoutBonuses(): LoadoutBonuses {
+  return {
+    powerBonusBp: 0,
+    experienceBonusBp: 0,
+    spiritStoneBonusBp: 0,
+    dropBonusBp: 0,
+  };
+}
+
+function addContribution(total: LoadoutBonuses, contribution: LoadoutBonuses): void {
+  total.powerBonusBp += contribution.powerBonusBp;
+  total.experienceBonusBp += contribution.experienceBonusBp;
+  total.spiritStoneBonusBp += contribution.spiritStoneBonusBp;
+  total.dropBonusBp += contribution.dropBonusBp;
+}
+
+function scaleByBasisPoints(value: number, ...multipliersBp: number[]): number {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new RangeError(`Loadout value must be a non-negative safe integer: ${value}`);
+  }
+  const numerator = multipliersBp.reduce(
+    (result, multiplier) => result * BigInt(multiplier),
+    BigInt(value),
+  );
+  // Cocos 3.8 transpiles BigInt exponentiation to Math.pow, which throws at
+  // runtime because Math.pow only accepts numbers. Repeated multiplication
+  // preserves exact integer arithmetic in both source tests and built clients.
+  const divisor = multipliersBp.reduce(
+    (result) => result * 10_000n,
+    1n,
+  );
+  const result = numerator / divisor;
+  if (result > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new RangeError("Calculated loadout value exceeds safe integer range");
+  }
+  return Number(result);
 }

@@ -1,5 +1,18 @@
-import type { EquippedEquipmentSlot } from "@cultivation-diary/shared";
-import { formatLargeNumber } from "../../core/ClientNumber";
+import {
+  getStoredEquipment,
+  type EquippedEquipmentSlot,
+} from "@cultivation-diary/shared";
+import {
+  getEquipmentAffixDisplay,
+  getEquipmentAscendDisplay,
+  getEquipmentEnhanceDisplay,
+  getEquipmentEnhanceOrderHintText,
+  getEquipmentHeaderText,
+  getEquipmentRerollDisplay,
+  getEquipmentTitleText,
+  type AssetUpgradeDisplay,
+} from "../../core/AssetUpgradeDisplay";
+import { getEquipmentManagementDisplay } from "../../core/EquipmentManagementDisplay";
 import type { AppState } from "../../core/ClientTypes";
 import { canRunLocalMutation } from "../../core/ClientTypes";
 import type { AppViewActions, PanelPaging } from "../AppView";
@@ -10,7 +23,7 @@ import {
   drawBand,
   drawPagination,
 } from "../primitives/Draw";
-import { qualityColor } from "../primitives/Format";
+import { formatBasisPoints, qualityColor } from "../primitives/Format";
 import { HorizontalTextAlignment, Node } from "cc";
 
 export function drawEquipmentPanel(
@@ -19,12 +32,12 @@ export function drawEquipmentPanel(
   actions: AppViewActions,
   paging: PanelPaging,
 ): void {
-  const equipment = state.bootstrap!.equipment;
+  const equipment = getStoredEquipment(state.bootstrap!);
   const mutationsEnabled = canRunLocalMutation(state);
-  const equipmentWindow = paging.window("equipment", equipment.length, 7);
+  const equipmentWindow = paging.window("equipment", equipment.length, 4);
   addLabel(
     overlay,
-    `法宝 ${equipment.length} 件 · 装备影响战力与挂机效率`,
+    getEquipmentHeaderText(state.bootstrap!, equipment.length),
     0,
     393,
     590,
@@ -32,6 +45,22 @@ export function drawEquipmentPanel(
     19,
     COLORS.jade,
   );
+  const enhanceOrderHint = getEquipmentEnhanceOrderHintText(equipment);
+  if (enhanceOrderHint) {
+    addLabel(
+      overlay,
+      enhanceOrderHint,
+      0,
+      365,
+      590,
+      22,
+      13,
+      COLORS.gold,
+      false,
+      1,
+      HorizontalTextAlignment.CENTER,
+    );
+  }
   const slots: Array<{ id: EquippedEquipmentSlot; label: string }> = [
     { id: "weapon", label: "武器" },
     { id: "armor", label: "防具" },
@@ -61,16 +90,21 @@ export function drawEquipmentPanel(
     return;
   }
   equipment.slice(equipmentWindow.start, equipmentWindow.end).forEach((item, index) => {
-    const y = 180 - index * 72;
-    drawBand(overlay, `Equipment-${item.id}`, 0, y, 600, 60, COLORS.panel);
+    const y = 150 - index * 120;
+    const enhance = getEquipmentEnhanceDisplay(state.bootstrap!, item);
+    const affix = getEquipmentAffixDisplay(item);
+    const reroll = getEquipmentRerollDisplay(state.bootstrap!, item);
+    const ascend = getEquipmentAscendDisplay(state.bootstrap!, item);
+    const management = getEquipmentManagementDisplay(item);
+    drawBand(overlay, `Equipment-${item.id}`, 0, y, 600, 112, COLORS.panel);
     addLabel(
       overlay,
-      item.displayName,
-      -190,
-      y,
-      205,
-      34,
-      18,
+      getEquipmentTitleText(item),
+      -230,
+      y + 41,
+      125,
+      30,
+      16,
       qualityColor(item.quality),
       true,
       1,
@@ -78,29 +112,130 @@ export function drawEquipmentPanel(
     );
     addLabel(
       overlay,
-      `战力 +${formatLargeNumber(item.fixedPower)} · +${item.enhanceLevel}`,
-      25,
-      y,
-      170,
-      32,
-      17,
+      `战力 +${formatBasisPoints(item.powerBonusBp)} · +${item.enhanceLevel}`,
+      -95,
+      y + 41,
+      150,
+      28,
+      14,
       COLORS.gold,
       false,
       1,
       HorizontalTextAlignment.CENTER,
     );
+    addLabel(
+      overlay,
+      management.protectionText,
+      82,
+      y + 41,
+      92,
+      26,
+      13,
+      item.isLocked ? COLORS.gold : COLORS.textMuted,
+    );
+    addLabel(
+      overlay,
+      enhance.costText.replace("\n", " · "),
+      207,
+      y + 41,
+      154,
+      26,
+      12,
+      enhance.affordable || enhance.maxed ? COLORS.textMuted : COLORS.red,
+    );
+    // The affix line reads as one sentence — the score first, then the rolls it
+    // scored — so a player can judge a piece without opening anything.
+    addLabel(
+      overlay,
+      affix.affixText
+        ? `${affix.bandScoreText} · ${affix.affixText}`
+        : affix.bandScoreText,
+      0,
+      y + 15,
+      570,
+      22,
+      12,
+      affix.hasAffixes ? COLORS.jade : COLORS.textMuted,
+      false,
+      1,
+      HorizontalTextAlignment.LEFT,
+    );
+    drawUpgradeAction(
+      overlay,
+      reroll,
+      -196,
+      -84,
+      y - 11,
+      mutationsEnabled,
+      () => actions.rerollEquipmentAffixes(item.id),
+    );
+    drawUpgradeAction(
+      overlay,
+      ascend,
+      100,
+      212,
+      y - 11,
+      mutationsEnabled,
+      () => actions.ascendEquipment(item.id),
+    );
+    createButton(
+      overlay,
+      enhance.actionText,
+      -205,
+      y - 41,
+      86,
+      30,
+      {
+        fill: enhance.affordable ? COLORS.inkGreenLight : COLORS.panel,
+        stroke: enhance.affordable ? COLORS.gold : COLORS.goldMuted,
+        fontSize: 13,
+        enabled: mutationsEnabled && enhance.actionEnabled,
+      },
+      () => actions.enhanceEquipment(item.id),
+    );
+    createButton(
+      overlay,
+      management.lockActionText,
+      -106,
+      y - 41,
+      86,
+      30,
+      {
+        fill: item.isLocked ? COLORS.goldMuted : COLORS.panelStrong,
+        stroke: COLORS.goldMuted,
+        text: item.isLocked ? COLORS.background : COLORS.gold,
+        fontSize: 13,
+        enabled: mutationsEnabled,
+      },
+      () => actions.toggleEquipmentLock(item.id),
+    );
+    createButton(
+      overlay,
+      management.salvageActionText,
+      20,
+      y - 41,
+      150,
+      30,
+      {
+        fill: management.salvageEnabled ? COLORS.red : COLORS.panel,
+        stroke: COLORS.goldMuted,
+        fontSize: 12,
+        enabled: mutationsEnabled && management.salvageEnabled,
+      },
+      () => actions.salvageEquipment(item.id),
+    );
     if (item.equippedSlot) {
       createButton(
         overlay,
         "卸下",
-        245,
-        y,
-        92,
-        44,
+        230,
+        y - 41,
+        100,
+        30,
         {
           fill: COLORS.red,
           stroke: COLORS.goldMuted,
-          fontSize: 15,
+          fontSize: 13,
           enabled: mutationsEnabled,
         },
         () => actions.unequipEquipment(item.id),
@@ -109,14 +244,14 @@ export function drawEquipmentPanel(
       createButton(
         overlay,
         "装左",
-        211,
-        y,
-        58,
-        42,
+        202,
+        y - 41,
+        48,
+        30,
         {
           fill: COLORS.inkGreenLight,
           stroke: COLORS.goldMuted,
-          fontSize: 14,
+          fontSize: 12,
           enabled: mutationsEnabled,
         },
         () => actions.equipEquipment(item.id, "accessory_left"),
@@ -124,14 +259,14 @@ export function drawEquipmentPanel(
       createButton(
         overlay,
         "装右",
-        273,
-        y,
-        58,
-        42,
+        258,
+        y - 41,
+        48,
+        30,
         {
           fill: COLORS.inkGreenLight,
           stroke: COLORS.goldMuted,
-          fontSize: 14,
+          fontSize: 12,
           enabled: mutationsEnabled,
         },
         () => actions.equipEquipment(item.id, "accessory_right"),
@@ -144,14 +279,14 @@ export function drawEquipmentPanel(
           equipment.some((candidate) => candidate.equippedSlot === equippedSlot)
             ? "替换"
             : "装备",
-          245,
-          y,
-          92,
-          44,
+          230,
+          y - 41,
+          100,
+          30,
           {
             fill: COLORS.inkGreenLight,
             stroke: COLORS.goldMuted,
-            fontSize: 15,
+            fontSize: 13,
             enabled: mutationsEnabled,
           },
           () => actions.equipEquipment(item.id, equippedSlot),
@@ -168,6 +303,52 @@ export function drawEquipmentPanel(
     equipmentWindow.pageCount,
     () => paging.show("equipment", equipmentWindow.page - 1),
     () => paging.show("equipment", equipmentWindow.page + 1),
+  );
+}
+
+/**
+ * The cost sits beside the button rather than inside it: the two sinks price
+ * themselves in two currencies, and a player deciding between them needs to read
+ * both prices without tapping either.
+ */
+function drawUpgradeAction(
+  overlay: Node,
+  display: AssetUpgradeDisplay,
+  costX: number,
+  buttonX: number,
+  y: number,
+  mutationsEnabled: boolean,
+  onClick: () => void,
+): void {
+  addLabel(
+    overlay,
+    display.costText,
+    costX,
+    y,
+    120,
+    26,
+    11,
+    display.actionEnabled && !display.affordable
+      ? COLORS.red
+      : COLORS.textMuted,
+    false,
+    2,
+    HorizontalTextAlignment.LEFT,
+  );
+  createButton(
+    overlay,
+    display.actionText,
+    buttonX,
+    y,
+    84,
+    28,
+    {
+      fill: display.affordable ? COLORS.inkGreenLight : COLORS.panel,
+      stroke: display.affordable ? COLORS.gold : COLORS.goldMuted,
+      fontSize: 12,
+      enabled: mutationsEnabled && display.actionEnabled,
+    },
+    onClick,
   );
 }
 

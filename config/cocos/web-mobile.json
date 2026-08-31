@@ -1,0 +1,26 @@
+{
+  "name": "xiuxian-preview",
+  "platform": "web-mobile",
+  "buildPath": "project://build",
+  "outputName": "web-mobile-preview",
+  "debug": false,
+  "sourceMaps": false,
+  "md5Cache": false,
+  "mangleProperties": false,
+  "skipCompressTexture": false,
+  "packAutoAtlas": true,
+  "startSceneAssetBundle": false,
+  "bundleConfigs": [],
+  "startScene": "c024d01c-217e-4eaf-ae88-87eba35f90a3",
+  "scenes": [
+    {
+      "url": "db://assets/scene.scene",
+      "uuid": "c024d01c-217e-4eaf-ae88-87eba35f90a3"
+    }
+  ],
+  "packages": {
+    "web-mobile": {
+      "webOrientation": "portrait"
+    }
+  }
+}

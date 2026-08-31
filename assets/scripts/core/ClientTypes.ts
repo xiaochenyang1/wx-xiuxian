@@ -7,29 +7,14 @@ export type ImplementedFeaturePanel =
   | "techniques"
   | "equipment"
   | "inventory"
-  | "tasks";
-
-/**
- * 入口已在界面上出现、但功能尚未实现的面板。点击后展示明确的未开放说明，
- * 不会跳转到无关面板。
- */
-export type UpcomingFeaturePanel =
+  | "tasks"
   | "alchemy"
   | "crafting"
   | "sect"
-  | "expedition";
+  | "expedition"
+  | "trialTower";
 
-export type FeaturePanel = ImplementedFeaturePanel | UpcomingFeaturePanel;
-
-const UPCOMING_FEATURE_PANELS: ReadonlySet<string> = new Set<UpcomingFeaturePanel>(
-  ["alchemy", "crafting", "sect", "expedition"],
-);
-
-export function isUpcomingFeaturePanel(
-  feature: FeaturePanel,
-): feature is UpcomingFeaturePanel {
-  return UPCOMING_FEATURE_PANELS.has(feature);
-}
+export type FeaturePanel = ImplementedFeaturePanel;
 
 export interface AppState {
   phase: "loading" | "ready" | "error";
@@ -67,4 +52,32 @@ export function hasSameBootstrapIdentity(
     current?.account.id === incoming.account.id &&
     current.player.id === incoming.player.id
   );
+}
+
+export function isMainTab(value: unknown): value is MainTab {
+  return (
+    value === "cultivation" ||
+    value === "partner" ||
+    value === "ranking" ||
+    value === "cave"
+  );
+}
+
+/**
+ * The tab a save says it was left on, falling back to cultivation.
+ *
+ * `settings.selectedTab` is a `string` in the contract because `shared` cannot
+ * depend on `assets/`, so the narrowing happens here. Two of the four tabs are
+ * gated, and a locked one is legitimately reachable — the locked page is
+ * tappable — so a save can hold `cave` while `unlocks.cave` is false. Opening
+ * onto a "筑基后开启" placeholder is the worst possible first screen, so those
+ * fall back too. Unlock bits are never revoked, so this only ever catches a
+ * save that genuinely has not reached the threshold yet.
+ */
+export function resolveRestoredTab(bootstrap: BootstrapSnapshot): MainTab {
+  const saved = bootstrap.settings.selectedTab;
+  if (!isMainTab(saved)) return "cultivation";
+  if (saved === "partner" && !bootstrap.unlocks.partner) return "cultivation";
+  if (saved === "cave" && !bootstrap.unlocks.cave) return "cultivation";
+  return saved;
 }

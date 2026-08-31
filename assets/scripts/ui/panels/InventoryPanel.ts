@@ -1,11 +1,16 @@
+import { countOccupiedBagSlots } from "@cultivation-diary/shared";
 import { formatLargeNumber } from "../../core/ClientNumber";
 import type { AppState } from "../../core/ClientTypes";
 import { canRunLocalMutation } from "../../core/ClientTypes";
+import { getAutoSalvageControls } from "../../core/AutoSalvageDisplay";
+import { getHarvestBatchDisplay, getHarvestEntryDetailText } from "../../core/HarvestBatchDisplay";
+import { getInventoryItemUseDisplay } from "../../core/InventoryDisplay";
 import type { AppViewActions, PanelPaging } from "../AppView";
 import { COLORS } from "../primitives/Colors";
 import {
   addLabel,
   createButton,
+  createToggle,
   drawBand,
   drawPagination,
 } from "../primitives/Draw";
@@ -25,7 +30,7 @@ export function drawInventoryPanel(
 ): void {
   const data = state.bootstrap!;
   const mutationsEnabled = canRunLocalMutation(state);
-  const usedSlots = data.inventory.stacks.length + data.equipment.length;
+  const usedSlots = countOccupiedBagSlots(data);
   const stackWindow = paging.window(
     "inventoryStacks",
     data.inventory.stacks.length,
@@ -36,6 +41,7 @@ export function drawInventoryPanel(
     data.harvestChest.entries.length,
     4,
   );
+  const harvestBatch = getHarvestBatchDisplay(data);
   drawBand(overlay, "BagSummary", 0, 390, 620, 92, COLORS.inkGreen);
   addLabel(
     overlay,
@@ -115,7 +121,11 @@ export function drawInventoryPanel(
       .slice(stackWindow.start, stackWindow.end)
       .forEach((stack, index) => {
         const y = 258 - index * 54;
-        const directlyUsable = stack.itemConfigId === "exp_pill_small";
+        const useDisplay = getInventoryItemUseDisplay(
+          stack.itemConfigId,
+          data.progress.status,
+        );
+        const directlyUsable = useDisplay.visible;
         drawBand(overlay, `Stack-${stack.itemConfigId}`, 0, y, 600, 46, COLORS.panel);
         addLabel(
           overlay,
@@ -146,54 +156,125 @@ export function drawInventoryPanel(
         if (directlyUsable) {
           createButton(
             overlay,
-            "使用",
-            235,
+            useDisplay.enabled ? "使用1" : useDisplay.label,
+            190,
             y,
-            104,
+            78,
             40,
             {
               fill: COLORS.inkGreenLight,
               stroke: COLORS.goldMuted,
               fontSize: 15,
-              enabled: mutationsEnabled,
+              enabled: mutationsEnabled && useDisplay.enabled,
             },
             () => actions.useInventoryItem(stack.itemConfigId),
           );
+          if (stack.quantity !== "1") {
+            createButton(
+              overlay,
+              "批量使用",
+              278,
+              y,
+              100,
+              40,
+              {
+                fill: COLORS.inkGreen,
+                stroke: COLORS.goldMuted,
+                fontSize: 14,
+                enabled: mutationsEnabled && useDisplay.enabled,
+              },
+              () => actions.useAllInventoryItems(stack.itemConfigId),
+            );
+          }
         }
       });
   }
 
   addLabel(
     overlay,
-    `挂机收获箱 ${data.harvestChest.pendingCount} / 100`,
-    -205,
+    `收获箱 ${data.harvestChest.pendingCount} / 100`,
+    -238,
     35,
-    270,
+    144,
     36,
-    20,
+    18,
     COLORS.jade,
     true,
     1,
     HorizontalTextAlignment.LEFT,
   );
+  getAutoSalvageControls(data.settings).forEach((control, index) => {
+    createToggle(
+      overlay,
+      `AutoSalvage-${control.quality}`,
+      control.label,
+      index === 0 ? -86 : 40,
+      35,
+      116,
+      36,
+      control.active,
+      { enabled: mutationsEnabled, fontSize: 14 },
+      () => actions.toggleAutoSalvage(control.quality),
+    );
+  });
   drawPagination(
     overlay,
     "HarvestChestPager",
-    190,
+    225,
     35,
     harvestWindow.page,
     harvestWindow.pageCount,
     () => paging.show("harvestChest", harvestWindow.page - 1),
     () => paging.show("harvestChest", harvestWindow.page + 1),
   );
+  addLabel(
+    overlay,
+    `可收 ${harvestBatch.collectibleCount} · 普优 ${harvestBatch.salvageableCount}`,
+    -190,
+    -5,
+    210,
+    30,
+    14,
+    harvestBatch.blockedEquipmentCount > 0 ? COLORS.gold : COLORS.textMuted,
+  );
+  createButton(
+    overlay,
+    `全部收取 ${harvestBatch.collectibleCount}`,
+    42,
+    -5,
+    150,
+    36,
+    {
+      fill: COLORS.inkGreenLight,
+      stroke: COLORS.goldMuted,
+      fontSize: 14,
+      enabled: mutationsEnabled && harvestBatch.collectibleCount > 0,
+    },
+    () => actions.collectAllHarvest(),
+  );
+  createButton(
+    overlay,
+    `分解普优 ${harvestBatch.salvageableCount}`,
+    218,
+    -5,
+    170,
+    36,
+    {
+      fill: COLORS.red,
+      stroke: COLORS.goldMuted,
+      fontSize: 14,
+      enabled: mutationsEnabled && harvestBatch.salvageableCount > 0,
+    },
+    () => actions.salvageLowQualityHarvest(),
+  );
   if (data.harvestChest.entries.length === 0) {
-    drawBand(overlay, "HarvestEmpty", 0, -70, 600, 130, COLORS.panel);
-    addLabel(overlay, "暂无待处理收获", 0, -52, 480, 38, 20, COLORS.text);
+    drawBand(overlay, "HarvestEmpty", 0, -105, 600, 110, COLORS.panel);
+    addLabel(overlay, "暂无待处理收获", 0, -88, 480, 38, 20, COLORS.text);
     addLabel(
       overlay,
       "挂机法宝与未收录功法会在这里等待处理",
       0,
-      -91,
+      -124,
       540,
       32,
       16,
@@ -205,7 +286,7 @@ export function drawInventoryPanel(
   data.harvestChest.entries
     .slice(harvestWindow.start, harvestWindow.end)
     .forEach((entry, index) => {
-      const y = -30 - index * 91;
+      const y = -70 - index * 86;
       drawBand(overlay, `Harvest-${entry.id}`, 0, y, 610, 78, COLORS.panel);
       const quality = qualityName(entry.quality);
       addLabel(
@@ -223,7 +304,7 @@ export function drawInventoryPanel(
       );
       addLabel(
         overlay,
-        entry.entryType === "equipment" ? "独立法宝" : "功法本体",
+        getHarvestEntryDetailText(data, entry),
         -165,
         y - 16,
         300,

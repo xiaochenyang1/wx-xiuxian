@@ -29,9 +29,10 @@ export async function sourceFingerprint(workspace, config) {
   };
 }
 
-export async function artifactFingerprint(directory) {
+export async function artifactFingerprint(directory, excludedFiles = []) {
+  const excluded = new Set([WECHAT_BUILD_MANIFEST, ...excludedFiles]);
   const files = (await collectInputFiles(directory, ["."])).filter(
-    (file) => file !== WECHAT_BUILD_MANIFEST,
+    (file) => !excluded.has(file),
   );
   return {
     sha256: await hashFiles(directory, files),

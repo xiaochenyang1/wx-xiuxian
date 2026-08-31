@@ -19,6 +19,11 @@ export interface ButtonStyle {
   enabled?: boolean;
 }
 
+export interface ToggleStyle {
+  enabled?: boolean;
+  fontSize?: number;
+}
+
 export type LabelSizing = "shrink" | "fixed";
 
 export function removeAndDestroy(node: Node): void {
@@ -100,6 +105,70 @@ export function createButton(
     HorizontalTextAlignment.CENTER,
     "fixed",
   );
+  return node;
+}
+
+export function createToggle(
+  parent: Node,
+  name: string,
+  label: string,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  checked: boolean,
+  style: ToggleStyle,
+  onToggle: () => void,
+): Node {
+  const enabled = style.enabled ?? true;
+  const node = createUiNode(parent, `Toggle-${name}-${checked ? "On" : "Off"}`);
+  node.setPosition(x, y);
+  setSize(node, width, height);
+
+  const button = node.addComponent(Button);
+  button.interactable = enabled;
+  button.transition = Button.Transition.SCALE;
+  button.zoomScale = 0.96;
+  if (enabled) node.on(Button.EventType.CLICK, onToggle);
+
+  addLabel(
+    node,
+    label,
+    -24,
+    0,
+    68,
+    height - 4,
+    style.fontSize ?? 14,
+    enabled ? COLORS.text : COLORS.textMuted,
+    false,
+    1,
+    HorizontalTextAlignment.LEFT,
+    "fixed",
+  );
+
+  const track = graphicsNode(node, `${name}-Track`, 34, 0);
+  track.fillColor = enabled
+    ? checked
+      ? COLORS.inkGreenLight
+      : COLORS.panelStrong
+    : COLORS.panel;
+  track.roundRect(-20, -11, 40, 22, 11);
+  track.fill();
+  track.strokeColor = enabled
+    ? checked
+      ? COLORS.jade
+      : COLORS.textMuted
+    : COLORS.textMuted;
+  track.lineWidth = 2;
+  track.roundRect(-20, -11, 40, 22, 11);
+  track.stroke();
+  track.fillColor = enabled
+    ? checked
+      ? COLORS.green
+      : COLORS.textMuted
+    : COLORS.textMuted;
+  track.circle(checked ? 9 : -9, 0, 7);
+  track.fill();
   return node;
 }
 

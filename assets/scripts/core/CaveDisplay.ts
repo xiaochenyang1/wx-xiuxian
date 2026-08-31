@@ -42,9 +42,6 @@ const BONUS_LABELS: Readonly<Record<CaveBuildingConfig["bonusStat"], string>> = 
 function bonusText(config: CaveBuildingConfig, level: number): string {
   const label = BONUS_LABELS[config.bonusStat];
   if (level <= 0) return `${label} +0`;
-  if (config.bonusStat === "power") {
-    return `${label} +${config.bonusPerLevelBp * level}`;
-  }
   return `${label} +${(config.bonusPerLevelBp * level) / 100}%`;
 }
 

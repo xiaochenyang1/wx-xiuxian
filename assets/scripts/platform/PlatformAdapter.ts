@@ -18,6 +18,15 @@ interface WechatApi {
   getWindowInfo?(): unknown;
   getSystemInfoSync?(): unknown;
   getMenuButtonBoundingClientRect?(): unknown;
+  setClipboardData?(options: {
+    data: string;
+    success?: () => void;
+    fail?: () => void;
+  }): void;
+  getClipboardData?(options: {
+    success?: (result: { data?: unknown }) => void;
+    fail?: () => void;
+  }): void;
 }
 
 export interface PlatformLifecycleHandlers {
@@ -31,6 +40,8 @@ export interface PlatformAdapter {
   load<T>(key: string): T | null;
   save<T>(key: string, value: T): boolean;
   remove(key: string): void;
+  writeClipboard(value: string): Promise<boolean>;
+  readClipboard(): Promise<string | null>;
   subscribeLifecycle(handlers: PlatformLifecycleHandlers): () => void;
   feedback(): void;
 }
@@ -82,6 +93,43 @@ class BrowserPlatformAdapter implements PlatformAdapter {
       localStorage.removeItem(key);
     } catch {
       // Storage cleanup is best-effort.
+    }
+  }
+
+  async writeClipboard(value: string): Promise<boolean> {
+    try {
+      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(value);
+        return true;
+      }
+    } catch {
+      // Fall through to the legacy browser copy path.
+    }
+    if (typeof document === "undefined" || !document.body) return false;
+    const input = document.createElement("textarea");
+    input.value = value;
+    input.setAttribute("readonly", "");
+    input.style.position = "fixed";
+    input.style.opacity = "0";
+    document.body.appendChild(input);
+    input.select();
+    try {
+      return document.execCommand("copy");
+    } catch {
+      return false;
+    } finally {
+      input.remove();
+    }
+  }
+
+  async readClipboard(): Promise<string | null> {
+    try {
+      if (typeof navigator === "undefined" || !navigator.clipboard?.readText) {
+        return null;
+      }
+      return await navigator.clipboard.readText();
+    } catch {
+      return null;
     }
   }
 
@@ -161,6 +209,44 @@ class WechatPlatformAdapter implements PlatformAdapter {
     } catch {
       // Storage cleanup is best-effort.
     }
+  }
+
+  writeClipboard(value: string): Promise<boolean> {
+    return new Promise((resolve) => {
+      const write = this.api.setClipboardData;
+      if (!write) {
+        resolve(false);
+        return;
+      }
+      try {
+        write.call(this.api, {
+          data: value,
+          success: () => resolve(true),
+          fail: () => resolve(false),
+        });
+      } catch {
+        resolve(false);
+      }
+    });
+  }
+
+  readClipboard(): Promise<string | null> {
+    return new Promise((resolve) => {
+      const read = this.api.getClipboardData;
+      if (!read) {
+        resolve(null);
+        return;
+      }
+      try {
+        read.call(this.api, {
+          success: (result) =>
+            resolve(typeof result.data === "string" ? result.data : null),
+          fail: () => resolve(null),
+        });
+      } catch {
+        resolve(null);
+      }
+    });
   }
 
   subscribeLifecycle(handlers: PlatformLifecycleHandlers): () => void {

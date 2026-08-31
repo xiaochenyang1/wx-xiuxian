@@ -32,6 +32,18 @@ export interface ProfileResetControls {
   confirm(): void;
 }
 
+export type ProfileBackupAction = "import" | "recovery";
+
+export interface ProfileBackupControls {
+  armed(): ProfileBackupAction | null;
+  pending(): boolean;
+  recoveryAvailable(): boolean;
+  copy(): void;
+  arm(action: ProfileBackupAction): void;
+  cancel(): void;
+  confirm(): void;
+}
+
 export interface ProfileResetControlDisplay {
   readonly description: string;
   readonly primaryLabel: string;
@@ -80,11 +92,14 @@ export function drawProfilePanel(
   state: Readonly<AppState>,
   actions: AppViewActions,
   drafts: ProfileDraftState,
+  backup: ProfileBackupControls,
   reset: ProfileResetControls,
 ): void {
   const data = state.bootstrap!;
   const player = data.player;
-  const mutationsEnabled = canRunLocalMutation(state);
+  const operationsEnabled =
+    canRunLocalMutation(state) && !backup.pending() && !reset.pending();
+  const recoveryAvailable = backup.recoveryAvailable();
 
   drawBand(overlay, "AvatarProfile", 0, 302, 620, 220, COLORS.inkGreen);
   addLabel(
@@ -160,7 +175,7 @@ export function drawProfilePanel(
           fill: COLORS.red,
           stroke: COLORS.goldMuted,
           fontSize: 16,
-          enabled: mutationsEnabled,
+          enabled: operationsEnabled,
         },
         () => actions.chooseAvatar(drafts.avatar()!),
       );
@@ -252,7 +267,7 @@ export function drawProfilePanel(
       drafts.setName(value);
     },
     (value) => actions.renamePlayer(value),
-    mutationsEnabled,
+    operationsEnabled,
   );
   createButton(
     overlay,
@@ -265,7 +280,7 @@ export function drawProfilePanel(
       fill: COLORS.inkGreenLight,
       stroke: COLORS.gold,
       fontSize: 17,
-      enabled: mutationsEnabled,
+      enabled: operationsEnabled,
     },
     () => actions.renamePlayer(nameInput.string),
   );
@@ -282,7 +297,7 @@ export function drawProfilePanel(
 
   const resetDisplay = getProfileResetControlDisplay(
     reset.armed(),
-    mutationsEnabled,
+    operationsEnabled,
     reset.pending(),
   );
   drawBand(overlay, "AccountProfile", 0, -290, 620, 238, COLORS.panel);
@@ -314,15 +329,119 @@ export function drawProfilePanel(
   );
   addLabel(
     overlay,
+    backup.pending()
+      ? "正在处理本地存档"
+      : backup.armed() === "import"
+        ? "将用剪贴板备份覆盖当前进度"
+        : backup.armed() === "recovery"
+          ? "将恢复上次导入前的进度"
+          : "存档备份与恢复",
+    0,
+    -251,
+    540,
+    30,
+    16,
+    backup.armed() ? COLORS.gold : COLORS.textMuted,
+    false,
+    1,
+    HorizontalTextAlignment.CENTER,
+    "fixed",
+  );
+  if (backup.pending()) {
+    createButton(
+      overlay,
+      "正在处理",
+      0,
+      -293,
+      280,
+      46,
+      {
+        fill: COLORS.panelStrong,
+        stroke: COLORS.goldMuted,
+        fontSize: 17,
+        enabled: false,
+      },
+      () => {},
+    );
+  } else if (backup.armed()) {
+    createButton(
+      overlay,
+      "取消",
+      -145,
+      -293,
+      250,
+      46,
+      { fill: COLORS.panelStrong, stroke: COLORS.goldMuted, fontSize: 17 },
+      () => backup.cancel(),
+    );
+    createButton(
+      overlay,
+      backup.armed() === "import" ? "确认导入" : "确认恢复",
+      145,
+      -293,
+      250,
+      46,
+      { fill: COLORS.red, stroke: COLORS.goldMuted, fontSize: 17 },
+      () => backup.confirm(),
+    );
+  } else {
+    createButton(
+      overlay,
+      "复制备份",
+      -194,
+      -293,
+      176,
+      46,
+      {
+        fill: COLORS.inkGreenLight,
+        stroke: COLORS.jade,
+        fontSize: 16,
+        enabled: operationsEnabled,
+      },
+      () => backup.copy(),
+    );
+    createButton(
+      overlay,
+      "剪贴板导入",
+      0,
+      -293,
+      176,
+      46,
+      {
+        fill: COLORS.inkGreenLight,
+        stroke: COLORS.gold,
+        fontSize: 16,
+        enabled: operationsEnabled,
+      },
+      () => backup.arm("import"),
+    );
+    createButton(
+      overlay,
+      recoveryAvailable ? "恢复导入前" : "暂无回退",
+      194,
+      -293,
+      176,
+      46,
+      {
+        fill: COLORS.panelStrong,
+        stroke: COLORS.goldMuted,
+        fontSize: 16,
+        enabled: operationsEnabled && recoveryAvailable,
+      },
+      () => backup.arm("recovery"),
+    );
+  }
+  addLabel(
+    overlay,
     resetDisplay.description,
     0,
-    -274,
-    540,
-    56,
-    16,
+    -339,
+    550,
+    30,
+    14,
     reset.armed() ? COLORS.gold : COLORS.textMuted,
     false,
-    2,
+    1,
     HorizontalTextAlignment.CENTER,
     "fixed",
   );
@@ -330,24 +449,24 @@ export function drawProfilePanel(
     createButton(
       overlay,
       resetDisplay.cancelLabel,
-      -150,
-      -359,
-      260,
-      56,
-      { fill: COLORS.panelStrong, stroke: COLORS.goldMuted, fontSize: 18 },
+      -145,
+      -382,
+      250,
+      44,
+      { fill: COLORS.panelStrong, stroke: COLORS.goldMuted, fontSize: 17 },
       () => reset.cancel(),
     );
     createButton(
       overlay,
       resetDisplay.primaryLabel,
-      150,
-      -359,
-      260,
-      56,
+      145,
+      -382,
+      250,
+      44,
       {
         fill: COLORS.red,
         stroke: COLORS.goldMuted,
-        fontSize: 18,
+        fontSize: 17,
         enabled: resetDisplay.enabled,
       },
       () => reset.confirm(),
@@ -357,13 +476,13 @@ export function drawProfilePanel(
       overlay,
       resetDisplay.primaryLabel,
       0,
-      -359,
-      300,
-      56,
+      -382,
+      280,
+      44,
       {
         fill: COLORS.red,
         stroke: COLORS.goldMuted,
-        fontSize: 18,
+        fontSize: 17,
         enabled: resetDisplay.enabled,
       },
       () => reset.arm(),

@@ -49,6 +49,8 @@ export interface AppChromeGeometry {
   readonly bodyOffsetY: number;
 }
 
+export type DesignResolutionMode = "fixed-width" | "fixed-height";
+
 interface PhysicalRect {
   readonly left: number;
   readonly right: number;
@@ -71,7 +73,10 @@ export function resolveDesignSafeAreaLayout(
   const windowHeight = hasViewport
     ? (input?.windowHeight as number)
     : DESIGN_VIEWPORT_HEIGHT;
-  const scale = windowWidth / DESIGN_VIEWPORT_WIDTH;
+  const scale = Math.min(
+    windowWidth / DESIGN_VIEWPORT_WIDTH,
+    windowHeight / DESIGN_VIEWPORT_HEIGHT,
+  );
   const viewportWidth = windowWidth / scale;
   const viewportHeight = windowHeight / scale;
   const fullViewport: PhysicalRect = {
@@ -114,6 +119,14 @@ export function resolveDesignSafeAreaLayout(
       ? toDesignRect(menuButton, scale, viewportWidth, viewportHeight)
       : null,
   };
+}
+
+export function resolveDesignResolutionMode(
+  layout: Pick<DesignSafeAreaLayout, "viewportWidth" | "viewportHeight">,
+): DesignResolutionMode {
+  const extraWidth = layout.viewportWidth - DESIGN_VIEWPORT_WIDTH;
+  const extraHeight = layout.viewportHeight - DESIGN_VIEWPORT_HEIGHT;
+  return extraWidth > extraHeight ? "fixed-height" : "fixed-width";
 }
 
 export const DEFAULT_DESIGN_SAFE_AREA_LAYOUT =
