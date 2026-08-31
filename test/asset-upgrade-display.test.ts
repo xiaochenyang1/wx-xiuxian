@@ -1,4 +1,5 @@
 import type { BootstrapSnapshot } from "@cultivation-diary/shared";
+import { getTechniqueConfig } from "@cultivation-diary/shared";
 import { describe, expect, it } from "vitest";
 import {
   getEquipmentAffixDisplay,
@@ -8,6 +9,8 @@ import {
   getEquipmentHeaderText,
   getEquipmentRerollDisplay,
   getEquipmentTitleText,
+  getTechniqueBandName,
+  getTechniqueInheritDisplay,
   getTechniqueUpgradeDisplay,
 } from "../assets/scripts/core/AssetUpgradeDisplay";
 import { LocalGameService } from "../assets/scripts/services/LocalGameService";
@@ -625,5 +628,130 @@ describe("technique star-up display", () => {
       actionText: "升星",
       actionEnabled: true,
     });
+  });
+});
+
+/** Any book, at any star, unequipped — the rows 传承 chooses between. */
+function bandTechnique(
+  techniqueConfigId: string,
+  star: number,
+): BootstrapSnapshot["techniques"][number] {
+  const config = getTechniqueConfig(techniqueConfigId);
+  return {
+    techniqueConfigId: config.id,
+    displayName: config.displayName,
+    quality: config.quality,
+    slot: config.slot,
+    star,
+    duplicateCount: 0,
+    equippedSlot: null,
+    powerBonusBp: 0,
+    experienceBonusBp: 0,
+    spiritStoneBonusBp: 0,
+    dropBonusBp: 0,
+    configVersion: "local-idle-drop-v1",
+  };
+}
+
+function snapshotWithTechniques(
+  spiritStone: number,
+  techniques: readonly BootstrapSnapshot["techniques"][number][],
+): BootstrapSnapshot {
+  const snapshot = snapshotWithBalances(spiritStone, 0);
+  return { ...snapshot, techniques: [...techniques] };
+}
+
+describe("technique band name", () => {
+  it("names the band off the config, so a row cannot claim another band's", () => {
+    expect(getTechniqueBandName("azure_cloud_heart_manual")).toBe("凡阶");
+    expect(getTechniqueBandName("jade_truth_heart_manual")).toBe("灵阶");
+    expect(getTechniqueBandName("grand_clarity_heart_manual")).toBe("玄阶");
+    expect(getTechniqueBandName("boundless_heart_manual")).toBe("天阶");
+  });
+});
+
+describe("technique inheritance display", () => {
+  it("disables the button when nothing in the bag qualifies", () => {
+    const source = bandTechnique("azure_cloud_heart_manual", 6);
+    expect(
+      getTechniqueInheritDisplay(snapshotWithTechniques(0, [source]), source),
+    ).toEqual({
+      maxed: false,
+      affordable: false,
+      costText: "无可承接功法",
+      actionText: "传承",
+      actionEnabled: false,
+      targetTechniqueConfigId: null,
+    });
+  });
+
+  it("quotes the target band's price and names the book receiving the stars", () => {
+    const source = bandTechnique("azure_cloud_heart_manual", 6);
+    const snapshot = snapshotWithTechniques(300_000, [
+      source,
+      bandTechnique("jade_truth_heart_manual", 1),
+    ]);
+
+    expect(getTechniqueInheritDisplay(snapshot, source)).toEqual({
+      maxed: false,
+      affordable: true,
+      costText: "承接 玄真心法\n灵石 30万",
+      actionText: "传承",
+      actionEnabled: true,
+      targetTechniqueConfigId: "jade_truth_heart_manual",
+    });
+  });
+
+  it("keeps an unaffordable inheritance actionable, only tinted", () => {
+    const source = bandTechnique("azure_cloud_heart_manual", 6);
+    const display = getTechniqueInheritDisplay(
+      snapshotWithTechniques(299_999, [
+        source,
+        bandTechnique("jade_truth_heart_manual", 1),
+      ]),
+      source,
+    );
+
+    expect(display.affordable).toBe(false);
+    expect(display.actionEnabled).toBe(true);
+  });
+
+  it("picks the highest band owned, not the next one up", () => {
+    // The price is the target band's alone, so stopping at 灵阶 first would just
+    // add a 灵阶 fee on the way to 天阶.
+    const source = bandTechnique("azure_cloud_heart_manual", 9);
+    const display = getTechniqueInheritDisplay(
+      snapshotWithTechniques(3_000_000, [
+        source,
+        bandTechnique("jade_truth_heart_manual", 1),
+        bandTechnique("grand_clarity_heart_manual", 2),
+        bandTechnique("boundless_heart_manual", 3),
+      ]),
+      source,
+    );
+
+    expect(display.targetTechniqueConfigId).toBe("boundless_heart_manual");
+    expect(display.costText).toBe("承接 无极心法\n灵石 225万");
+  });
+
+  it("ignores a candidate in another slot, another quality, or already ahead", () => {
+    const source = bandTechnique("azure_cloud_heart_manual", 4);
+    const display = getTechniqueInheritDisplay(
+      snapshotWithTechniques(3_000_000, [
+        source,
+        // 灵阶 身法: right band, wrong slot.
+        bandTechnique("wind_riding_steps", 1),
+        // 灵阶 心法 普通: right slot, wrong quality.
+        bandTechnique("spirit_intake_art", 1),
+        // 天阶 心法 上品, but already at the source's star.
+        bandTechnique("boundless_heart_manual", 4),
+        // 玄阶 心法 上品 below the source: the only real candidate.
+        bandTechnique("grand_clarity_heart_manual", 2),
+      ]),
+      source,
+    );
+
+    expect(display.targetTechniqueConfigId).toBe("grand_clarity_heart_manual");
+    expect(display.costText).toBe("承接 太清心法\n灵石 90万");
   });
 });

@@ -212,14 +212,51 @@ export const IDLE_EQUIPMENT_DROP_CHANCE = 4_000;
 
 export const IDLE_TECHNIQUE_DROP_CHANCE = 1_200;
 
-/** Techniques have no bands, so their drop quality is one fixed split. */
-export const IDLE_TECHNIQUE_DROP_QUALITY_WEIGHTS: readonly {
-  readonly quality: AssetQuality;
-  readonly weight: number;
-}[] = [
-  { quality: "common", weight: 8_000 },
-  { quality: "uncommon", weight: 2_000 },
-];
+/**
+ * The quality an idle technique drop rolls, per band — the same shape as
+ * `EQUIPMENT_DROP_QUALITY_WEIGHTS`, and with the same division of labour: the
+ * band decides what comes out of the roll, `IDLE_TECHNIQUE_DROP_CHANCE` decides
+ * how often it happens and does not move with the band.
+ *
+ * Techniques only ever have two qualities (see the band design doc §3.2: a third
+ * one would have to buy its multiplier from the tower's floor-90 threshold), so
+ * all four tables are two entries wide, which is also what keeps the number of
+ * `randomInt` calls `pickWeightedQuality` spends identical across bands.
+ *
+ * Band 1 is exactly the old fixed `8_000 / 2_000` split, so a 凡阶 save replays a
+ * seed into the same book it drew before.
+ */
+export const IDLE_TECHNIQUE_DROP_QUALITY_WEIGHTS: Readonly<
+  Record<
+    EquipmentBand,
+    readonly { readonly quality: AssetQuality; readonly weight: number }[]
+  >
+> = {
+  1: [
+    { quality: "common", weight: 8_000 },
+    { quality: "uncommon", weight: 2_000 },
+  ],
+  2: [
+    { quality: "common", weight: 7_000 },
+    { quality: "uncommon", weight: 3_000 },
+  ],
+  3: [
+    { quality: "common", weight: 5_500 },
+    { quality: "uncommon", weight: 4_500 },
+  ],
+  4: [
+    { quality: "common", weight: 4_000 },
+    { quality: "uncommon", weight: 6_000 },
+  ],
+};
+
+export function idleTechniqueDropQualityWeights(
+  band: EquipmentBand,
+): readonly { readonly quality: AssetQuality; readonly weight: number }[] {
+  const weights = IDLE_TECHNIQUE_DROP_QUALITY_WEIGHTS[band];
+  if (!weights) throw new RangeError(`Unknown equipment band: ${band}`);
+  return weights;
+}
 
 /** What one unit of a stack reward is worth when the bag cannot hold it. */
 export const IDLE_STACK_OVERFLOW_SPIRIT_STONE_VALUE = 100;

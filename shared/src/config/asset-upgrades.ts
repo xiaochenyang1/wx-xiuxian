@@ -3,7 +3,9 @@ import {
   ASSET_QUALITY_MULTIPLIER_BP,
   ASSET_QUALITY_ORDER,
   type AssetQuality,
+  type EquipmentBand,
 } from "./assets";
+import { CRAFTING_BAND_SPIRIT_STONE_MULTIPLIER } from "./crafting";
 
 export const EQUIPMENT_MAX_ENHANCE_LEVEL = 20;
 export const TECHNIQUE_MAX_STAR = 10;
@@ -137,6 +139,43 @@ export function techniqueStarUpgradeCost(
     throw new RangeError(`Unknown technique target star: ${targetStar}`);
   }
   return { targetStar, duplicateCount };
+}
+
+/**
+ * What it costs to move a book's stars onto its higher-band counterpart.
+ *
+ * Paid in spirit stone, never in 功法残页. The lifetime page demand is pinned at
+ * 700 for all four equipped slots and deliberately does not grow with the band
+ * (see the spec's technique-page note), so charging pages here would either
+ * break that number or turn every band boundary into a wall. Spirit stone is the
+ * resource one trial tower floor already pays out in the billions, which is the
+ * same reason crafting scales its stone cost with the band and its materials not.
+ *
+ * The multiplier is the *target* band's alone: the price is set by where the
+ * stars land, not by how far they travelled. So a direct 凡阶→天阶 jump costs one
+ * 天阶 fee rather than the sum of the three steps, which is why the display picks
+ * the highest band the player owns instead of the next one up.
+ */
+export const TECHNIQUE_INHERIT_BASE_SPIRIT_STONE = 50_000;
+
+export function techniqueInheritCost(
+  quality: AssetQuality,
+  targetBand: EquipmentBand,
+): number {
+  const qualityMultiplierBp = ASSET_QUALITY_MULTIPLIER_BP[quality];
+  if (qualityMultiplierBp === undefined) {
+    throw new RangeError(`Unknown technique quality: ${quality}`);
+  }
+  const bandMultiplier = CRAFTING_BAND_SPIRIT_STONE_MULTIPLIER[targetBand];
+  if (!bandMultiplier) {
+    throw new RangeError(`Unknown equipment band: ${targetBand}`);
+  }
+  return (
+    scaleByBasisPointsCeil(
+      TECHNIQUE_INHERIT_BASE_SPIRIT_STONE,
+      qualityMultiplierBp,
+    ) * bandMultiplier
+  );
 }
 
 export function shouldAutoLockEquipment(quality: AssetQuality): boolean {

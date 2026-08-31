@@ -1,8 +1,11 @@
 import {
+  TECHNIQUE_PAGES_PER_DUPLICATE,
   calculateEquipmentContribution,
   calculateTechniqueContribution,
   calculateTotalPower,
   equipmentEnhanceCost,
+  getTechniqueConfig,
+  techniqueInheritCost,
   techniqueStarUpgradeCost,
   type AssetQuality,
 } from "@cultivation-diary/shared";
@@ -313,6 +316,252 @@ describe("technique star-up service", () => {
     expect(techniqueOf(service).star).toBe(10);
     expect(() => service.upgradeTechnique("missing-technique")).toThrow(
       "尚未收录该功法",
+    );
+  });
+});
+
+interface TechniqueSeed {
+  readonly techniqueConfigId: string;
+  readonly star: number;
+  readonly duplicateCount?: number;
+  readonly equipped?: boolean;
+}
+
+/**
+ * A save holding an arbitrary set of books. 传承 needs two rows in the same slot
+ * from different bands, which the single-technique fixture above cannot express.
+ */
+function serviceWithTechniques(
+  seeds: readonly TechniqueSeed[],
+  spiritStone: number,
+): LocalGameService {
+  const now = new Date();
+  const platform = new FakePlatformAdapter();
+  const writer = new LocalGameService(platform);
+  writer.initialize(now);
+
+  const raw = platform.raw(SAVE_KEY);
+  if (raw === undefined) throw new Error("expected a persisted save");
+  const save = JSON.parse(raw) as MutableSave;
+  save.savedAt = now.toISOString();
+  save.snapshot.progress.settledAt = now.toISOString();
+  save.snapshot.wallet.spiritStone = String(spiritStone);
+  save.snapshot.inventory.stacks = [];
+  save.snapshot.equipment = [];
+  save.snapshot.techniques = seeds.map((seed) => {
+    const config = getTechniqueConfig(seed.techniqueConfigId);
+    return {
+      techniqueConfigId: config.id,
+      displayName: config.displayName,
+      quality: config.quality,
+      slot: config.slot,
+      star: seed.star,
+      duplicateCount: seed.duplicateCount ?? 0,
+      equippedSlot: seed.equipped ? config.slot : null,
+      powerBonusBp: 0,
+      experienceBonusBp: 0,
+      spiritStoneBonusBp: 0,
+      dropBonusBp: 0,
+      configVersion: "local-idle-drop-v1",
+    };
+  });
+  platform.seed(SAVE_KEY, save);
+
+  const service = new LocalGameService(platform);
+  const loaded = service.initialize(now);
+  if (loaded.created) throw new Error("technique fixture save was rejected");
+  return service;
+}
+
+/** 凡阶 and 灵阶 心法, both 上品 — the pairing 传承 exists for. */
+const BAND_1_MIND = "azure_cloud_heart_manual";
+const BAND_2_MIND = "jade_truth_heart_manual";
+const INHERIT_COST = techniqueInheritCost("uncommon", 2);
+
+describe("technique inheritance service", () => {
+  it("moves the stars up a band, eats the source and refunds its copies", () => {
+    const service = serviceWithTechniques(
+      [
+        { techniqueConfigId: BAND_1_MIND, star: 7, duplicateCount: 3 },
+        { techniqueConfigId: BAND_2_MIND, star: 1 },
+      ],
+      INHERIT_COST + 200_000,
+    );
+
+    const result = service.inheritTechnique(BAND_1_MIND, BAND_2_MIND);
+
+    const target = service.snapshot.techniques.find(
+      (item) => item.techniqueConfigId === BAND_2_MIND,
+    );
+    expect(target?.star).toBe(7);
+    expect(
+      service.snapshot.techniques.some(
+        (item) => item.techniqueConfigId === BAND_1_MIND,
+      ),
+    ).toBe(false);
+    expect(stackQuantity(service, "technique_page")).toBe(
+      String(3 * TECHNIQUE_PAGES_PER_DUPLICATE),
+    );
+    expect(service.snapshot.wallet.spiritStone).toBe("200000");
+    expect(result.message).toBe(
+      `消耗 ${INHERIT_COST} 灵石，玄真心法承接 7 星，返还 15 张功法残页`,
+    );
+  });
+
+  it("carries the equipped slot over and refreshes the player's bonuses", () => {
+    const service = serviceWithTechniques(
+      [
+        { techniqueConfigId: BAND_1_MIND, star: 6, equipped: true },
+        { techniqueConfigId: BAND_2_MIND, star: 2 },
+      ],
+      INHERIT_COST,
+    );
+
+    service.inheritTechnique(BAND_1_MIND, BAND_2_MIND);
+
+    const target = service.snapshot.techniques.find(
+      (item) => item.techniqueConfigId === BAND_2_MIND,
+    );
+    const contribution = calculateTechniqueContribution({
+      techniqueConfigId: BAND_2_MIND,
+      star: 6,
+    });
+    expect(target?.equippedSlot).toBe("mind");
+    expect(target?.powerBonusBp).toBe(contribution.powerBonusBp);
+    expect(service.snapshot.progress.loadoutPowerBonusBp).toBe(
+      contribution.powerBonusBp,
+    );
+    // The band is bought with idle bonuses, not power, so this is the number that
+    // has to move: 灵阶 心法 pays x1.2 the 修为 of its 凡阶 counterpart.
+    expect(service.snapshot.progress.experienceBonusBp).toBe(
+      contribution.experienceBonusBp,
+    );
+    expect(contribution.experienceBonusBp).toBeGreaterThan(
+      calculateTechniqueContribution({
+        techniqueConfigId: BAND_1_MIND,
+        star: 6,
+      }).experienceBonusBp,
+    );
+  });
+
+  it("spends nothing when the source has no leftover copies", () => {
+    const service = serviceWithTechniques(
+      [
+        { techniqueConfigId: BAND_1_MIND, star: 5 },
+        { techniqueConfigId: BAND_2_MIND, star: 1 },
+      ],
+      INHERIT_COST,
+    );
+
+    const result = service.inheritTechnique(BAND_1_MIND, BAND_2_MIND);
+
+    expect(stackQuantity(service, "technique_page")).toBe("0");
+    expect(service.snapshot.wallet.spiritStone).toBe("0");
+    expect(result.message).toBe(
+      `消耗 ${INHERIT_COST} 灵石，玄真心法承接 5 星`,
+    );
+  });
+});
+
+describe("technique inheritance refuses the wrong pairings", () => {
+  /** Runs one rejection and asserts the save came out untouched. */
+  function expectRejected(
+    seeds: readonly TechniqueSeed[],
+    sourceId: string,
+    targetId: string,
+    message: string,
+    spiritStone = INHERIT_COST * 30,
+  ): void {
+    const service = serviceWithTechniques(seeds, spiritStone);
+    const before = JSON.stringify(service.snapshot.techniques);
+    expect(() => service.inheritTechnique(sourceId, targetId)).toThrow(message);
+    expect(JSON.stringify(service.snapshot.techniques)).toBe(before);
+    expect(service.snapshot.wallet.spiritStone).toBe(String(spiritStone));
+    expect(stackQuantity(service, "technique_page")).toBe("0");
+  }
+
+  it("rejects a source or target the player does not own", () => {
+    expectRejected(
+      [{ techniqueConfigId: BAND_1_MIND, star: 3 }],
+      "no_such_manual",
+      BAND_1_MIND,
+      "尚未收录传承来源功法",
+    );
+    expectRejected(
+      [{ techniqueConfigId: BAND_1_MIND, star: 3 }],
+      BAND_1_MIND,
+      BAND_2_MIND,
+      "尚未收录传承目标功法",
+    );
+  });
+
+  it("rejects a book inheriting from itself", () => {
+    expectRejected(
+      [{ techniqueConfigId: BAND_1_MIND, star: 3 }],
+      BAND_1_MIND,
+      BAND_1_MIND,
+      "传承目标不能是同一本功法",
+    );
+  });
+
+  it("rejects a different slot", () => {
+    expectRejected(
+      [
+        { techniqueConfigId: BAND_1_MIND, star: 3 },
+        { techniqueConfigId: "wind_riding_steps", star: 1 },
+      ],
+      BAND_1_MIND,
+      "wind_riding_steps",
+      "只能传承给同类功法",
+    );
+  });
+
+  it("rejects a different quality", () => {
+    expectRejected(
+      [
+        { techniqueConfigId: BAND_1_MIND, star: 3 },
+        { techniqueConfigId: "spirit_intake_art", star: 1 },
+      ],
+      BAND_1_MIND,
+      "spirit_intake_art",
+      "只能传承给同品质功法",
+    );
+  });
+
+  it("rejects a sideways or downward band, so stars never come back down", () => {
+    expectRejected(
+      [
+        { techniqueConfigId: BAND_2_MIND, star: 5 },
+        { techniqueConfigId: BAND_1_MIND, star: 1 },
+      ],
+      BAND_2_MIND,
+      BAND_1_MIND,
+      "只能向更高段位传承",
+    );
+  });
+
+  it("rejects a target that is already at or above the source's star", () => {
+    expectRejected(
+      [
+        { techniqueConfigId: BAND_1_MIND, star: 4 },
+        { techniqueConfigId: BAND_2_MIND, star: 4 },
+      ],
+      BAND_1_MIND,
+      BAND_2_MIND,
+      "玄真心法的星级不低于来源，无需传承",
+    );
+  });
+
+  it("rejects a price the player cannot pay", () => {
+    expectRejected(
+      [
+        { techniqueConfigId: BAND_1_MIND, star: 4 },
+        { techniqueConfigId: BAND_2_MIND, star: 1 },
+      ],
+      BAND_1_MIND,
+      BAND_2_MIND,
+      "灵石不足，还需 1 灵石",
+      INHERIT_COST - 1,
     );
   });
 });

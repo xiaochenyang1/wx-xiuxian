@@ -120,6 +120,15 @@ export class GameBootstrap extends Component {
             () => this.localGame.upgradeTechnique(techniqueConfigId),
             "power_change",
           ),
+        inheritTechnique: (sourceTechniqueConfigId, targetTechniqueConfigId) =>
+          this.runMutation(
+            () =>
+              this.localGame.inheritTechnique(
+                sourceTechniqueConfigId,
+                targetTechniqueConfigId,
+              ),
+            "power_change",
+          ),
         useInventoryItem: (itemConfigId) =>
           this.runMutation(() => this.localGame.useInventoryItem(itemConfigId)),
         useAllInventoryItems: (itemConfigId) =>

@@ -7,10 +7,13 @@ import {
   equipmentAffixRange,
   equipmentBandForConfig,
   equipmentConfigsForBand,
+  getTechniqueConfig,
   idleItemDropBandMultiplier,
   idleStackDropBandMultiplier,
   idleStackDropQuantitySpan,
   readRolledAffixes,
+  techniqueBandForConfig,
+  techniqueConfigsForBand,
   type AssetQuality,
   type EquipmentBand,
   type RolledAffix,
@@ -550,5 +553,107 @@ describe("banding leaves the band 1 drop stream alone", () => {
     expect(band4.map((piece) => piece.equipmentConfigId)).not.toEqual(
       band1.map((piece) => piece.equipmentConfigId),
     );
+  });
+});
+
+/** Every book a seeded idle stretch put in the harvest chest, in arrival order. */
+function droppedTechniques(level: number, days = 12): readonly string[] {
+  const service = serviceAtLevel(level);
+  const seen: string[] = [];
+  const collected = new Set<string>();
+  for (let day = 0; day < days; day += 1) {
+    service.debugSimulateOffline(DAY_SECONDS, SEED + day);
+    for (const entry of service.snapshot.harvestChest.entries) {
+      if (entry.entryType !== "technique" || collected.has(entry.id)) continue;
+      collected.add(entry.id);
+      seen.push(`${entry.techniqueConfigId}:${entry.quality}`);
+    }
+  }
+  if (seen.length === 0) throw new Error(`no technique dropped at Lv.${level}`);
+  return seen;
+}
+
+describe("technique drops stay inside the player's band", () => {
+  it("replays the exact stream the flat eight-book table produced", () => {
+    // The regression ruler for the 24 new books. Before the change the pool was
+    // `TECHNIQUE_CONFIGS.filter(quality)` over eight band 1 configs; now it is
+    // `techniqueConfigsForBand(1).filter(quality)`, which is provably the same
+    // array in the same order — the eight originals still hold the first eight
+    // positions, and band 1's weights are still 8000/2000, two entries wide. So
+    // the same seed must still hand a 凡阶 player exactly this run.
+    expect(droppedTechniques(1)).toEqual([
+      "thunder_seal:uncommon",
+      "azure_cloud_heart_manual:uncommon",
+      "flame_finger:common",
+      "quiet_breathing_art:common",
+      "spirit_gathering_secret:common",
+      "light_step_art:common",
+      "thunder_seal:uncommon",
+      "flame_finger:common",
+      "spirit_gathering_secret:common",
+      "light_step_art:common",
+      "light_step_art:common",
+      "star_observing_secret:uncommon",
+      "flame_finger:common",
+      "quiet_breathing_art:common",
+    ]);
+  });
+
+  it("only ever drops books from the band the level resolves to", () => {
+    for (const band of [1, 2, 3, 4] as const) {
+      const ids = new Set(
+        techniqueConfigsForBand(band).map((config) => config.id),
+      );
+      for (const entry of droppedTechniques(BAND_LEVELS[band])) {
+        const id = entry.split(":")[0]!;
+        expect(ids.has(id)).toBe(true);
+        expect(techniqueBandForConfig(id)).toBe(band);
+      }
+    }
+  });
+
+  it("switches pool at the band boundary, not one level early or late", () => {
+    expect(droppedTechniques(60)).toEqual(droppedTechniques(1));
+    for (const entry of droppedTechniques(61)) {
+      expect(techniqueBandForConfig(entry.split(":")[0]!)).toBe(2);
+    }
+  });
+
+  it("draws the same slot and quality at 灵阶 as at 凡阶, only from its own shelf", () => {
+    // Band 2 keeps band 1's book order and its table is the same two entries
+    // wide, so on this seed the two runs line up (slot, quality) for (slot,
+    // quality). A stray draw anywhere in the technique branch would part them.
+    const shape = (level: number): readonly string[] =>
+      droppedTechniques(level).map((entry) => {
+        const [id, quality] = entry.split(":");
+        return `${getTechniqueConfig(id!).slot}:${quality}`;
+      });
+    expect(shape(BAND_LEVELS[2])).toEqual(shape(1));
+  });
+
+  it("still reaches every book in the band, so no slot goes unfillable", () => {
+    for (const band of [1, 2, 3, 4] as const) {
+      const ids = new Set(
+        droppedTechniques(BAND_LEVELS[band], 20).map(
+          (entry) => entry.split(":")[0],
+        ),
+      );
+      expect(ids.size).toBe(8);
+    }
+  });
+
+  it("pays 优秀 more often as the band rises", () => {
+    // The only axis a technique band moves besides the idle bonuses: 上品 odds go
+    // 20% -> 30% -> 45% -> 60%. Power is identical in all four bands.
+    const uncommonCount = (level: number): number =>
+      droppedTechniques(level, 60).filter((entry) => entry.endsWith(":uncommon"))
+        .length;
+    const counts = [1, 2, 3, 4].map((band) =>
+      uncommonCount(BAND_LEVELS[band as EquipmentBand]),
+    );
+    for (let index = 1; index < counts.length; index += 1) {
+      expect(counts[index]!).toBeGreaterThanOrEqual(counts[index - 1]!);
+    }
+    expect(counts[3]!).toBeGreaterThan(counts[0]!);
   });
 });
