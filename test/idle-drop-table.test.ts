@@ -65,7 +65,7 @@ describe("the idle drop table", () => {
     ]);
     expect(IDLE_EQUIPMENT_DROP_CHANCE).toBe(4_000);
     expect(IDLE_TECHNIQUE_DROP_CHANCE).toBe(1_200);
-    expect(IDLE_TECHNIQUE_DROP_QUALITY_WEIGHTS).toEqual([
+    expect(IDLE_TECHNIQUE_DROP_QUALITY_WEIGHTS[1]).toEqual([
       { quality: "common", weight: 8_000 },
       { quality: "uncommon", weight: 2_000 },
     ]);

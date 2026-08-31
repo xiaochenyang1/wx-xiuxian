@@ -7,9 +7,12 @@ import {
   calculateLoadoutBonuses,
   calculateTotalPower,
   equipmentConfigForSlotAndBand,
+  techniqueConfigForSlotBandQuality,
+  type AssetQuality,
   type EquipmentBand,
   type EquippedEquipmentInput,
   type EquippedTechniqueInput,
+  type TechniqueSlot,
 } from "@cultivation-diary/shared";
 import { describe, expect, it } from "vitest";
 
@@ -211,5 +214,90 @@ describe("equipment bands are not a power axis", () => {
         (item) => item.equipmentConfigId,
       ),
     );
+  });
+});
+
+describe("technique bands are not a power axis either", () => {
+  /**
+   * The same gate, for the same reason, on the other half of the loadout. The
+   * two endpoints between them pin the technique base sums to exactly 175 and
+   * 425, and the whole 34.607× spread from worst book to best is already spent
+   * on star (×9.5), quality (×1.5) and those two sums (×2.4286). A band that
+   * moved `fixedPower` would have to buy it back from the tower's floor-90 row.
+   */
+  const BANDS: readonly EquipmentBand[] = [1, 2, 3, 4];
+  const SLOTS: readonly TechniqueSlot[] = [
+    "mind",
+    "movement",
+    "divine",
+    "secret",
+  ];
+
+  /** The four slots of one band at one quality. */
+  function bandTechniqueLoadout(
+    band: EquipmentBand,
+    quality: AssetQuality,
+    star: number,
+  ): EquippedTechniqueInput[] {
+    return SLOTS.map((slot) => ({
+      techniqueConfigId: techniqueConfigForSlotBandQuality(slot, band, quality)
+        .id,
+      star,
+    }));
+  }
+
+  it("repeats one fixedPower per (slot, quality) across all four bands", () => {
+    for (const slot of SLOTS) {
+      for (const quality of ["common", "uncommon"] as const) {
+        const powers = BANDS.map(
+          (band) => techniqueConfigForSlotBandQuality(slot, band, quality).fixedPower,
+        );
+        expect(new Set(powers).size).toBe(1);
+      }
+    }
+  });
+
+  it("gives every band the same maxed powerBonusBp", () => {
+    const bonuses = BANDS.map(
+      (band) =>
+        calculateLoadoutBonuses({
+          techniques: bandTechniqueLoadout(band, "uncommon", TECHNIQUE_MAX_STAR),
+          equipment: [],
+        }).powerBonusBp,
+    );
+    expect(new Set(bonuses).size).toBe(1);
+    // 71,774 minus the 42,523 the six legendary +20 pieces contribute and the
+    // crafting room's 2,000.
+    expect(bonuses).toEqual([27_251, 27_251, 27_251, 27_251]);
+  });
+
+  it("gives every band the same starter powerBonusBp", () => {
+    const bonuses = BANDS.map(
+      (band) =>
+        calculateLoadoutBonuses({
+          techniques: bandTechniqueLoadout(band, "common", 1),
+          equipment: [],
+        }).powerBonusBp,
+    );
+    expect(new Set(bonuses).size).toBe(1);
+  });
+
+  it("reproduces the band-1 books with the band-resolved helper", () => {
+    expect(
+      bandTechniqueLoadout(1, "uncommon", TECHNIQUE_MAX_STAR).map(
+        (item) => item.techniqueConfigId,
+      ),
+    ).toEqual([
+      "azure_cloud_heart_manual",
+      "drifting_cloud_steps",
+      "thunder_seal",
+      "star_observing_secret",
+    ]);
+  });
+
+  it("keeps the maxed total and the loadout share where they were", () => {
+    expect(maxedBonusBp()).toBe(71_774);
+    expect(starterBonusBp()).toBe(2_809);
+    expect(loadoutShare(1_000, maxedBonusBp())).toBe("87.77");
   });
 });

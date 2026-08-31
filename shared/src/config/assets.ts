@@ -51,6 +51,8 @@ export interface TechniqueConfig {
   displayName: string;
   slot: TechniqueSlot;
   quality: AssetQuality;
+  minLevel: number;
+  maxLevel: number;
   valueScore: number;
   fixedPower: number;
   experienceBonusBp: number;
@@ -255,12 +257,31 @@ export const ITEM_CONFIGS: readonly ItemConfig[] = [
   },
 ];
 
+/**
+ * Techniques are banded on the same level boundaries as equipment: one config
+ * per (slot, quality, band), 32 in all.
+ *
+ * A band never changes what a technique is worth in power. Every band's four
+ * slots repeat the same `fixedPower` (普通 40/35/55/45, 优秀 100/90/125/110),
+ * because `LOADOUT_POWER_SCALE_BP` is solved from a maxed and a starter endpoint
+ * that between them pin the technique base sums to exactly 425 and 175 — the
+ * whole spread from worst to best is `6,056.25 / 175 = 34.607×`, and star
+ * (×9.5), quality (×1.5) and those two sums (×2.4286) already account for all
+ * of it. A band grows along the idle bonuses instead, which never feed power.
+ *
+ * The first eight entries are the pre-band table, unchanged and still in their
+ * original order: the seeded idle drop stream filters this array by band and
+ * quality and then indexes into it, so band 1 keeps drawing the same book from
+ * the same roll.
+ */
 export const TECHNIQUE_CONFIGS: readonly TechniqueConfig[] = [
   {
     id: "quiet_breathing_art",
     displayName: "静息诀",
     slot: "mind",
     quality: "common",
+    minLevel: 1,
+    maxLevel: 60,
     valueScore: 100,
     fixedPower: 40,
     experienceBonusBp: 200,
@@ -272,6 +293,8 @@ export const TECHNIQUE_CONFIGS: readonly TechniqueConfig[] = [
     displayName: "青云心法",
     slot: "mind",
     quality: "uncommon",
+    minLevel: 1,
+    maxLevel: 60,
     valueScore: 240,
     fixedPower: 100,
     experienceBonusBp: 500,
@@ -283,6 +306,8 @@ export const TECHNIQUE_CONFIGS: readonly TechniqueConfig[] = [
     displayName: "轻身步",
     slot: "movement",
     quality: "common",
+    minLevel: 1,
+    maxLevel: 60,
     valueScore: 90,
     fixedPower: 35,
     experienceBonusBp: 0,
@@ -294,6 +319,8 @@ export const TECHNIQUE_CONFIGS: readonly TechniqueConfig[] = [
     displayName: "流云步",
     slot: "movement",
     quality: "uncommon",
+    minLevel: 1,
+    maxLevel: 60,
     valueScore: 220,
     fixedPower: 90,
     experienceBonusBp: 0,
@@ -305,6 +332,8 @@ export const TECHNIQUE_CONFIGS: readonly TechniqueConfig[] = [
     displayName: "离火指",
     slot: "divine",
     quality: "common",
+    minLevel: 1,
+    maxLevel: 60,
     valueScore: 120,
     fixedPower: 55,
     experienceBonusBp: 0,
@@ -316,6 +345,8 @@ export const TECHNIQUE_CONFIGS: readonly TechniqueConfig[] = [
     displayName: "引雷印",
     slot: "divine",
     quality: "uncommon",
+    minLevel: 1,
+    maxLevel: 60,
     valueScore: 280,
     fixedPower: 125,
     experienceBonusBp: 0,
@@ -327,6 +358,8 @@ export const TECHNIQUE_CONFIGS: readonly TechniqueConfig[] = [
     displayName: "聚灵秘术",
     slot: "secret",
     quality: "common",
+    minLevel: 1,
+    maxLevel: 60,
     valueScore: 110,
     fixedPower: 45,
     experienceBonusBp: 0,
@@ -338,11 +371,325 @@ export const TECHNIQUE_CONFIGS: readonly TechniqueConfig[] = [
     displayName: "观星秘术",
     slot: "secret",
     quality: "uncommon",
+    minLevel: 1,
+    maxLevel: 60,
     valueScore: 260,
     fixedPower: 110,
     experienceBonusBp: 0,
     spiritStoneBonusBp: 250,
     dropBonusBp: 250,
+  },
+  {
+    id: "spirit_intake_art",
+    displayName: "纳灵诀",
+    slot: "mind",
+    quality: "common",
+    minLevel: 61,
+    maxLevel: 150,
+    valueScore: 120,
+    fixedPower: 40,
+    experienceBonusBp: 240,
+    spiritStoneBonusBp: 0,
+    dropBonusBp: 0,
+  },
+  {
+    id: "jade_truth_heart_manual",
+    displayName: "玄真心法",
+    slot: "mind",
+    quality: "uncommon",
+    minLevel: 61,
+    maxLevel: 150,
+    valueScore: 288,
+    fixedPower: 100,
+    experienceBonusBp: 600,
+    spiritStoneBonusBp: 0,
+    dropBonusBp: 0,
+  },
+  {
+    id: "wind_treading_steps",
+    displayName: "踏风步",
+    slot: "movement",
+    quality: "common",
+    minLevel: 61,
+    maxLevel: 150,
+    valueScore: 108,
+    fixedPower: 35,
+    experienceBonusBp: 0,
+    spiritStoneBonusBp: 0,
+    dropBonusBp: 60,
+  },
+  {
+    id: "wind_riding_steps",
+    displayName: "御风步",
+    slot: "movement",
+    quality: "uncommon",
+    minLevel: 61,
+    maxLevel: 150,
+    valueScore: 264,
+    fixedPower: 90,
+    experienceBonusBp: 0,
+    spiritStoneBonusBp: 0,
+    dropBonusBp: 150,
+  },
+  {
+    id: "frost_finger",
+    displayName: "玄冰指",
+    slot: "divine",
+    quality: "common",
+    minLevel: 61,
+    maxLevel: 150,
+    valueScore: 144,
+    fixedPower: 55,
+    experienceBonusBp: 0,
+    spiritStoneBonusBp: 60,
+    dropBonusBp: 0,
+  },
+  {
+    id: "demon_subduing_seal",
+    displayName: "伏魔印",
+    slot: "divine",
+    quality: "uncommon",
+    minLevel: 61,
+    maxLevel: 150,
+    valueScore: 336,
+    fixedPower: 125,
+    experienceBonusBp: 0,
+    spiritStoneBonusBp: 150,
+    dropBonusBp: 0,
+  },
+  {
+    id: "essence_drawing_secret",
+    displayName: "纳元秘术",
+    slot: "secret",
+    quality: "common",
+    minLevel: 61,
+    maxLevel: 150,
+    valueScore: 132,
+    fixedPower: 45,
+    experienceBonusBp: 0,
+    spiritStoneBonusBp: 120,
+    dropBonusBp: 120,
+  },
+  {
+    id: "star_plucking_secret",
+    displayName: "摘星秘术",
+    slot: "secret",
+    quality: "uncommon",
+    minLevel: 61,
+    maxLevel: 150,
+    valueScore: 312,
+    fixedPower: 110,
+    experienceBonusBp: 0,
+    spiritStoneBonusBp: 300,
+    dropBonusBp: 300,
+  },
+  {
+    id: "heavenly_cycle_art",
+    displayName: "周天诀",
+    slot: "mind",
+    quality: "common",
+    minLevel: 151,
+    maxLevel: 300,
+    valueScore: 145,
+    fixedPower: 40,
+    experienceBonusBp: 290,
+    spiritStoneBonusBp: 0,
+    dropBonusBp: 0,
+  },
+  {
+    id: "grand_clarity_heart_manual",
+    displayName: "太清心法",
+    slot: "mind",
+    quality: "uncommon",
+    minLevel: 151,
+    maxLevel: 300,
+    valueScore: 348,
+    fixedPower: 100,
+    experienceBonusBp: 725,
+    spiritStoneBonusBp: 0,
+    dropBonusBp: 0,
+  },
+  {
+    id: "earth_shrinking_steps",
+    displayName: "缩地步",
+    slot: "movement",
+    quality: "common",
+    minLevel: 151,
+    maxLevel: 300,
+    valueScore: 130,
+    fixedPower: 35,
+    experienceBonusBp: 0,
+    spiritStoneBonusBp: 0,
+    dropBonusBp: 72,
+  },
+  {
+    id: "star_shifting_steps",
+    displayName: "星移步",
+    slot: "movement",
+    quality: "uncommon",
+    minLevel: 151,
+    maxLevel: 300,
+    valueScore: 319,
+    fixedPower: 90,
+    experienceBonusBp: 0,
+    spiritStoneBonusBp: 0,
+    dropBonusBp: 181,
+  },
+  {
+    id: "sky_burning_finger",
+    displayName: "焚天指",
+    slot: "divine",
+    quality: "common",
+    minLevel: 151,
+    maxLevel: 300,
+    valueScore: 174,
+    fixedPower: 55,
+    experienceBonusBp: 0,
+    spiritStoneBonusBp: 72,
+    dropBonusBp: 0,
+  },
+  {
+    id: "five_thunder_seal",
+    displayName: "五雷印",
+    slot: "divine",
+    quality: "uncommon",
+    minLevel: 151,
+    maxLevel: 300,
+    valueScore: 406,
+    fixedPower: 125,
+    experienceBonusBp: 0,
+    spiritStoneBonusBp: 181,
+    dropBonusBp: 0,
+  },
+  {
+    id: "spirit_converging_secret",
+    displayName: "汇灵秘术",
+    slot: "secret",
+    quality: "common",
+    minLevel: 151,
+    maxLevel: 300,
+    valueScore: 159,
+    fixedPower: 45,
+    experienceBonusBp: 0,
+    spiritStoneBonusBp: 145,
+    dropBonusBp: 145,
+  },
+  {
+    id: "heaven_peering_secret",
+    displayName: "窥天秘术",
+    slot: "secret",
+    quality: "uncommon",
+    minLevel: 151,
+    maxLevel: 300,
+    valueScore: 377,
+    fixedPower: 110,
+    experienceBonusBp: 0,
+    spiritStoneBonusBp: 362,
+    dropBonusBp: 362,
+  },
+  {
+    id: "primal_unity_art",
+    displayName: "混元诀",
+    slot: "mind",
+    quality: "common",
+    minLevel: 301,
+    maxLevel: 1_000,
+    valueScore: 175,
+    fixedPower: 40,
+    experienceBonusBp: 350,
+    spiritStoneBonusBp: 0,
+    dropBonusBp: 0,
+  },
+  {
+    id: "boundless_heart_manual",
+    displayName: "无极心法",
+    slot: "mind",
+    quality: "uncommon",
+    minLevel: 301,
+    maxLevel: 1_000,
+    valueScore: 420,
+    fixedPower: 100,
+    experienceBonusBp: 875,
+    spiritStoneBonusBp: 0,
+    dropBonusBp: 0,
+  },
+  {
+    id: "void_treading_steps",
+    displayName: "踏虚步",
+    slot: "movement",
+    quality: "common",
+    minLevel: 301,
+    maxLevel: 1_000,
+    valueScore: 157,
+    fixedPower: 35,
+    experienceBonusBp: 0,
+    spiritStoneBonusBp: 0,
+    dropBonusBp: 87,
+  },
+  {
+    id: "carefree_wandering_steps",
+    displayName: "逍遥步",
+    slot: "movement",
+    quality: "uncommon",
+    minLevel: 301,
+    maxLevel: 1_000,
+    valueScore: 385,
+    fixedPower: 90,
+    experienceBonusBp: 0,
+    spiritStoneBonusBp: 0,
+    dropBonusBp: 218,
+  },
+  {
+    id: "dust_quelling_finger",
+    displayName: "灭尘指",
+    slot: "divine",
+    quality: "common",
+    minLevel: 301,
+    maxLevel: 1_000,
+    valueScore: 210,
+    fixedPower: 55,
+    experienceBonusBp: 0,
+    spiritStoneBonusBp: 87,
+    dropBonusBp: 0,
+  },
+  {
+    id: "heaven_merging_seal",
+    displayName: "混天印",
+    slot: "divine",
+    quality: "uncommon",
+    minLevel: 301,
+    maxLevel: 1_000,
+    valueScore: 490,
+    fixedPower: 125,
+    experienceBonusBp: 0,
+    spiritStoneBonusBp: 218,
+    dropBonusBp: 0,
+  },
+  {
+    id: "spirit_seizing_secret",
+    displayName: "夺灵秘术",
+    slot: "secret",
+    quality: "common",
+    minLevel: 301,
+    maxLevel: 1_000,
+    valueScore: 192,
+    fixedPower: 45,
+    experienceBonusBp: 0,
+    spiritStoneBonusBp: 175,
+    dropBonusBp: 175,
+  },
+  {
+    id: "dao_unfolding_secret",
+    displayName: "演道秘术",
+    slot: "secret",
+    quality: "uncommon",
+    minLevel: 301,
+    maxLevel: 1_000,
+    valueScore: 455,
+    fixedPower: 110,
+    experienceBonusBp: 0,
+    spiritStoneBonusBp: 437,
+    dropBonusBp: 437,
   },
 ];
 
@@ -645,6 +992,38 @@ export function equipmentDropQualityWeights(
   const weights = EQUIPMENT_DROP_QUALITY_WEIGHTS[band];
   if (!weights) throw new RangeError(`Unknown equipment band: ${band}`);
   return weights;
+}
+
+/**
+ * A book keeps its band for life, read off the config rather than off whoever is
+ * holding it — the same rule as `equipmentBandForConfig`, so a 天阶 心法 stays 天阶
+ * in a save that was rolled back to Lv.5.
+ */
+export function techniqueBandForConfig(techniqueConfigId: string): EquipmentBand {
+  return equipmentBandForLevel(getTechniqueConfig(techniqueConfigId).minLevel);
+}
+
+export function techniqueConfigsForBand(
+  band: EquipmentBand,
+): readonly TechniqueConfig[] {
+  const bandConfig = getEquipmentBandConfig(band);
+  return TECHNIQUE_CONFIGS.filter(
+    (candidate) => candidate.minLevel === bandConfig.minLevel,
+  );
+}
+
+export function techniqueConfigForSlotBandQuality(
+  slot: TechniqueSlot,
+  band: EquipmentBand,
+  quality: AssetQuality,
+): TechniqueConfig {
+  const config = techniqueConfigsForBand(band).find(
+    (candidate) => candidate.slot === slot && candidate.quality === quality,
+  );
+  if (!config) {
+    throw new RangeError(`No ${quality} ${slot} technique config in band ${band}`);
+  }
+  return config;
 }
 
 export function isAssetQuality(value: string): value is AssetQuality {

@@ -183,6 +183,10 @@ export interface AppViewActions {
   joinSect(sectId: string): void;
   donateToSect(): void;
   upgradeTechnique(techniqueConfigId: string): void;
+  inheritTechnique(
+    sourceTechniqueConfigId: string,
+    targetTechniqueConfigId: string,
+  ): void;
   useInventoryItem(itemConfigId: string): void;
   useAllInventoryItems(itemConfigId: string): void;
   transferHarvest(entryId: string): void;

@@ -20,7 +20,6 @@ import {
   IDLE_ITEM_DROPS,
   IDLE_STACK_OVERFLOW_SPIRIT_STONE_VALUE,
   IDLE_TECHNIQUE_DROP_CHANCE,
-  IDLE_TECHNIQUE_DROP_QUALITY_WEIGHTS,
   PARTNER_MAX_LEVEL,
   PARTNER_UNLOCK_LEVEL,
   SECT_MAX_LEVEL,
@@ -67,6 +66,7 @@ import {
   equipmentSalvageReward,
   evaluateExpeditionStage,
   evaluateExpeditionSweep,
+  idleTechniqueDropQualityWeights,
   getCaveBuildingConfig,
   getAlchemyRecipeConfig,
   getCraftingRecipeConfig,
@@ -96,6 +96,9 @@ import {
   spendReserveOnDao,
   shouldAutoLockEquipment,
   simulateOnlineExperience,
+  techniqueBandForConfig,
+  techniqueConfigsForBand,
+  techniqueInheritCost,
   techniqueStarUpgradeCost,
   type AssetQuality,
   type AutoSalvageQuality,
@@ -126,6 +129,7 @@ import {
   GAME_CONFIG_VERSION_PRE_FEATURE_COMPLETION,
   GAME_CONFIG_VERSION_PRE_ITEM_COMPLETION,
   GAME_CONFIG_VERSION_PRE_POWER_MODEL,
+  GAME_CONFIG_VERSION_PRE_TECHNIQUE_BANDS,
   GAME_CONFIG_VERSION_PRE_TASK_CHAIN,
   GAME_CONFIG_VERSION_PRE_TRIAL_TOWER,
   LOCAL_SAVE_SCHEMA_VERSION,
@@ -1474,6 +1478,95 @@ export class LocalGameService {
     });
   }
 
+  /**
+   * Moves a book's stars onto its higher-band counterpart in the same slot and
+   * quality — the only way star investment crosses a band boundary.
+   *
+   * The price is spirit stone, never 功法残页. One specific 天阶 book takes ~93 hours
+   * of idling to find, so re-farming 35 duplicates per slot is not a path, and the
+   * lifetime page budget is fixed at 700 for all four equipped slots and must not
+   * grow with the band. The source's leftover duplicates come back as pages so
+   * nothing already paid for is lost.
+   */
+  inheritTechnique(
+    sourceTechniqueConfigId: string,
+    targetTechniqueConfigId: string,
+  ): LocalMutationResult {
+    return this.mutate((snapshot) => {
+      const source = snapshot.techniques.find(
+        (item) => item.techniqueConfigId === sourceTechniqueConfigId,
+      );
+      if (!source) throw new LocalGameError("尚未收录传承来源功法");
+      const target = snapshot.techniques.find(
+        (item) => item.techniqueConfigId === targetTechniqueConfigId,
+      );
+      if (!target) throw new LocalGameError("尚未收录传承目标功法");
+      if (source.techniqueConfigId === target.techniqueConfigId) {
+        throw new LocalGameError("传承目标不能是同一本功法");
+      }
+      if (source.slot !== target.slot) throw new LocalGameError("只能传承给同类功法");
+      if (source.quality !== target.quality) {
+        throw new LocalGameError("只能传承给同品质功法");
+      }
+      if (!isAssetQuality(source.quality)) {
+        throw new LocalGameError("功法品质数据无效");
+      }
+      const sourceBand = techniqueBandForConfig(source.techniqueConfigId);
+      const targetBand = techniqueBandForConfig(target.techniqueConfigId);
+      if (targetBand <= sourceBand) throw new LocalGameError("只能向更高段位传承");
+      if (target.star >= source.star) {
+        throw new LocalGameError(
+          `${target.displayName}的星级不低于来源，无需传承`,
+        );
+      }
+      const cost = techniqueInheritCost(source.quality, targetBand);
+      const spiritStone = decimal(snapshot.wallet.spiritStone);
+      if (spiritStone.lessThan(cost)) {
+        throw new LocalGameError(
+          `灵石不足，还需 ${decimal(cost).minus(spiritStone).toFixed(0)} 灵石`,
+        );
+      }
+      const refundedPages = source.duplicateCount * TECHNIQUE_PAGES_PER_DUPLICATE;
+      if (refundedPages > 0) {
+        ensureStackOutputCapacity(
+          snapshot,
+          "technique_page",
+          "行囊空间不足，无法返还功法残页",
+        );
+      }
+      const techniques = snapshot.techniques
+        .filter((item) => item.techniqueConfigId !== source.techniqueConfigId)
+        .map((item) =>
+          item.techniqueConfigId === target.techniqueConfigId
+            ? {
+                ...item,
+                star: source.star,
+                equippedSlot: source.equippedSlot ?? item.equippedSlot,
+              }
+            : item,
+        );
+      return {
+        snapshot: refreshSnapshot({
+          ...snapshot,
+          wallet: {
+            ...snapshot.wallet,
+            spiritStone: spiritStone.minus(cost).toFixed(0),
+          },
+          inventory:
+            refundedPages > 0
+              ? addStack(snapshot.inventory, "technique_page", refundedPages)
+              : snapshot.inventory,
+          techniques,
+        }),
+        events: [],
+        message:
+          refundedPages > 0
+            ? `消耗 ${cost} 灵石，${target.displayName}承接 ${source.star} 星，返还 ${refundedPages} 张功法残页`
+            : `消耗 ${cost} 灵石，${target.displayName}承接 ${source.star} 星`,
+      };
+    });
+  }
+
   equipTechnique(techniqueConfigId: string): LocalMutationResult {
     return this.mutate((snapshot) => {
       const target = snapshot.techniques.find(
@@ -2205,6 +2298,7 @@ function applyIdleDrops(
   // cannot find a 天阶 sword, and a 天阶 player stops finding 凡阶 ones.
   const band = equipmentBandForLevel(snapshot.progress.level);
   const bandEquipmentConfigs = equipmentConfigsForBand(band);
+  const bandTechniqueConfigs = techniqueConfigsForBand(band);
 
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     // One draw over the whole span decides at most one stack reward. The id and
@@ -2280,10 +2374,12 @@ function applyIdleDrops(
     }
     if (roll(IDLE_TECHNIQUE_DROP_CHANCE, randomInt)) {
       const quality = pickWeightedQuality(
-        IDLE_TECHNIQUE_DROP_QUALITY_WEIGHTS,
+        idleTechniqueDropQualityWeights(band),
         randomInt,
       );
-      const candidates = TECHNIQUE_CONFIGS.filter((item) => item.quality === quality);
+      const candidates = bandTechniqueConfigs.filter(
+        (item) => item.quality === quality,
+      );
       const config = candidates[randomInt(candidates.length)]!;
       const accepted = addHarvestCandidate(next, {
         id: createLocalId(),
@@ -2970,6 +3066,23 @@ function migrateSnapshot(snapshot: unknown): unknown {
     migrated = {
       ...migrated,
       dao: { level: 0 },
+      config: { ...config, version: GAME_CONFIG_VERSION_PRE_TECHNIQUE_BANDS },
+    };
+    config = migrated.config;
+  }
+  if (
+    isRecord(config) &&
+    config.version === GAME_CONFIG_VERSION_PRE_TECHNIQUE_BANDS
+  ) {
+    // Version only, the same argument as the equipment-band step. Every id an old
+    // save can hold is a band 1 id and all eight survive in their original
+    // positions; the band is derived from the id and never stored; and band 1's
+    // `fixedPower`, three idle bonuses, `valueScore` and drop weights are all
+    // unchanged — so stored technique rows, the bonus snapshots on them, and the
+    // power and idle totals computed from them stay byte-identical, and a band 1
+    // save replays a seed into the same book it drew before.
+    migrated = {
+      ...migrated,
       config: { ...config, version: GAME_CONFIG_VERSION },
     };
   }

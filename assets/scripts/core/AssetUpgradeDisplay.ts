@@ -18,6 +18,8 @@ import {
   isAssetQuality,
   nextAssetQuality,
   readRolledAffixes,
+  techniqueBandForConfig,
+  techniqueInheritCost,
   techniqueStarUpgradeCost,
   type AffixStat,
   type AssetQuality,
@@ -403,5 +405,64 @@ export function getTechniqueUpgradeDisplay(  snapshot: BootstrapSnapshot,
         : `副本 ${duplicateCount}/${cost.duplicateCount}`,
     actionText: "升星",
     actionEnabled: true,
+  };
+}
+
+/** The band a book belongs to, e.g. `天阶`. Read off the config, never the owner. */
+export function getTechniqueBandName(techniqueConfigId: string): string {
+  return getEquipmentBandConfig(techniqueBandForConfig(techniqueConfigId))
+    .displayName;
+}
+
+export interface TechniqueInheritDisplay extends AssetUpgradeDisplay {
+  /** The row the stars would move onto, or `null` when nothing qualifies. */
+  readonly targetTechniqueConfigId: string | null;
+}
+
+/**
+ * Prices moving this book's stars onto the highest band the player already owns
+ * in the same slot and quality.
+ *
+ * Highest rather than next: the cost is the target band's alone, so routing
+ * through an intermediate band the player happens to own would only charge for
+ * that band on top.
+ */
+export function getTechniqueInheritDisplay(
+  snapshot: BootstrapSnapshot,
+  technique: BootstrapSnapshot["techniques"][number],
+): TechniqueInheritDisplay {
+  const quality = isAssetQuality(technique.quality) ? technique.quality : null;
+  let target: BootstrapSnapshot["techniques"][number] | null = null;
+  let targetBand = techniqueBandForConfig(technique.techniqueConfigId);
+  if (quality) {
+    for (const candidate of snapshot.techniques) {
+      if (candidate.techniqueConfigId === technique.techniqueConfigId) continue;
+      if (candidate.slot !== technique.slot) continue;
+      if (candidate.quality !== technique.quality) continue;
+      if (candidate.star >= technique.star) continue;
+      const candidateBand = techniqueBandForConfig(candidate.techniqueConfigId);
+      if (candidateBand <= targetBand) continue;
+      target = candidate;
+      targetBand = candidateBand;
+    }
+  }
+  if (!quality || !target) {
+    return {
+      maxed: false,
+      affordable: false,
+      costText: "无可承接功法",
+      actionText: "传承",
+      actionEnabled: false,
+      targetTechniqueConfigId: null,
+    };
+  }
+  const cost = techniqueInheritCost(quality, targetBand);
+  return {
+    maxed: false,
+    affordable: decimal(snapshot.wallet.spiritStone).greaterThanOrEqualTo(cost),
+    costText: `承接 ${target.displayName}\n灵石 ${formatLargeNumber(cost.toString())}`,
+    actionText: "传承",
+    actionEnabled: true,
+    targetTechniqueConfigId: target.techniqueConfigId,
   };
 }

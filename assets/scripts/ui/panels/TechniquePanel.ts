@@ -1,4 +1,9 @@
-import { getTechniqueUpgradeDisplay } from "../../core/AssetUpgradeDisplay";
+import {
+  getTechniqueBandName,
+  getTechniqueInheritDisplay,
+  getTechniqueUpgradeDisplay,
+  type AssetUpgradeDisplay,
+} from "../../core/AssetUpgradeDisplay";
 import { formatLargeNumber } from "../../core/ClientNumber";
 import type { AppState } from "../../core/ClientTypes";
 import { canRunLocalMutation } from "../../core/ClientTypes";
@@ -38,7 +43,7 @@ export function drawTechniquePanel(
 ): void {
   const techniques = state.bootstrap!.techniques;
   const mutationsEnabled = canRunLocalMutation(state);
-  const techniqueWindow = paging.window("techniques", techniques.length, 8);
+  const techniqueWindow = paging.window("techniques", techniques.length, 6);
   addLabel(
     overlay,
     `功法 ${techniques.length} 本 · 残页 ${formatLargeNumber(state.bootstrap!.inventory.stacks.find((stack) => stack.itemConfigId === "technique_page")?.quantity ?? "0")} · 装备战力 +${formatBasisPoints(state.bootstrap!.progress.loadoutPowerBonusBp)}`,
@@ -87,17 +92,18 @@ export function drawTechniquePanel(
     return;
   }
   techniques.slice(techniqueWindow.start, techniqueWindow.end).forEach((technique, index) => {
-    const y = 222 - index * 75;
+    const y = 205 - index * 98;
     const upgrade = getTechniqueUpgradeDisplay(state.bootstrap!, technique);
-    drawBand(overlay, `Technique-${technique.techniqueConfigId}`, 0, y, 600, 62, COLORS.panel);
+    const inherit = getTechniqueInheritDisplay(state.bootstrap!, technique);
+    drawBand(overlay, `Technique-${technique.techniqueConfigId}`, 0, y, 600, 90, COLORS.panel);
     addLabel(
       overlay,
       technique.displayName,
       -225,
-      y,
-      135,
-      34,
-      17,
+      y + 24,
+      144,
+      28,
+      16,
       qualityColor(technique.quality),
       true,
       1,
@@ -105,41 +111,38 @@ export function drawTechniquePanel(
     );
     addLabel(
       overlay,
-      `${technique.star}星 · 战力 +${formatBasisPoints(technique.powerBonusBp)}`,
-      -90,
-      y,
-      130,
-      32,
-      15,
+      `${getTechniqueBandName(technique.techniqueConfigId)} · ${technique.star}星 · 战力 +${formatBasisPoints(technique.powerBonusBp)}`,
+      40,
+      y + 24,
+      300,
+      26,
+      14,
       COLORS.gold,
       false,
       1,
       HorizontalTextAlignment.CENTER,
     );
-    addLabel(
+    drawTechniqueAction(
       overlay,
-      upgrade.costText,
-      52,
-      y,
-      142,
-      32,
-      14,
-      upgrade.affordable || upgrade.maxed ? COLORS.textMuted : COLORS.red,
-    );
-    createButton(
-      overlay,
-      upgrade.actionText,
-      158,
-      y,
-      64,
-      44,
-      {
-        fill: upgrade.affordable ? COLORS.inkGreenLight : COLORS.panel,
-        stroke: upgrade.affordable ? COLORS.gold : COLORS.goldMuted,
-        fontSize: 14,
-        enabled: mutationsEnabled && upgrade.actionEnabled,
-      },
+      upgrade,
+      -218,
+      -78,
+      y - 22,
+      mutationsEnabled,
       () => actions.upgradeTechnique(technique.techniqueConfigId),
+    );
+    drawTechniqueAction(
+      overlay,
+      inherit,
+      42,
+      164,
+      y - 22,
+      mutationsEnabled,
+      () =>
+        actions.inheritTechnique(
+          technique.techniqueConfigId,
+          inherit.targetTechniqueConfigId ?? technique.techniqueConfigId,
+        ),
     );
     const equipped = technique.equippedSlot !== null;
     createButton(
@@ -152,7 +155,7 @@ export function drawTechniquePanel(
       255,
       y,
       78,
-      44,
+      56,
       {
         fill: equipped ? COLORS.red : COLORS.inkGreenLight,
         stroke: COLORS.goldMuted,
@@ -174,5 +177,50 @@ export function drawTechniquePanel(
     techniqueWindow.pageCount,
     () => paging.show("techniques", techniqueWindow.page - 1),
     () => paging.show("techniques", techniqueWindow.page + 1),
+  );
+}
+
+/**
+ * One cost label plus its button, the same pairing the equipment rows use — the
+ * technique rows now carry two of them (升星 and 传承) and they have to line up.
+ */
+function drawTechniqueAction(
+  overlay: Node,
+  display: AssetUpgradeDisplay,
+  costX: number,
+  buttonX: number,
+  y: number,
+  mutationsEnabled: boolean,
+  onClick: () => void,
+): void {
+  addLabel(
+    overlay,
+    display.costText,
+    costX,
+    y,
+    130,
+    26,
+    11,
+    display.actionEnabled && !display.affordable
+      ? COLORS.red
+      : COLORS.textMuted,
+    false,
+    2,
+    HorizontalTextAlignment.LEFT,
+  );
+  createButton(
+    overlay,
+    display.actionText,
+    buttonX,
+    y,
+    84,
+    28,
+    {
+      fill: display.affordable ? COLORS.inkGreenLight : COLORS.panel,
+      stroke: display.affordable ? COLORS.gold : COLORS.goldMuted,
+      fontSize: 12,
+      enabled: mutationsEnabled && display.actionEnabled,
+    },
+    onClick,
   );
 }
