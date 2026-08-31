@@ -81,7 +81,7 @@ export const HEADER_FEATURE: FeaturePanel = "profile";
 /**
  * Every panel that exists, so adding one cannot silently ship without a way in:
  * the assertion below fails to compile until the new panel is listed, and
- * `test/feature-rail.test.ts` fails until exactly one table offers it.
+ * `test/app-navigation.test.ts` fails until exactly one table offers it.
  */
 export const ALL_FEATURE_PANELS = [
   "profile",
