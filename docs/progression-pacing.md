@@ -12,7 +12,7 @@ levels. The Lv.8 task grants the first breakthrough pill automatically.
 | Reach Lv.8 | 24m 03s | Lv.8 task grants breakthrough pill x1 |
 | Reach Lv.10 | 34m 26s | The first realm bottleneck is next |
 | Fill Lv.10 and become breakthrough-ready | 40m 05s | Consume pill x1 to enter Lv.11 |
-| Reach Lv.11 | 40m 05s | Partner and cave unlock immediately |
+| Reach Lv.11 | 40m 05s | The cave unlocks immediately; the partner waits for Lv.20 |
 
 The underlying calculations are derived from `requiredExperienceForLevel` and
 `calculateOnlineExperiencePerSecond` in `shared/src/domain/progression.ts`.

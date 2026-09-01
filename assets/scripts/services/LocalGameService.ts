@@ -6,7 +6,6 @@ import {
   BASIS_POINTS,
   CRAFTING_QUALITY_WEIGHTS,
   CAVE_BUILDING_CONFIGS,
-  CAVE_MAX_LEVEL,
   CAVE_UNLOCK_LEVEL,
   DAO_MAX_LEVEL,
   ENHANCE_STONE_OVERFLOW_SPIRIT_STONE_VALUE,
@@ -20,9 +19,9 @@ import {
   IDLE_ITEM_DROPS,
   IDLE_STACK_OVERFLOW_SPIRIT_STONE_VALUE,
   IDLE_TECHNIQUE_DROP_CHANCE,
-  PARTNER_MAX_LEVEL,
+  PARTNER_ABSOLUTE_MAX_LEVEL,
   PARTNER_UNLOCK_LEVEL,
-  SECT_MAX_LEVEL,
+  SECT_ABSOLUTE_MAX_LEVEL,
   MAX_LEVEL,
   PROGRESSION_TASK_CONFIGS,
   TRIAL_TOWER_MAX_FLOOR,
@@ -48,6 +47,7 @@ import {
   calculateTotalPower,
   caveUpgradeCost,
   caveBuildingLevel,
+  caveMaxLevelForBand,
   canAscendEquipmentQuality,
   craftingQualityWeight,
   craftingSpiritStoneCost,
@@ -71,6 +71,7 @@ import {
   getAlchemyRecipeConfig,
   getCraftingRecipeConfig,
   getEquipmentConfig,
+  getEquipmentBandConfig,
   getExpeditionStageConfig,
   getItemConfig,
   getPartnerConfig,
@@ -85,6 +86,7 @@ import {
   isAssetQuality,
   nextAssetQuality,
   partnerBondRequirement,
+  partnerMaxLevelForBand,
   pickIdleStackDrop,
   pickTreasureHuntReward,
   requiredExperienceForLevel,
@@ -93,6 +95,8 @@ import {
   rollEquipmentAffixes,
   settleCultivation,
   sectContributionRequirement,
+  sectDonationYield,
+  sectMaxLevelForBand,
   spendReserveOnDao,
   shouldAutoLockEquipment,
   simulateOnlineExperience,
@@ -117,6 +121,7 @@ import {
   DROP_CONFIG_VERSION,
   GAME_CONFIG_VERSION,
   GAME_CONFIG_VERSION_PRE_AFFIX_ROLL,
+  GAME_CONFIG_VERSION_PRE_CAPPED_SYSTEM_BANDS,
   GAME_CONFIG_VERSION_PRE_EQUIPMENT_BANDS,
   GAME_CONFIG_VERSION_PRE_ENHANCE_STONE_CURVE,
   GAME_CONFIG_VERSION_PRE_REALM_SPLIT,
@@ -149,6 +154,15 @@ const LOCAL_BACKUP_PREFIX = "XIUXIAN_SAVE_V1:";
 const LOCAL_BACKUP_CHECKSUM_LENGTH = 8;
 const LOCAL_BACKUP_MAX_LENGTH = 1_000_000;
 const LOCAL_BATCH_ACTION_CAP = 100;
+
+/** Unchanged by band: materials pace the midgame, spirit stone paces the endgame. */
+const SECT_DONATION_MATERIALS = [
+  { itemConfigId: "wood", baseQuantity: 5 },
+  { itemConfigId: "stone", baseQuantity: 5 },
+  { itemConfigId: "spiritual_herb", baseQuantity: 5 },
+] as const;
+
+const PARTNER_BOND_PER_PILL = 100;
 
 export interface LocalMutationResult {
   readonly previous: BootstrapSnapshot;
@@ -433,8 +447,15 @@ export class LocalGameService {
         (item) => item.buildingConfigId === buildingConfigId,
       );
       if (!building) throw new LocalGameError("洞府中没有这座建筑");
+      const band = equipmentBandForLevel(snapshot.progress.level);
+      const bandMaxLevel = caveMaxLevelForBand(buildingConfigId, band);
       if (building.level >= config.maxLevel) {
         throw new LocalGameError(`${config.displayName}已满级`);
+      }
+      if (building.level >= bandMaxLevel) {
+        throw new LocalGameError(
+          `需突破至${nextBandDisplayName(band)}才能继续扩建${config.displayName}`,
+        );
       }
 
       const cost = caveUpgradeCost(buildingConfigId, building.level);
@@ -959,42 +980,57 @@ export class LocalGameService {
     });
   }
 
-  cultivateWithPartner(): LocalMutationResult {
+  cultivateWithPartner(times = 1): LocalMutationResult {
     return this.mutate((snapshot) => {
       const partnerId = snapshot.partner.partnerId;
       if (partnerId === null) throw new LocalGameError("请先选择一位道侣");
-      if (snapshot.partner.level >= PARTNER_MAX_LEVEL) {
+      if (!Number.isInteger(times) || times < 1) {
+        throw new LocalGameError("双修次数不合法");
+      }
+      if (snapshot.partner.level >= PARTNER_ABSOLUTE_MAX_LEVEL) {
         throw new LocalGameError("道侣亲密等级已满");
       }
+      const band = equipmentBandForLevel(snapshot.progress.level);
+      const bandMaxLevel = partnerMaxLevelForBand(band);
+      if (snapshot.partner.level >= bandMaxLevel) {
+        throw new LocalGameError(
+          `需突破至${nextBandDisplayName(band)}才能继续加深道侣亲密`,
+        );
+      }
       const pills = decimal(stackQuantity(snapshot, "dual_cultivation_pill"));
-      if (pills.lessThan(1)) throw new LocalGameError("双修丹不足");
-      const targetLevel = snapshot.partner.level + 1;
-      const gainedBond = 100;
-      const nextBond = snapshot.partner.bond + gainedBond;
-      const required = partnerBondRequirement(targetLevel);
-      const level = nextBond >= required ? targetLevel : snapshot.partner.level;
-      const bond =
-        level >= PARTNER_MAX_LEVEL
-          ? 0
-          : nextBond >= required
-            ? nextBond - required
-            : nextBond;
+      if (pills.lessThan(times)) {
+        throw new LocalGameError(
+          `双修丹不足，还需 ${decimal(times).minus(pills).toFixed(0)} 颗`,
+        );
+      }
+      const gainedBond = PARTNER_BOND_PER_PILL * times;
+      const climbed = climbBandedTrack({
+        level: snapshot.partner.level,
+        progress: snapshot.partner.bond + gainedBond,
+        bandMaxLevel,
+        absoluteMaxLevel: PARTNER_ABSOLUTE_MAX_LEVEL,
+        requirement: partnerBondRequirement,
+      });
       const inventory = setStackQuantity(
         snapshot.inventory,
         "dual_cultivation_pill",
-        pills.minus(1).toFixed(0),
+        pills.minus(times).toFixed(0),
       );
       const config = getPartnerConfig(partnerId);
       return {
         snapshot: refreshSnapshot({
           ...snapshot,
           inventory,
-          partner: { partnerId, level, bond },
+          partner: {
+            partnerId,
+            level: climbed.level,
+            bond: climbed.progress,
+          },
         }),
         events: [],
         message:
-          level > snapshot.partner.level
-            ? `${config.displayName}亲密提升至 Lv.${level}`
+          climbed.level > snapshot.partner.level
+            ? `${config.displayName}亲密提升至 Lv.${climbed.level}`
             : `与${config.displayName}双修，亲密 +${gainedBond}`,
       };
     });
@@ -1025,18 +1061,27 @@ export class LocalGameService {
     });
   }
 
-  donateToSect(): LocalMutationResult {
+  donateToSect(times = 1): LocalMutationResult {
     return this.mutate((snapshot) => {
       const sectId = snapshot.sect.sectId;
       if (sectId === null) throw new LocalGameError("请先加入宗门");
-      if (snapshot.sect.level >= SECT_MAX_LEVEL) {
+      if (!Number.isInteger(times) || times < 1) {
+        throw new LocalGameError("捐献次数不合法");
+      }
+      if (snapshot.sect.level >= SECT_ABSOLUTE_MAX_LEVEL) {
         throw new LocalGameError("宗门声望已满级");
       }
-      const donation = [
-        { itemConfigId: "wood", quantity: 5 },
-        { itemConfigId: "stone", quantity: 5 },
-        { itemConfigId: "spiritual_herb", quantity: 5 },
-      ] as const;
+      const band = equipmentBandForLevel(snapshot.progress.level);
+      const bandMaxLevel = sectMaxLevelForBand(band);
+      if (snapshot.sect.level >= bandMaxLevel) {
+        throw new LocalGameError(
+          `需突破至${nextBandDisplayName(band)}才能继续提升宗门声望`,
+        );
+      }
+      const donation = SECT_DONATION_MATERIALS.map((material) => ({
+        itemConfigId: material.itemConfigId,
+        quantity: material.baseQuantity * times,
+      }));
       for (const material of donation) {
         const owned = decimal(stackQuantity(snapshot, material.itemConfigId));
         if (owned.lessThan(material.quantity)) {
@@ -1055,28 +1100,29 @@ export class LocalGameService {
             .toFixed(0),
         );
       }
-      const contributionGain = 100;
-      const targetLevel = snapshot.sect.level + 1;
-      const totalContribution = snapshot.sect.contribution + contributionGain;
-      const required = sectContributionRequirement(targetLevel);
-      const level = totalContribution >= required ? targetLevel : snapshot.sect.level;
-      const contribution =
-        level >= SECT_MAX_LEVEL
-          ? 0
-          : totalContribution >= required
-            ? totalContribution - required
-            : totalContribution;
+      const contributionGain = sectDonationYield(band) * times;
+      const climbed = climbBandedTrack({
+        level: snapshot.sect.level,
+        progress: snapshot.sect.contribution + contributionGain,
+        bandMaxLevel,
+        absoluteMaxLevel: SECT_ABSOLUTE_MAX_LEVEL,
+        requirement: sectContributionRequirement,
+      });
       const config = getSectConfig(sectId);
       return {
         snapshot: refreshSnapshot({
           ...snapshot,
           inventory,
-          sect: { sectId, level, contribution },
+          sect: {
+            sectId,
+            level: climbed.level,
+            contribution: climbed.progress,
+          },
         }),
         events: [],
         message:
-          level > snapshot.sect.level
-            ? `${config.displayName}声望提升至 Lv.${level}`
+          climbed.level > snapshot.sect.level
+            ? `${config.displayName}声望提升至 Lv.${climbed.level}`
             : `向${config.displayName}捐献物资，贡献 +${contributionGain}`,
       };
     });
@@ -3083,6 +3129,24 @@ function migrateSnapshot(snapshot: unknown): unknown {
     // save replays a seed into the same book it drew before.
     migrated = {
       ...migrated,
+      config: { ...config, version: GAME_CONFIG_VERSION_PRE_CAPPED_SYSTEM_BANDS },
+    };
+    config = migrated.config;
+  }
+  if (
+    isRecord(config) &&
+    config.version === GAME_CONFIG_VERSION_PRE_CAPPED_SYSTEM_BANDS
+  ) {
+    // Version only, and this one needs no field work at all: the three caps that
+    // moved only ever moved up. Every level an old save can hold — cave 0-10,
+    // 宗门 and 道侣 1-10 — is still inside the widened bounds, `100n²` / `100n`
+    // are unchanged so the stored 贡献/亲密 remainders still satisfy
+    // `progress < requirement(level + 1)`, and the 凡阶 cost curve below Lv.10 is
+    // the same quadratic it always was. A Lv.10 save that used to be at its
+    // ceiling now sits at its 凡阶 band cap, and the band gate lifts it the
+    // moment the player breaks into 灵阶.
+    migrated = {
+      ...migrated,
       config: { ...config, version: GAME_CONFIG_VERSION },
     };
   }
@@ -3290,8 +3354,8 @@ function isPartnerSnapshot(value: unknown): boolean {
   } catch {
     return false;
   }
-  if (!isIntegerBetween(value.level, 1, PARTNER_MAX_LEVEL)) return false;
-  if (value.level === PARTNER_MAX_LEVEL) return value.bond === 0;
+  if (!isIntegerBetween(value.level, 1, PARTNER_ABSOLUTE_MAX_LEVEL)) return false;
+  if (value.level === PARTNER_ABSOLUTE_MAX_LEVEL) return value.bond === 0;
   return Number(value.bond) < partnerBondRequirement(Number(value.level) + 1);
 }
 
@@ -3311,8 +3375,8 @@ function isSectSnapshot(value: unknown): boolean {
   } catch {
     return false;
   }
-  if (!isIntegerBetween(value.level, 1, SECT_MAX_LEVEL)) return false;
-  if (value.level === SECT_MAX_LEVEL) return value.contribution === 0;
+  if (!isIntegerBetween(value.level, 1, SECT_ABSOLUTE_MAX_LEVEL)) return false;
+  if (value.level === SECT_ABSOLUTE_MAX_LEVEL) return value.contribution === 0;
   return Number(value.contribution) < sectContributionRequirement(Number(value.level) + 1);
 }
 
@@ -3357,14 +3421,19 @@ function isCaveSnapshot(value: unknown): boolean {
   const seen = new Set<string>();
   for (const building of value.buildings) {
     if (!isRecord(building) || typeof building.buildingConfigId !== "string") return false;
+    let config;
     try {
-      getCaveBuildingConfig(building.buildingConfigId);
+      config = getCaveBuildingConfig(building.buildingConfigId);
     } catch {
       return false;
     }
     if (seen.has(building.buildingConfigId)) return false;
     seen.add(building.buildingConfigId);
-    if (!isIntegerBetween(building.level, 0, CAVE_MAX_LEVEL)) return false;
+    // Per building, not a flat cap: 炼器室 still stops at 10 while the four idle
+    // buildings reach 40. The band gate is deliberately absent — band comes from
+    // the player's level, so validating against it would call a save corrupt for
+    // the one frame between loading and the level being read.
+    if (!isIntegerBetween(building.level, 0, config.maxLevel)) return false;
   }
   return true;
 }
@@ -3823,6 +3892,45 @@ function isNonNegativeSafeInteger(value: unknown): boolean {
 
 function isIntegerBetween(value: unknown, minimum: number, maximum: number): boolean {
   return Number.isSafeInteger(value) && Number(value) >= minimum && Number(value) <= maximum;
+}
+
+/**
+ * Advances a level/progress track as far as the paid-in progress reaches, then
+ * settles the remainder. A loop rather than one comparison because a single 天阶
+ * donation (1,000) clears both Lv.2 (400) and Lv.3 (900): the old single-step
+ * form would stop at Lv.2 holding exactly Lv.3's requirement, owing a level it
+ * never granted.
+ *
+ * Halting at the band cap truncates the leftover to one short of the next
+ * requirement — the save invariant is `progress < requirement(level + 1)` below
+ * the absolute cap, and letting it sit above that would make the very first
+ * post-breakthrough click grant a free level. At most one payment is lost. The
+ * absolute cap clears to 0, which is the invariant there.
+ */
+function climbBandedTrack(input: {
+  level: number;
+  progress: number;
+  bandMaxLevel: number;
+  absoluteMaxLevel: number;
+  requirement: (targetLevel: number) => number;
+}): { level: number; progress: number } {
+  let level = input.level;
+  let progress = input.progress;
+  while (level < input.bandMaxLevel && progress >= input.requirement(level + 1)) {
+    progress -= input.requirement(level + 1);
+    level += 1;
+  }
+  if (level >= input.absoluteMaxLevel) return { level, progress: 0 };
+  return { level, progress: Math.min(progress, input.requirement(level + 1) - 1) };
+}
+
+/**
+ * The band the player must break through into to lift the cap. Only ever called
+ * from a band-capped branch, and at 天阶 the band cap equals the absolute cap, so
+ * the branch is unreachable there and `band + 1` never leaves 1..4.
+ */
+function nextBandDisplayName(band: EquipmentBand): string {
+  return getEquipmentBandConfig((band + 1) as EquipmentBand).displayName;
 }
 
 function emptyMutation(snapshot: BootstrapSnapshot): LocalMutationResult {

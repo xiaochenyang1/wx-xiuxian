@@ -1,7 +1,10 @@
 import {
-  CAVE_MAX_LEVEL,
-  PARTNER_MAX_LEVEL,
+  CAVE_BUILDING_CONFIGS,
+  PARTNER_ABSOLUTE_MAX_LEVEL,
   calculateTotalPower,
+  caveMaxLevelForBand,
+  equipmentBandForLevel,
+  partnerMaxLevelForBand,
 } from "@cultivation-diary/shared";
 import { describe, expect, it } from "vitest";
 import {
@@ -135,13 +138,26 @@ describe("the ranking benchmark table", () => {
     );
   });
 
-  it("keeps both bounded boards inside their own ladders", () => {
-    for (const value of benchmarks("cave")) {
-      expect(Number(value)).toBeLessThanOrEqual(5 * CAVE_MAX_LEVEL);
-    }
-    for (const value of benchmarks("partner")) {
-      expect(Number(value)).toBeLessThanOrEqual(PARTNER_MAX_LEVEL);
-    }
+  it("keeps both bounded boards inside their own band's ladder", () => {
+    // Neither ceiling is a constant any more: the four idle buildings and the
+    // bond follow the band, so each rival is checked against the ceiling of the
+    // band their own level puts them in (50/90/130/170 for the cave once
+    // 炼器室's fixed 10 is added, 10/20/30/40 for the bond). Derived here rather
+    // than listed so a change to either step carries this test.
+    const levels = benchmarks("level").map(Number);
+    const caveTotals = benchmarks("cave").map(Number);
+    const partnerLevels = benchmarks("partner").map(Number);
+    levels.forEach((level, index) => {
+      const band = equipmentBandForLevel(level);
+      const caveCeiling = CAVE_BUILDING_CONFIGS.reduce(
+        (total, config) => total + caveMaxLevelForBand(config.id, band),
+        0,
+      );
+      expect(caveTotals[index]!).toBeLessThanOrEqual(caveCeiling);
+      expect(partnerLevels[index]!).toBeLessThanOrEqual(
+        partnerMaxLevelForBand(band),
+      );
+    });
   });
 });
 
@@ -184,10 +200,14 @@ describe("the ranking board", () => {
 
   it("gives a maxed partner the top slot whatever the nickname sorts as", () => {
     // 阿一 collates before 玄霄真人 and 赵子龙 after it; the old comparator let
-    // that decide the rank, because the top benchmark is also Lv.10.
+    // that decide the rank, because the top benchmark ties the player's own cap
+    // — Lv.40 now that the bond follows the band, as Lv.10 was before it.
     for (const displayName of ["阿一", "赵子龙"]) {
       const entries = buildLocalRanking(
-        snapshotWith({ partnerLevel: PARTNER_MAX_LEVEL, displayName }),
+        snapshotWith({
+          partnerLevel: PARTNER_ABSOLUTE_MAX_LEVEL,
+          displayName,
+        }),
         "partner",
       );
       expect(playerRank(entries)).toBe(1);

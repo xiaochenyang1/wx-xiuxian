@@ -1,6 +1,9 @@
 import {
+  PARTNER_ABSOLUTE_MAX_LEVEL,
   PARTNER_CONFIGS,
-  PARTNER_MAX_LEVEL,
+  equipmentBandForLevel,
+  partnerBondRequirement,
+  partnerMaxLevelForBand,
   type AutoSalvageQuality,
   type BootstrapSnapshot,
   type ChosenAvatarVariant,
@@ -11,6 +14,7 @@ import {
   type SectId,
 } from "@cultivation-diary/shared";
 import {
+  partnerBatchDisplay,
   partnerProgressText,
   selectedPartner,
   socialBonusText,
@@ -179,9 +183,9 @@ export interface AppViewActions {
   craftEquipment(recipeId: string): void;
   craftEquipmentBatch(recipeId: string): void;
   choosePartner(partnerId: string): void;
-  cultivateWithPartner(): void;
+  cultivateWithPartner(times: number): void;
   joinSect(sectId: string): void;
-  donateToSect(): void;
+  donateToSect(times: number): void;
   upgradeTechnique(techniqueConfigId: string): void;
   inheritTechnique(
     sourceTechniqueConfigId: string,
@@ -2273,31 +2277,55 @@ export class AppView {
       COLORS.jade,
     );
     addLabel(this.root, partnerProgressText(snapshot), -56, 205, 500, 34, 18, COLORS.textMuted);
+    const partnerBand = equipmentBandForLevel(snapshot.progress.level);
+    const partnerBandMaxLevel = partnerMaxLevelForBand(partnerBand);
+    const partnerCapped = snapshot.partner.level >= partnerBandMaxLevel;
     drawProgress(
       this.root,
       -56,
       160,
       430,
       14,
-      snapshot.partner.level >= PARTNER_MAX_LEVEL
+      partnerCapped
         ? 1
-        : snapshot.partner.bond / ((snapshot.partner.level + 1) * 100),
+        : snapshot.partner.bond / partnerBondRequirement(snapshot.partner.level + 1),
     );
+    const partnerBatch = partnerBatchDisplay(snapshot);
     createButton(
       this.root,
-      snapshot.partner.level >= PARTNER_MAX_LEVEL ? "已圆满" : "双修",
-      -56,
+      partnerCapped
+        ? snapshot.partner.level >= PARTNER_ABSOLUTE_MAX_LEVEL
+          ? "已圆满"
+          : "段位已满"
+        : "双修",
+      -146,
       75,
-      170,
+      164,
       58,
       {
         fill: COLORS.inkGreen,
         stroke: COLORS.gold,
         text: COLORS.gold,
         fontSize: 19,
-        enabled: snapshot.partner.level < PARTNER_MAX_LEVEL,
+        enabled: !partnerCapped,
       },
-      () => this.actions.cultivateWithPartner(),
+      () => this.actions.cultivateWithPartner(1),
+    );
+    createButton(
+      this.root,
+      partnerBatch.actionText,
+      34,
+      75,
+      164,
+      58,
+      {
+        fill: COLORS.panel,
+        stroke: partnerBatch.enabled ? COLORS.gold : COLORS.goldMuted,
+        text: partnerBatch.enabled ? COLORS.gold : COLORS.textMuted,
+        fontSize: 17,
+        enabled: partnerBatch.enabled,
+      },
+      () => this.actions.cultivateWithPartner(partnerBatch.times),
     );
     addLabel(
       this.root,

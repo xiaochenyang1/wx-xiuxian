@@ -1,3 +1,5 @@
+import type { EquipmentBand } from "./assets";
+
 export type PartnerId = "jun_rulan" | "su_wanqing" | "lu_xinghe";
 
 export interface PartnerConfig {
@@ -8,7 +10,11 @@ export interface PartnerConfig {
   readonly bonusPerLevelBp: number;
 }
 
+/** The 凡阶 cap, and the step each band adds: reachable level is `10 * band`. */
 export const PARTNER_MAX_LEVEL = 10;
+
+/** The highest level a bond can ever reach. Load validation uses this. */
+export const PARTNER_ABSOLUTE_MAX_LEVEL = 40;
 
 /**
  * Moved out from the cave's Lv.11 so the opening does not hand the player two
@@ -28,9 +34,17 @@ export function getPartnerConfig(id: string): PartnerConfig {
   return config;
 }
 
+export function partnerMaxLevelForBand(band: EquipmentBand): number {
+  return PARTNER_MAX_LEVEL * band;
+}
+
 export function partnerBondRequirement(targetLevel: number): number {
-  if (!Number.isInteger(targetLevel) || targetLevel < 1 || targetLevel > PARTNER_MAX_LEVEL) {
-    throw new RangeError(`Partner level must be between 1 and ${PARTNER_MAX_LEVEL}`);
+  if (
+    !Number.isInteger(targetLevel) ||
+    targetLevel < 1 ||
+    targetLevel > PARTNER_ABSOLUTE_MAX_LEVEL
+  ) {
+    throw new RangeError(`Partner level must be between 1 and ${PARTNER_ABSOLUTE_MAX_LEVEL}`);
   }
   return targetLevel * 100;
 }
