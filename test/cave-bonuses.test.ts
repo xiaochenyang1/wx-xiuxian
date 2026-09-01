@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  CAVE_ABSOLUTE_MAX_LEVEL,
   CAVE_MAX_LEVEL,
   calculateCaveBonuses,
   caveUpgradeCost,
@@ -66,7 +67,14 @@ describe("cave bonuses", () => {
     ).toThrow(RangeError);
     expect(() =>
       calculateCaveBonuses([
-        { buildingConfigId: "spirit_array", level: CAVE_MAX_LEVEL + 1 },
+        { buildingConfigId: "spirit_array", level: CAVE_ABSOLUTE_MAX_LEVEL + 1 },
+      ]),
+    ).toThrow(RangeError);
+    // The bound is the building's own absolute cap, not one shared number: 炼器室
+    // never leaves Lv.10, so Lv.11 is out of range for it alone.
+    expect(() =>
+      calculateCaveBonuses([
+        { buildingConfigId: "crafting_room", level: CAVE_MAX_LEVEL + 1 },
       ]),
     ).toThrow(RangeError);
     expect(() =>
@@ -95,6 +103,12 @@ describe("cave upgrade cost", () => {
   });
 
   it("rejects upgrading past max level", () => {
-    expect(() => caveUpgradeCost("spirit_array", CAVE_MAX_LEVEL)).toThrow(RangeError);
+    expect(() =>
+      caveUpgradeCost("spirit_array", CAVE_ABSOLUTE_MAX_LEVEL),
+    ).toThrow(RangeError);
+    expect(() => caveUpgradeCost("crafting_room", CAVE_MAX_LEVEL)).toThrow(RangeError);
+    // Lv.10 → Lv.11 is now a real upgrade for the four idle buildings, which is
+    // exactly what an old maxed save gets back.
+    expect(caveUpgradeCost("spirit_array", CAVE_MAX_LEVEL).spiritStone).toBe(375_000);
   });
 });

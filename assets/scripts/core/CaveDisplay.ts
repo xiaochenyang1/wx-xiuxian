@@ -1,11 +1,15 @@
 import {
   CAVE_BUILDING_CONFIGS,
   calculateCaveBonuses,
+  caveMaxLevelForBand,
   caveUpgradeCost,
   decimal,
+  equipmentBandForLevel,
+  getEquipmentBandConfig,
   getItemConfig,
   type BootstrapSnapshot,
   type CaveBuildingConfig,
+  type EquipmentBand,
 } from "@cultivation-diary/shared";
 import { formatLargeNumber } from "./ClientNumber";
 
@@ -20,7 +24,10 @@ export interface CaveBuildingDisplay {
   readonly buildingConfigId: string;
   readonly displayName: string;
   readonly level: number;
+  /** No upgrade available right now — either band-capped or finished. */
   readonly maxed: boolean;
+  /** Finished for good. `maxed && !complete` is the band-capped middle state. */
+  readonly complete: boolean;
   readonly levelText: string;
   readonly bonusText: string;
   readonly nextBonusText: string;
@@ -45,6 +52,12 @@ function bonusText(config: CaveBuildingConfig, level: number): string {
   return `${label} +${(config.bonusPerLevelBp * level) / 100}%`;
 }
 
+/**
+ * Three states, not two. 炼器室 only ever reaches the first and the third, since
+ * its absolute cap equals the 凡阶 cap; the four idle buildings pass through the
+ * middle one at every band boundary. The band comes from `snapshot.progress.level`
+ * rather than a parameter, which keeps this a function of the snapshot alone.
+ */
 export function getCaveBuildingDisplay(
   snapshot: BootstrapSnapshot,
   config: CaveBuildingConfig,
@@ -52,22 +65,28 @@ export function getCaveBuildingDisplay(
   const level =
     snapshot.cave.buildings.find((item) => item.buildingConfigId === config.id)
       ?.level ?? 0;
+  const band = equipmentBandForLevel(snapshot.progress.level);
+  const bandMaxLevel = caveMaxLevelForBand(config.id, band);
 
-  if (level >= config.maxLevel) {
+  if (level >= config.maxLevel || level >= bandMaxLevel) {
+    const complete = level >= config.maxLevel;
     return {
       buildingConfigId: config.id,
       displayName: config.displayName,
       level,
       maxed: true,
+      complete,
       levelText: `Lv.${level}`,
       bonusText: bonusText(config, level),
-      nextBonusText: "已达上限",
+      nextBonusText: complete
+        ? "已达上限"
+        : `需突破至${getEquipmentBandConfig((band + 1) as EquipmentBand).displayName}`,
       costText: "",
       materialText: "",
       materials: [],
       materialsSufficient: true,
       affordable: false,
-      actionText: "已满级",
+      actionText: complete ? "已满级" : "段位已满",
     };
   }
 
@@ -93,6 +112,7 @@ export function getCaveBuildingDisplay(
     displayName: config.displayName,
     level,
     maxed: false,
+    complete: false,
     levelText: level === 0 ? "未建造" : `Lv.${level}`,
     bonusText: bonusText(config, level),
     nextBonusText: `下一级 ${bonusText(config, level + 1)}`,

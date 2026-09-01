@@ -180,16 +180,29 @@ describe("cave upgrade rejections", () => {
     expect(() => service.upgradeCaveBuilding("nope")).toThrow();
   });
 
-  it("refuses once the building is at max level", () => {
+  it("refuses once the building is at its absolute cap", () => {
+    // 炼器室 is the one building whose absolute cap is the 凡阶 cap, so it is the
+    // only one a Lv.11 save can drive all the way to 已满级.
     const service = serviceWithSave((save) => {
-      building(save, "spirit_array").level = CAVE_MAX_LEVEL - 1;
+      building(save, "crafting_room").level = CAVE_MAX_LEVEL - 1;
+      stack(save, "ore").quantity = "500";
+      stack(save, "wood").quantity = "500";
     });
     for (let i = 0; i < 40; i += 1) service.debugGrant("spirit_stone");
 
-    service.upgradeCaveBuilding("spirit_array");
-    expect(levelOf(service, "spirit_array")).toBe(CAVE_MAX_LEVEL);
+    service.upgradeCaveBuilding("crafting_room");
+    expect(levelOf(service, "crafting_room")).toBe(CAVE_MAX_LEVEL);
 
-    expect(() => service.upgradeCaveBuilding("spirit_array")).toThrow("已满级");
+    expect(() => service.upgradeCaveBuilding("crafting_room")).toThrow("已满级");
+  });
+
+  it("refuses at the band cap and names the band that lifts it", () => {
+    const service = serviceWithSave((save) => {
+      building(save, "spirit_array").level = CAVE_MAX_LEVEL;
+    });
+    for (let i = 0; i < 40; i += 1) service.debugGrant("spirit_stone");
+
+    expect(() => service.upgradeCaveBuilding("spirit_array")).toThrow("需突破至灵阶");
   });
 
   it("refuses when spirit stone is short", () => {

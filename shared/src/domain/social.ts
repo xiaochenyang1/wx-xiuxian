@@ -1,14 +1,24 @@
-import { getPartnerConfig, PARTNER_MAX_LEVEL } from "../config/partner";
-import { getSectConfig, SECT_MAX_LEVEL } from "../config/sect";
+import { getPartnerConfig, PARTNER_ABSOLUTE_MAX_LEVEL } from "../config/partner";
+import { getSectConfig, SECT_ABSOLUTE_MAX_LEVEL } from "../config/sect";
 import type { LoadoutBonuses } from "./loadout";
 
+/**
+ * Both functions take the absolute cap rather than the band cap, and neither
+ * accepts a band. Band is derived from the player's level, which is mutable
+ * runtime state; these two answer only "given a level, what does it produce".
+ * The band gate lives at the mutation entry points and in the display layer.
+ */
 export function calculatePartnerBonuses(partner: { partnerId: string | null; level: number }): LoadoutBonuses {
   const result = emptyBonuses();
   if (partner.partnerId === null) {
     if (partner.level !== 0) throw new RangeError("Unchosen partner must be level 0");
     return result;
   }
-  if (!Number.isInteger(partner.level) || partner.level < 1 || partner.level > PARTNER_MAX_LEVEL) {
+  if (
+    !Number.isInteger(partner.level) ||
+    partner.level < 1 ||
+    partner.level > PARTNER_ABSOLUTE_MAX_LEVEL
+  ) {
     throw new RangeError("Partner level is out of range");
   }
   const config = getPartnerConfig(partner.partnerId);
@@ -25,7 +35,11 @@ export function calculateSectBonuses(sect: { sectId: string | null; level: numbe
     if (sect.level !== 0) throw new RangeError("Unjoined sect must be level 0");
     return result;
   }
-  if (!Number.isInteger(sect.level) || sect.level < 1 || sect.level > SECT_MAX_LEVEL) {
+  if (
+    !Number.isInteger(sect.level) ||
+    sect.level < 1 ||
+    sect.level > SECT_ABSOLUTE_MAX_LEVEL
+  ) {
     throw new RangeError("Sect level is out of range");
   }
   const config = getSectConfig(sect.sectId);

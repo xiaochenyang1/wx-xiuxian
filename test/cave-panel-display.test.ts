@@ -1,4 +1,5 @@
 import {
+  CAVE_ABSOLUTE_MAX_LEVEL,
   CAVE_MAX_LEVEL,
   caveUpgradeCost,
   getCaveBuildingConfig,
@@ -141,17 +142,61 @@ describe("cave building display", () => {
     });
   });
 
-  it("replaces the action with 已满级 at the level cap", () => {
+  it("replaces the action with 段位已满 at the band cap", () => {
     const snapshot = snapshotWith((save) => {
       building(save, "spirit_array").level = CAVE_MAX_LEVEL;
     });
     const display = getCaveBuildingDisplay(snapshot, SPIRIT_ARRAY);
 
+    // The fixture is a Lv.11 (凡阶) save, so Lv.10 is its ceiling for now but not
+    // the building's ceiling for good.
     expect(display.maxed).toBe(true);
-    expect(display.actionText).toBe("已满级");
+    expect(display.complete).toBe(false);
+    expect(display.actionText).toBe("段位已满");
     expect(display.affordable).toBe(false);
     expect(display.materials).toHaveLength(0);
-    expect(display.nextBonusText).toBe("已达上限");
+    expect(display.nextBonusText).toBe("需突破至灵阶");
+  });
+
+  it("replaces the action with 已满级 at the absolute cap", () => {
+    // 炼器室 reaches its absolute cap inside 凡阶; the other four never do.
+    const craftingRoom = getCaveBuildingDisplay(
+      snapshotWith((save) => {
+        building(save, "crafting_room").level = CAVE_MAX_LEVEL;
+      }),
+      CRAFTING_ROOM,
+    );
+    expect(craftingRoom.maxed).toBe(true);
+    expect(craftingRoom.complete).toBe(true);
+    expect(craftingRoom.actionText).toBe("已满级");
+    expect(craftingRoom.nextBonusText).toBe("已达上限");
+
+    const spiritArray = getCaveBuildingDisplay(
+      snapshotWith((save) => {
+        save.snapshot.progress.level = 400;
+        save.snapshot.progress.experience = "0";
+        save.snapshot.progress.status = "gaining";
+        building(save, "spirit_array").level = CAVE_ABSOLUTE_MAX_LEVEL;
+      }),
+      SPIRIT_ARRAY,
+    );
+    expect(spiritArray.complete).toBe(true);
+    expect(spiritArray.actionText).toBe("已满级");
+    expect(spiritArray.nextBonusText).toBe("已达上限");
+  });
+
+  it("keeps upgrading available above Lv.10 once the band allows it", () => {
+    const snapshot = snapshotWith((save) => {
+      save.snapshot.progress.level = 100;
+      save.snapshot.progress.experience = "0";
+      save.snapshot.progress.status = "gaining";
+      building(save, "spirit_array").level = CAVE_MAX_LEVEL;
+    });
+    const display = getCaveBuildingDisplay(snapshot, SPIRIT_ARRAY);
+
+    expect(display.maxed).toBe(false);
+    expect(display.actionText).toBe("升级");
+    expect(display.costText).toBe(`${formatLargeNumber("375000")} 灵石`);
   });
 });
 

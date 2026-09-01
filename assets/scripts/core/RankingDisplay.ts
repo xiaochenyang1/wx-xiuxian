@@ -38,6 +38,14 @@ interface RankingBenchmark {
    * numbers. Derivation in §4.3 of the design, re-checked by the tests.
    */
   readonly wealth: BigNumberString;
+  /**
+   * Cave levels summed across all five buildings, and bond level. Both used to
+   * be justified as "quantities that are capped anyway" — the cave board's
+   * ceiling was 50 and 玄霄真人 sat at 45. Now that the four idle buildings and
+   * the bond follow the band, the ceilings are 170 (four × 40 plus 炼器室's
+   * fixed 10) and 40, so each rival is restated at the same relative water line
+   * inside their own band's ceiling. 云游道人 is 凡阶 and therefore unchanged.
+   */
   readonly caveTotal: number;
   readonly partnerLevel: number;
 }
@@ -48,32 +56,32 @@ const BENCHMARKS: readonly RankingBenchmark[] = [
     level: 920,
     powerBonusBp: 71_774,
     wealth: "364000000",
-    caveTotal: 45,
-    partnerLevel: 10,
+    caveTotal: 153,
+    partnerLevel: 40,
   },
   {
     displayName: "丹霞散人",
     level: 580,
     powerBonusBp: 0,
     wealth: "61000000",
-    caveTotal: 32,
-    partnerLevel: 8,
+    caveTotal: 109,
+    partnerLevel: 32,
   },
   {
     displayName: "万象客",
     level: 290,
     powerBonusBp: 0,
     wealth: "11000000",
-    caveTotal: 20,
-    partnerLevel: 6,
+    caveTotal: 52,
+    partnerLevel: 18,
   },
   {
     displayName: "青竹居士",
     level: 140,
     powerBonusBp: 0,
     wealth: "1230000",
-    caveTotal: 12,
-    partnerLevel: 4,
+    caveTotal: 22,
+    partnerLevel: 8,
   },
   {
     displayName: "云游道人",

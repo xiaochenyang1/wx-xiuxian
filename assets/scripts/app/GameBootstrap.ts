@@ -106,15 +106,15 @@ export class GameBootstrap extends Component {
             () => this.localGame.choosePartner(partnerId),
             "power_change",
           ),
-        cultivateWithPartner: () =>
+        cultivateWithPartner: (times) =>
           this.runMutation(
-            () => this.localGame.cultivateWithPartner(),
+            () => this.localGame.cultivateWithPartner(times),
             "power_change",
           ),
         joinSect: (sectId) =>
           this.runMutation(() => this.localGame.joinSect(sectId), "power_change"),
-        donateToSect: () =>
-          this.runMutation(() => this.localGame.donateToSect(), "power_change"),
+        donateToSect: (times) =>
+          this.runMutation(() => this.localGame.donateToSect(times), "power_change"),
         upgradeTechnique: (techniqueConfigId) =>
           this.runMutation(
             () => this.localGame.upgradeTechnique(techniqueConfigId),

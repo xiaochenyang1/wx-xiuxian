@@ -1,11 +1,15 @@
 import {
+  SECT_ABSOLUTE_MAX_LEVEL,
   SECT_CONFIGS,
-  SECT_MAX_LEVEL,
+  equipmentBandForLevel,
   getItemConfig,
+  sectDonationYield,
+  sectMaxLevelForBand,
   type SectId,
 } from "@cultivation-diary/shared";
 import type { SectConfirmationDisplay } from "../../core/SocialConfirmationDisplay";
 import {
+  sectBatchDisplay,
   sectProgressText,
   selectedSect,
   socialBonusText,
@@ -55,22 +59,58 @@ export function drawSectPanel(
         return `${getItemConfig(itemConfigId).displayName} ${owned}/5`;
       })
       .join("　");
-    addLabel(overlay, `每次捐献：${donationText}`, 0, 20, 580, 36, 16, COLORS.textMuted);
+    addLabel(overlay, `每次捐献：${donationText}`, 0, 32, 580, 36, 16, COLORS.textMuted);
+    const band = equipmentBandForLevel(snapshot.progress.level);
+    // The yield is band-scaled, so the panel has to quote it rather than the 100
+    // it used to hardcode — a 天阶 donation is worth ten 凡阶 ones.
+    addLabel(
+      overlay,
+      `本段位每次贡献 +${sectDonationYield(band)}`,
+      0,
+      -2,
+      580,
+      32,
+      15,
+      COLORS.textMuted,
+    );
+    const bandMaxLevel = sectMaxLevelForBand(band);
+    const donateEnabled = snapshot.sect.level < bandMaxLevel;
+    const batch = sectBatchDisplay(snapshot);
     createButton(
       overlay,
-      snapshot.sect.level >= SECT_MAX_LEVEL ? "已圆满" : "捐献物资",
-      0,
+      donateEnabled
+        ? "捐献物资"
+        : snapshot.sect.level >= SECT_ABSOLUTE_MAX_LEVEL
+          ? "已圆满"
+          : "段位已满",
+      -100,
       -70,
-      190,
+      182,
       62,
       {
         fill: COLORS.inkGreen,
         stroke: COLORS.gold,
         text: COLORS.gold,
         fontSize: 19,
-        enabled: snapshot.sect.level < SECT_MAX_LEVEL,
+        enabled: donateEnabled,
       },
-      () => actions.donateToSect(),
+      () => actions.donateToSect(1),
+    );
+    createButton(
+      overlay,
+      batch.actionText,
+      100,
+      -70,
+      182,
+      62,
+      {
+        fill: COLORS.panel,
+        stroke: batch.enabled ? COLORS.gold : COLORS.goldMuted,
+        text: batch.enabled ? COLORS.gold : COLORS.textMuted,
+        fontSize: 17,
+        enabled: batch.enabled,
+      },
+      () => actions.donateToSect(batch.times),
     );
     addLabel(overlay, "宗门选择会写入本地存档，当前不可改投", 0, -155, 560, 34, 15, COLORS.textMuted);
     return;

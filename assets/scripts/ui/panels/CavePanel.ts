@@ -53,7 +53,7 @@ export function drawCavePanel(
     );
     addLabel(
       overlay,
-      display.maxed ? display.bonusText : display.nextBonusText,
+      display.complete ? display.bonusText : display.nextBonusText,
       x - 84,
       y + 6,
       230,
@@ -130,4 +130,21 @@ export function drawCavePanel(
       () => actions.upgradeCaveBuilding(config.id),
     );
   });
+
+  // 炼器室 is the one building that stops at Lv.10 in every band, so the empty
+  // cell beside it carries the reason. Without this the four idle buildings
+  // climbing past it reads as a bug.
+  addLabel(
+    overlay,
+    "炼器室换的是战力，随段位上限不变；\n其余四栋换挂机加成，上限随段位提升",
+    95,
+    -65,
+    280,
+    72,
+    13,
+    COLORS.textMuted,
+    false,
+    3,
+    HorizontalTextAlignment.LEFT,
+  );
 }
