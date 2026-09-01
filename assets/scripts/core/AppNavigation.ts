@@ -21,7 +21,7 @@ export interface FeatureEntry {
 }
 
 /** The count bubble a shortcut carries, resolved to a number by the view. */
-export type ShortcutBadge = "tasks" | "harvest";
+export type ShortcutBadge = "tasks" | "harvest" | "daily";
 
 export interface ShortcutEntry extends FeatureEntry {
   readonly x: number;
@@ -56,13 +56,15 @@ export const BOTTOM_FEATURE_RAIL = [
 ] as const satisfies ReadonlyArray<FeatureEntry>;
 
 /**
- * The left edge of the cultivation page. Both slots earn their space by showing
- * a number the player is waiting on; the right-hand column is left to the main
- * navigation, which is why nothing here needs suppressing behind artwork.
+ * The left edge of the cultivation page. Every slot earns its space by showing a
+ * number the player is waiting on; the right-hand column is left to the main
+ * navigation, which is why nothing here needs suppressing behind artwork. Three
+ * slots at a 105px pitch, so the next one would land at y=-60.
  */
 export const CULTIVATION_SHORTCUTS = [
   { label: "任务", feature: "tasks", x: -322, y: 255, icon: 3, badge: "tasks" },
   { label: "行囊", feature: "inventory", x: -322, y: 150, icon: 2, badge: "harvest" },
+  { label: "日常", feature: "daily", x: -322, y: 45, icon: 0, badge: "daily" },
 ] as const satisfies ReadonlyArray<ShortcutEntry>;
 
 /**
@@ -89,6 +91,7 @@ export const ALL_FEATURE_PANELS = [
   "equipment",
   "inventory",
   "tasks",
+  "daily",
   "alchemy",
   "crafting",
   "sect",

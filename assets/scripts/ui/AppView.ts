@@ -1,6 +1,7 @@
 import {
   PARTNER_ABSOLUTE_MAX_LEVEL,
   PARTNER_CONFIGS,
+  countPendingDailyRewards,
   equipmentBandForLevel,
   partnerBondRequirement,
   partnerMaxLevelForBand,
@@ -132,6 +133,7 @@ import {
   type ProfileResetControls,
 } from "./panels/ProfilePanel";
 import { drawTaskPanel } from "./panels/TaskPanel";
+import { drawDailyPanel } from "./panels/DailyPanel";
 import { drawTechniquePanel } from "./panels/TechniquePanel";
 import { drawAlchemyPanel } from "./panels/AlchemyPanel";
 import { drawCraftingPanel } from "./panels/CraftingPanel";
@@ -178,6 +180,9 @@ export interface AppViewActions {
   sweepExpedition(stageConfigId: string): void;
   challengeTrialTower(floor: number): void;
   huntTreasure(): void;
+  checkInDaily(): void;
+  claimDailyTask(taskConfigId: string): void;
+  exchangeImmortalJade(rowId: string): void;
   brewAlchemy(recipeId: string): void;
   brewAlchemyBatch(recipeId: string): void;
   craftEquipment(recipeId: string): void;
@@ -1728,6 +1733,7 @@ export class AppView {
     const badgeCounts: Readonly<Record<ShortcutBadge, number>> = {
       tasks: pendingTasks,
       harvest: pendingHarvest,
+      daily: countPendingDailyRewards(data.daily),
     };
     for (const action of CULTIVATION_SHORTCUTS) {
       createSideFeatureButton(
@@ -2639,6 +2645,7 @@ export class AppView {
       equipment: "法宝",
       inventory: "行囊与挂机收获",
       tasks: "修行任务",
+      daily: "日常与仙玉",
       alchemy: "炼丹房",
       crafting: "炼器室",
       sect: "宗门",
@@ -2676,6 +2683,7 @@ export class AppView {
     if (feature === "equipment")
       drawEquipmentPanel(overlay, state, this.actions, this.panelPaging);
     if (feature === "tasks") drawTaskPanel(overlay, state);
+    if (feature === "daily") drawDailyPanel(overlay, state, this.actions);
     if (feature === "alchemy") drawAlchemyPanel(overlay, state, this.actions);
     if (feature === "crafting") drawCraftingPanel(overlay, state, this.actions);
     if (feature === "sect") {

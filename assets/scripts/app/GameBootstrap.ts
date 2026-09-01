@@ -93,6 +93,12 @@ export class GameBootstrap extends Component {
           this.runMutation(() => this.localGame.challengeTrialTower(floor)),
         huntTreasure: () =>
           this.runMutation(() => this.localGame.huntTreasure()),
+        checkInDaily: () =>
+          this.runMutation(() => this.localGame.checkInDaily()),
+        claimDailyTask: (taskConfigId) =>
+          this.runMutation(() => this.localGame.claimDailyTask(taskConfigId)),
+        exchangeImmortalJade: (rowId) =>
+          this.runMutation(() => this.localGame.exchangeImmortalJade(rowId)),
         brewAlchemy: (recipeId) =>
           this.runMutation(() => this.localGame.brewAlchemy(recipeId)),
         brewAlchemyBatch: (recipeId) =>
