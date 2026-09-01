@@ -1,7 +1,7 @@
 # 寻宝段位化设计
 
 - 日期:2026-09-01
-- 状态:待评审
+- 状态:已实施
 - 相关:`docs/superpowers/specs/2026-08-26-expedition-band-extension-design.md`(扫荡按段位重排)、`docs/superpowers/specs/2026-08-26-material-income-curve-design.md`(挂机材料 ×1/×3/×6/×10,并在 §6.4.3 明确把寻宝留给后续)、`docs/superpowers/specs/2026-08-26-enhance-stone-income-curve-design.md`(§1.3 的四段供给表)、`docs/game-design-and-technical-spec.md` §2.8
 
 ## 1. 背景
@@ -243,7 +243,7 @@ reward = pickTreasureHuntReward(band, randomInteger(TREASURE_HUNT_TOTAL_WEIGHT))
 - **必须补一步只改版本号的迁移。**迁移链是一串 `if (config.version === PREV)`,链上没有分支的版本字符串会被当作未知版本而**整档丢弃**。上一份(炼丹)的设计文档写了"不需要任何迁移代码",实现时正因为这一条而红过一次:字段确实不用动,但链上那一步不是可选的。
 - 没有数值需要重算:已经寻到手的东西不追补也不回收。
 
-旧档观感:一个 Lv.500 的老玩家更新后打开历练页,寻宝按钮下方多出一行"寻宝 天阶 灵石 150万 · 材料 3500 · 强化石 500 · 残页 15 · 丹 · 改名卡",点一次的产出比更新前高约一千倍;行囊里的东西一个不少。
+旧档观感:一个 Lv.500 的老玩家更新后打开历练页,寻宝按钮下方多出一行"寻宝 天阶 灵石 150万 · 材料 3500 · 残页 15 · 强化石 500 · 丹 · 改名卡",点一次的产出比更新前高约一千倍;行囊里的东西一个不少。
 
 ## 9. 展示
 
@@ -252,18 +252,18 @@ reward = pickTreasureHuntReward(band, randomInteger(TREASURE_HUNT_TOTAL_WEIGHT))
 放在 `assets/scripts/core/ExpeditionDisplay.ts`,与 `getExpeditionSummary` 并列,读段位后用 `treasureHuntRewards(band)` 拼一行:
 
 ```
-寻宝 天阶　灵石 150万 · 材料 3500 · 强化石 500 · 残页 15 · 丹 · 改名卡
+寻宝 天阶　灵石 150万 · 材料 3500 · 残页 15 · 强化石 500 · 丹 · 改名卡
 ```
 
-数量取"命中时给多少",与关卡行的 `formatExpeditionSweepReward` 同一种口径(那一行也是写单次数量,不是期望值);灵石过万走 `formatLargeNumber` 缩写。最后两项只写名字不写数量,四段恒为 1 无须重复。
+行内顺序就是表的行序(灵石、材料、残页、强化石、丹、改名卡)。数量取"命中时给多少",与关卡行的 `formatExpeditionSweepReward` 同一种口径(那一行也是写单次数量,不是期望值);灵石走 `formatLargeNumber`,过万缩写成 `150万`、未过万带千分位写成 `3,600`。残页与大经验丹的名字缩短成 `残页`、`丹`(道具配置里是 `功法残页` 与 `经验丹（大）`),否则六条结果撑不进一行;最后两项只写名字不写数量,四段恒为 1 无须重复。
 
 ### 9.2 面板
 
 `ExpeditionPanel` 顶部今天是一行 19 号的 `getExpeditionSummary` 加右侧的寻宝按钮,下方第一行关卡的上沿在 y=372,中间只剩 6px。改成:
 
 - 摘要行 y 由 397 降到 404,高度 26,字号 17;
-- 新增寻宝行 y=383,宽 430,高 20,字号 13,`COLORS.textMuted`;
-- 寻宝按钮位置、尺寸、文案(`寻宝 N`)全部不动——它在 x=232,与两行标签(x 中心 -75、宽 430)不重叠。
+- 新增寻宝行 y=383,x 中心 -90,宽 460,高 20,字号 13,`COLORS.textMuted`——六条结果一行放不进 430;
+- 寻宝按钮位置、尺寸、文案(`寻宝 N`)全部不动——它左沿在 x=167,而寻宝行右沿在 x=140,不重叠。
 
 `VISIBLE_EXPEDITION_STAGE_COUNT` 不动,窗口逻辑与它的测试不受影响。
 
@@ -291,7 +291,7 @@ reward = pickTreasureHuntReward(band, randomInteger(TREASURE_HUNT_TOTAL_WEIGHT))
 5. **不变式**:四段各自遍历三条轴,断言 `寻宝期望 / 参考扫荡行` 落在 `[0.45, 0.55]`,残页落在 `(0, 1)`。参考行从 `EXPEDITION_STAGE_CONFIGS` 里现算(关 6/8/10/12),不写死——这样任何一侧被改动都会红。
 6. 服务层:天阶存档打桩 `Math.random` 命中灵石行,得 1,500,000 灵石且 `lifetimeSpiritStoneEarned` 同步;命中残页行得 15 张。凡阶同样两条,得 3,600 与 15。
 7. 服务层:令牌恰好扣 1 枚,不足时抛"寻宝令不足"且行囊分毫不动(沿用现有用例)。
-8. 展示:`getTreasureHuntText` 在天阶含段位名与 `灵石 150万`,在凡阶含 `灵石 3600`。
+8. 展示:`getTreasureHuntText` 两段各断言整行,天阶是 `寻宝 天阶　灵石 150万 · 材料 3500 · 残页 15 · 强化石 500 · 丹 · 改名卡`,凡阶是 `灵石 3,600 · 材料 70`(未过万带千分位)。
 
 回归验收:
 

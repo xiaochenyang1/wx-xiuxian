@@ -1,5 +1,5 @@
 import {
-  TREASURE_HUNT_REWARDS,
+  TREASURE_HUNT_REWARD_ROWS,
   TREASURE_HUNT_TOTAL_WEIGHT,
   getItemConfig,
   pickTreasureHuntReward,
@@ -55,16 +55,17 @@ describe("treasure hunt configuration", () => {
   it("covers the complete roll range with real rewards", () => {
     expect(TREASURE_HUNT_TOTAL_WEIGHT).toBe(10_000);
     let cursor = 0;
-    for (const reward of TREASURE_HUNT_REWARDS) {
-      expect(pickTreasureHuntReward(cursor)).toBe(reward);
-      cursor += reward.weight;
-      if (reward.kind === "item") {
-        expect(() => getItemConfig(reward.itemConfigId)).not.toThrow();
+    for (const row of TREASURE_HUNT_REWARD_ROWS) {
+      const reward = pickTreasureHuntReward(1, cursor);
+      expect(reward.kind).toBe(row.kind);
+      cursor += row.weight;
+      if (row.kind === "item") {
+        expect(() => getItemConfig(row.itemConfigId)).not.toThrow();
       }
     }
     expect(cursor).toBe(TREASURE_HUNT_TOTAL_WEIGHT);
-    expect(() => pickTreasureHuntReward(-1)).toThrow(RangeError);
-    expect(() => pickTreasureHuntReward(TREASURE_HUNT_TOTAL_WEIGHT)).toThrow(
+    expect(() => pickTreasureHuntReward(1, -1)).toThrow(RangeError);
+    expect(() => pickTreasureHuntReward(1, TREASURE_HUNT_TOTAL_WEIGHT)).toThrow(
       RangeError,
     );
   });
@@ -78,8 +79,8 @@ describe("local treasure hunt", () => {
     const result = service.huntTreasure();
 
     expect(quantityOf(service, "treasure_token")).toBe("1");
-    expect(quantityOf(service, "technique_page")).toBe("5");
-    expect(result.message).toBe("寻得 功法残页 x5");
+    expect(quantityOf(service, "technique_page")).toBe("15");
+    expect(result.message).toBe("寻得 功法残页 x15");
   });
 
   it("awards spirit stones and lifetime wealth together", () => {
@@ -89,8 +90,9 @@ describe("local treasure hunt", () => {
     service.huntTreasure();
 
     expect(quantityOf(service, "treasure_token")).toBe("0");
-    expect(service.snapshot.wallet.spiritStone).toBe("1500");
-    expect(service.snapshot.wallet.lifetimeSpiritStoneEarned).toBe("1500");
+    // The fixture is a fresh Lv.1 save, so this is the 凡阶 row.
+    expect(service.snapshot.wallet.spiritStone).toBe("3600");
+    expect(service.snapshot.wallet.lifetimeSpiritStoneEarned).toBe("3600");
   });
 
   it("rejects a hunt without a token", () => {

@@ -1,9 +1,12 @@
 import {
   EXPEDITION_STAGE_CONFIGS,
   EXPEDITION_SWEEP_TOKEN_COST,
+  equipmentBandForLevel,
   evaluateExpeditionStage,
+  getEquipmentBandConfig,
   getExpeditionSweepCount,
   getItemConfig,
+  treasureHuntRewards,
   type BootstrapSnapshot,
   type ExpeditionStageConfig,
   type ExpeditionStageStatus,
@@ -29,6 +32,34 @@ export function getExpeditionSummary(snapshot: BootstrapSnapshot): string {
 
 /** How many stage rows the panel has vertical room for. */
 export const VISIBLE_EXPEDITION_STAGE_COUNT = 6;
+
+/**
+ * What one hunt pays at the player's band. Quantities are per hit, not expected
+ * values, the same reading as a stage's sweep row — the point is to answer "what
+ * can this button give me", which a 0.04 next to 经验丹 would not.
+ *
+ * Names are shortened past the item configs' own `displayName` (残页, 丹) because
+ * six outcomes have to fit one 13pt line, and the two flat rows print without a
+ * quantity since they are 1 in every band.
+ */
+export function getTreasureHuntText(snapshot: BootstrapSnapshot): string {
+  const band = equipmentBandForLevel(snapshot.progress.level);
+  const shortNames: Readonly<Record<string, string>> = {
+    technique_page: "残页",
+    exp_pill_large: "丹",
+  };
+  const parts = treasureHuntRewards(band).map((reward) => {
+    if (reward.kind === "spirit_stone") {
+      return `灵石 ${formatLargeNumber(String(reward.amount))}`;
+    }
+    if (reward.kind === "random_material") return `材料 ${reward.quantity}`;
+    const name =
+      shortNames[reward.itemConfigId] ??
+      getItemConfig(reward.itemConfigId).displayName;
+    return reward.quantity === 1 ? name : `${name} ${reward.quantity}`;
+  });
+  return `寻宝 ${getEquipmentBandConfig(band).displayName}　${parts.join(" · ")}`;
+}
 
 /**
  * The window *ends* at the next stage to clear, which is the opposite of the
