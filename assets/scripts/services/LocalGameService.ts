@@ -36,6 +36,8 @@ import {
   applyWholeExperience,
   addLoadoutBonuses,
   affixScorePercent,
+  alchemyIngredientCosts,
+  alchemySpiritStoneCost,
   calculatePartnerBonuses,
   calculateSectBonuses,
   calculateCaveBonuses,
@@ -121,6 +123,7 @@ import {
   DROP_CONFIG_VERSION,
   GAME_CONFIG_VERSION,
   GAME_CONFIG_VERSION_PRE_AFFIX_ROLL,
+  GAME_CONFIG_VERSION_PRE_ALCHEMY_BANDS,
   GAME_CONFIG_VERSION_PRE_CAPPED_SYSTEM_BANDS,
   GAME_CONFIG_VERSION_PRE_EQUIPMENT_BANDS,
   GAME_CONFIG_VERSION_PRE_ENHANCE_STONE_CURVE,
@@ -789,13 +792,20 @@ export class LocalGameService {
           `炼丹房需达到 Lv.${recipe.requiredAlchemyRoomLevel}`,
         );
       }
+      // Brewing pays the brewer's own band. Spirit stone follows the band for
+      // every recipe; materials only for the two experience pills, whose output
+      // is denominated in the player's current income. Resolved on read, never
+      // stored — the recipe table stays a constant.
+      const band = equipmentBandForLevel(snapshot.progress.level);
+      const spiritStoneCost = alchemySpiritStoneCost(recipe, band);
+      const ingredients = alchemyIngredientCosts(recipe, band);
       const stones = decimal(snapshot.wallet.spiritStone);
-      if (stones.lessThan(recipe.spiritStoneCost)) {
+      if (stones.lessThan(spiritStoneCost)) {
         throw new LocalGameError(
-          `灵石不足，还需 ${decimal(recipe.spiritStoneCost).minus(stones).toFixed(0)} 灵石`,
+          `灵石不足，还需 ${decimal(spiritStoneCost).minus(stones).toFixed(0)} 灵石`,
         );
       }
-      for (const ingredient of recipe.ingredients) {
+      for (const ingredient of ingredients) {
         const owned = decimal(stackQuantity(snapshot, ingredient.itemConfigId));
         if (owned.lessThan(ingredient.quantity)) {
           throw new LocalGameError(
@@ -806,15 +816,15 @@ export class LocalGameService {
       const batchCount = useAll
         ? maxAffordableBatchCount(
             snapshot.wallet.spiritStone,
-            recipe.spiritStoneCost,
-            recipe.ingredients.map((ingredient) => ({
+            spiritStoneCost,
+            ingredients.map((ingredient) => ({
               owned: stackQuantity(snapshot, ingredient.itemConfigId),
               cost: ingredient.quantity,
             })),
           )
         : 1;
       let inventory = snapshot.inventory;
-      for (const ingredient of recipe.ingredients) {
+      for (const ingredient of ingredients) {
         inventory = setStackQuantity(
           inventory,
           ingredient.itemConfigId,
@@ -839,7 +849,7 @@ export class LocalGameService {
           wallet: {
             ...snapshot.wallet,
             spiritStone: stones
-              .minus(decimal(recipe.spiritStoneCost).times(batchCount))
+              .minus(decimal(spiritStoneCost).times(batchCount))
               .toFixed(0),
           },
         },
@@ -3145,6 +3155,22 @@ function migrateSnapshot(snapshot: unknown): unknown {
     // the same quadratic it always was. A Lv.10 save that used to be at its
     // ceiling now sits at its 凡阶 band cap, and the band gate lifts it the
     // moment the player breaks into 灵阶.
+    migrated = {
+      ...migrated,
+      config: { ...config, version: GAME_CONFIG_VERSION_PRE_ALCHEMY_BANDS },
+    };
+    config = migrated.config;
+  }
+  if (
+    isRecord(config) &&
+    config.version === GAME_CONFIG_VERSION_PRE_ALCHEMY_BANDS
+  ) {
+    // Version only, and there is nothing a save could hold that this step could
+    // touch: a brewing price is resolved from the band on every read and never
+    // stored, and the recipes' 凡阶 prices are the values that were already in
+    // the config. A pill in the bag is a plain `{ itemConfigId, quantity }` stack
+    // with no record of the band it was brewed at, and using one has never
+    // consulted its cost — so old stock keeps working exactly as before.
     migrated = {
       ...migrated,
       config: { ...config, version: GAME_CONFIG_VERSION },

@@ -1,5 +1,8 @@
 import { ALCHEMY_RECIPE_CONFIGS } from "@cultivation-diary/shared";
-import { getAlchemyRecipeDisplay } from "../../core/AlchemyDisplay";
+import {
+  getAlchemyHeaderText,
+  getAlchemyRecipeDisplay,
+} from "../../core/AlchemyDisplay";
 import type { AppState } from "../../core/ClientTypes";
 import type { AppViewActions } from "../AppView";
 import { COLORS } from "../primitives/Colors";
@@ -12,13 +15,9 @@ export function drawAlchemyPanel(
   actions: AppViewActions,
 ): void {
   const snapshot = state.bootstrap!;
-  const roomLevel =
-    snapshot.cave.buildings.find(
-      (building) => building.buildingConfigId === "alchemy_room",
-    )?.level ?? 0;
   addLabel(
     overlay,
-    `炼丹房 Lv.${roomLevel}　按方消耗材料，丹药直接收入行囊`,
+    getAlchemyHeaderText(snapshot),
     0,
     397,
     590,
@@ -123,4 +122,21 @@ export function drawAlchemyPanel(
       () => actions.brewAlchemyBatch(recipe.id),
     );
   });
+
+  // The header only has room for the band and its two multipliers, so the prose
+  // it used to carry lands here — together with the one thing the numbers cannot
+  // say for themselves: 炼丹房 goes to Lv.40 but stops unlocking recipes at Lv.4,
+  // and the remaining levels pay in drop rate.
+  addLabel(
+    overlay,
+    "按方消耗材料，丹药直接收入行囊　炼丹房 Lv.4 以上不再解锁新配方，其余等级提升掉落效率",
+    0,
+    -292,
+    590,
+    42,
+    13,
+    COLORS.textMuted,
+    false,
+    2,
+  );
 }
