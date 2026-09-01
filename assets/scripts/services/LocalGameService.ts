@@ -139,6 +139,7 @@ import {
   GAME_CONFIG_VERSION_PRE_POWER_MODEL,
   GAME_CONFIG_VERSION_PRE_TECHNIQUE_BANDS,
   GAME_CONFIG_VERSION_PRE_TASK_CHAIN,
+  GAME_CONFIG_VERSION_PRE_TREASURE_HUNT_BANDS,
   GAME_CONFIG_VERSION_PRE_TRIAL_TOWER,
   LOCAL_SAVE_SCHEMA_VERSION,
   createInitialSave,
@@ -721,7 +722,11 @@ export class LocalGameService {
         "treasure_token",
         tokens.minus(1).toFixed(0),
       );
+      // The band is resolved on read, like every other band gate: the row table
+      // is a constant and only the quantity it settles to depends on the level.
+      const band = equipmentBandForLevel(snapshot.progress.level);
       const reward = pickTreasureHuntReward(
+        band,
         randomInteger(TREASURE_HUNT_TOTAL_WEIGHT),
       );
       if (reward.kind === "spirit_stone") {
@@ -3171,6 +3176,22 @@ function migrateSnapshot(snapshot: unknown): unknown {
     // the config. A pill in the bag is a plain `{ itemConfigId, quantity }` stack
     // with no record of the band it was brewed at, and using one has never
     // consulted its cost — so old stock keeps working exactly as before.
+    migrated = {
+      ...migrated,
+      config: { ...config, version: GAME_CONFIG_VERSION_PRE_TREASURE_HUNT_BANDS },
+    };
+    config = migrated.config;
+  }
+  if (
+    isRecord(config) &&
+    config.version === GAME_CONFIG_VERSION_PRE_TREASURE_HUNT_BANDS
+  ) {
+    // Version only. A hunt's payout lands in the bag as an ordinary stack with no
+    // record of the band that produced it, the row table is read at hunt time and
+    // never stored, and the six weights are unchanged — so nothing an old save
+    // holds is reinterpreted. This step earns nothing but the chain link itself,
+    // which is not optional: a version string with no branch here is treated as
+    // unknown and the whole save is discarded.
     migrated = {
       ...migrated,
       config: { ...config, version: GAME_CONFIG_VERSION },

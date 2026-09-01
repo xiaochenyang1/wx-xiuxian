@@ -2,6 +2,7 @@ import { EXPEDITION_STAGE_CONFIGS } from "@cultivation-diary/shared";
 import {
   getExpeditionStageDisplay,
   getExpeditionSummary,
+  getTreasureHuntText,
   selectVisibleExpeditionStages,
 } from "../../core/ExpeditionDisplay";
 import type { AppState } from "../../core/ClientTypes";
@@ -23,11 +24,25 @@ export function drawExpeditionPanel(
     overlay,
     getExpeditionSummary(snapshot),
     -75,
-    397,
+    404,
     430,
-    38,
-    19,
+    26,
+    17,
     COLORS.jade,
+  );
+  // The payout line sits between the summary and the first stage row, whose band
+  // reaches up to y=372 — so 383 is the whole gap there is. It is wider than the
+  // summary above it because six outcomes on one line need the room, and still
+  // ends left of the 寻宝 button at x=232.
+  addLabel(
+    overlay,
+    getTreasureHuntText(snapshot),
+    -90,
+    383,
+    460,
+    20,
+    13,
+    COLORS.textMuted,
   );
   const treasureTokens =
     snapshot.inventory.stacks.find(
