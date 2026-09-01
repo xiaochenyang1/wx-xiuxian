@@ -6,6 +6,7 @@ import {
   PARTNER_MAX_LEVEL,
   SECT_ABSOLUTE_MAX_LEVEL,
   SECT_MAX_LEVEL,
+  alchemySpiritStoneCost,
   caveMaxLevelForBand,
   caveUpgradeCost,
   getAlchemyRecipeConfig,
@@ -248,9 +249,22 @@ describe("the per-band bill", () => {
     }
     expect(pills).toBe(819);
 
+    // 双修丹's spirit stone follows the band since the alchemy pass, so the
+    // ladder's pill bill is per-band: 54 x 2,000 + 155 x 8,000 + 255 x 24,000 +
+    // 355 x 60,000. The 洞府 column above is untouched by that change.
     const perPill = getAlchemyRecipeConfig("dual_cultivation_pill");
     expect(perPill.spiritStoneCost).toBe(2_000);
-    expect(cave + pills * perPill.spiritStoneCost).toBe(4_847_019_464);
+    let pillSpiritStone = 0;
+    BANDS.forEach((band) => {
+      let pillsInBand = 0;
+      const from = band === 1 ? 2 : 10 * (band - 1) + 1;
+      for (let target = from; target <= 10 * band; target += 1) {
+        pillsInBand += partnerBondRequirement(target) / 100;
+      }
+      pillSpiritStone += pillsInBand * alchemySpiritStoneCost(perPill, band);
+    });
+    expect(pillSpiritStone).toBe(28_768_000);
+    expect(cave + pillSpiritStone).toBe(4_874_149_464);
   });
 
   it("pays 100n² per sect level from the level joining gave away", () => {

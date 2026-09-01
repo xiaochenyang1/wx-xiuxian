@@ -1,7 +1,7 @@
 # 炼丹段位化设计
 
 - 日期:2026-09-01
-- 状态:待实施
+- 状态:已实施
 - 相关:`docs/superpowers/specs/2026-08-31-capped-system-band-progression-design.md`(洞府 / 宗门 / 道侣段位)、`docs/superpowers/specs/2026-08-26-material-income-curve-design.md`(挂机材料 ×1/×3/×6/×10)、`docs/game-design-and-technical-spec.md` §2.4 / §2.7 / §2.10
 
 ## 1. 背景
@@ -264,7 +264,7 @@ ingredients = alchemyIngredientCosts(recipe, band)
 7. 服务层单次:天阶玩家炼突破丹扣 90,000 灵石,但灵草仍只扣 20、矿石仍只扣 5。
 8. 批量按当段价:天阶给 1,200 灵草 + 1,000 灵土 + 充足灵石,`brewAlchemyBatch("large_experience_pill")` 得 10 份(灵草 1,200 / 120),不是按凡阶价的 100 份。
 9. 全有或全无:天阶灵草差 1 个时报"灵草不足,还需 1 个",灵石、材料与产物快照分毫不动。
-10. 展示:`getAlchemyRecipeDisplay` 在天阶给出 `45,000 灵石` 与 `灵草 …/120`;`getAlchemyHeaderText` 含炼丹房等级、段位名与两个倍率。
+10. 展示:`getAlchemyRecipeDisplay` 在天阶给出 `4.5万 灵石`(`formatLargeNumber` 过万缩写)与 `灵草 …/120`;`getAlchemyHeaderText` 含炼丹房等级、段位名与两个倍率。
 
 回归验收:
 

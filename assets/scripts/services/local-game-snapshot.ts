@@ -32,7 +32,8 @@ import {
 } from "@cultivation-diary/shared";
 
 export const LOCAL_SAVE_SCHEMA_VERSION = 1 as const;
-export const GAME_CONFIG_VERSION = "local-2.14.0";
+export const GAME_CONFIG_VERSION = "local-2.15.0";
+export const GAME_CONFIG_VERSION_PRE_ALCHEMY_BANDS = "local-2.14.0";
 export const GAME_CONFIG_VERSION_PRE_CAPPED_SYSTEM_BANDS = "local-2.13.0";
 export const GAME_CONFIG_VERSION_PRE_TECHNIQUE_BANDS = "local-2.12.0";
 export const GAME_CONFIG_VERSION_PRE_DAO = "local-2.11.0";
