@@ -501,7 +501,11 @@ export class AppView {
     this.cultivationProgressGraphic = null;
     this.lastCultivationProjectionSecond = -1;
     this.lastCultivationProjectionGain = "0";
-    this.drawBackdrop();
+    const mainPageVisible =
+      state.phase !== "loading" && state.phase !== "error" && state.bootstrap !== null;
+    this.drawBackdrop(
+      mainPageVisible && this.hasMainBackground(state.selectedTab),
+    );
 
     if (state.phase === "loading") {
       this.drawLoading(state.loadingMessage);
@@ -585,13 +589,23 @@ export class AppView {
     if (!spriteFrame) return;
 
     const background = createUiNode(this.root, `MainBackground-${tab}`);
-    setSize(background, DESIGN_VIEWPORT_WIDTH, DESIGN_VIEWPORT_HEIGHT);
+    // Two offsets have to be undone here. The page root is nudged by
+    // `bodyOffsetY` so the body tracks the header, and it is sized to the
+    // 750x1334 design box — which is shorter than a tall phone's viewport
+    // (750x1623 on a 390x844 screen). Scenery has to reach the edges of the
+    // *screen*, so the node is pulled back onto `contentRoot`'s extent and
+    // measured against the viewport instead of the design box.
+    background.setPosition(
+      -this.chromeGeometry.centerX,
+      -this.chromeGeometry.bodyOffsetY,
+    );
+    this.setFullscreenSize(background);
     const originalSize = spriteFrame.originalSize;
     const sourceWidth = Math.max(1, originalSize.width);
     const sourceHeight = Math.max(1, originalSize.height);
     const coverScale = Math.max(
-      DESIGN_VIEWPORT_WIDTH / sourceWidth,
-      DESIGN_VIEWPORT_HEIGHT / sourceHeight,
+      this.safeAreaLayout.viewportWidth / sourceWidth,
+      this.safeAreaLayout.viewportHeight / sourceHeight,
     );
     const image = createUiNode(background, "MainBackgroundImage");
     setSize(
@@ -609,12 +623,7 @@ export class AppView {
     if (tab !== "cultivation") {
       const wash = graphicsNode(background, "MainBackgroundWash", 0, 0);
       wash.fillColor = withAlpha(COLORS.black, 54);
-      wash.rect(
-        -DESIGN_VIEWPORT_WIDTH / 2,
-        -DESIGN_VIEWPORT_HEIGHT / 2,
-        DESIGN_VIEWPORT_WIDTH,
-        DESIGN_VIEWPORT_HEIGHT,
-      );
+      this.drawFullscreenRect(wash);
       wash.fill();
     }
   }
@@ -1336,11 +1345,17 @@ export class AppView {
     this.refreshDebugPanel();
   }
 
-  private drawBackdrop(): void {
+  private drawBackdrop(sceneryFromArt: boolean): void {
     const graphics = graphicsNode(this.root, "Backdrop", 0, 0);
     graphics.fillColor = COLORS.background;
     this.drawFullscreenRect(graphics);
     graphics.fill();
+    // Everything below is the no-art scenery. A tab that has a photo covers the
+    // whole viewport with it, so these layers would either be invisible (修炼,
+    // opaque) or ghost through the 224-opacity wash (the other three) — two
+    // horizons stacked at different heights. The flat fill above still runs: it
+    // is what a transparent corner of a photo falls back to.
+    if (sceneryFromArt) return;
 
     graphics.fillColor = COLORS.backgroundBlue;
     graphics.circle(265, 470, 108);
@@ -2613,7 +2628,7 @@ export class AppView {
         item.label,
         centerX - 321 + index * 107,
         y,
-        index,
+        item.icon,
         () => {
           this.actions.feedback();
           this.actions.openFeature(item.feature);

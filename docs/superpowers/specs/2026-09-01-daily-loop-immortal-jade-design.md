@@ -360,6 +360,8 @@ settleTo(now):
 
 这一栏的规矩是"每格都要显示一个玩家在等的数字"(见 `AppNavigation.ts` 的注释),日常的徽章正好是 `countPendingDailyRewards`——未签到算 1,加上已完成未领的条数,最大 6。`icon: 0` 是三横线字形(清单),`iconIndex % 2 === 0` 出金色,与任务那格的青色时钟(`icon: 3`)分得开。
 
+> 后续修正:`icon: 0` 当时已经被功法那格占着——底部栏那时用槽位序号当字形序号,和这张表的显式 `icon` 撞了四对。现在两张表都显式声明、十个序号互不相同,日常改成 `icon: 9`(青色的太阳)。与任务分得开这条要求没变,只是靠形状而不再靠颜色:十个序号里只有五个是偶数,底部栏的金/青节奏把它们占满了。
+
 同时要改:`ClientTypes.ts` 的 `ImplementedFeaturePanel` 加 `"daily"`;`AppNavigation.ts` 的 `ALL_FEATURE_PANELS` 加 `"daily"`(不加则 `_everyPanelIsListed` 那条编译断言直接失败);`AppArtConfig.ts` 的 `FEATURE_NAVIGATION_ART_FILES` 加 `daily: "daily"`(`ArtCapableFeature` 由两张表推出,不加同样编译不过)。
 
 ### 10.2 面板
