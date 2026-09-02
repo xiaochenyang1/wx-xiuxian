@@ -7,6 +7,9 @@ import {
   CRAFTING_QUALITY_WEIGHTS,
   CAVE_BUILDING_CONFIGS,
   CAVE_UNLOCK_LEVEL,
+  DAILY_CHECK_IN_JADE,
+  DAILY_LOOP_UNLOCK_LEVEL,
+  DAILY_TASK_CONFIGS,
   DAO_MAX_LEVEL,
   ENHANCE_STONE_OVERFLOW_SPIRIT_STONE_VALUE,
   EQUIPMENT_MAX_ENHANCE_LEVEL,
@@ -19,6 +22,7 @@ import {
   IDLE_ITEM_DROPS,
   IDLE_STACK_OVERFLOW_SPIRIT_STONE_VALUE,
   IDLE_TECHNIQUE_DROP_CHANCE,
+  NEVER_ROLLED_DAY_INDEX,
   PARTNER_ABSOLUTE_MAX_LEVEL,
   PARTNER_UNLOCK_LEVEL,
   SECT_ABSOLUTE_MAX_LEVEL,
@@ -34,6 +38,7 @@ import {
   TECHNIQUE_CONFIGS,
   TREASURE_HUNT_TOTAL_WEIGHT,
   applyWholeExperience,
+  addDailyProgress,
   addLoadoutBonuses,
   affixScorePercent,
   alchemyIngredientCosts,
@@ -55,6 +60,7 @@ import {
   craftingSpiritStoneCost,
   completeBreakthrough,
   countOccupiedBagSlots,
+  createDailyTaskStates,
   createEmptyCaveBuildings,
   decimal,
   equipmentAffixScoreBp,
@@ -72,9 +78,11 @@ import {
   getCaveBuildingConfig,
   getAlchemyRecipeConfig,
   getCraftingRecipeConfig,
+  getDailyTaskConfig,
   getEquipmentConfig,
   getEquipmentBandConfig,
   getExpeditionStageConfig,
+  getImmortalJadeShopRow,
   getItemConfig,
   getPartnerConfig,
   getRealmConfigForLevel,
@@ -86,6 +94,8 @@ import {
   idleStackDropBandMultiplier,
   idleStackDropQuantitySpan,
   isAssetQuality,
+  isDailyTaskClaimable,
+  localDayIndex,
   nextAssetQuality,
   partnerBondRequirement,
   partnerMaxLevelForBand,
@@ -94,6 +104,7 @@ import {
   requiredExperienceForLevel,
   readRolledAffixes,
   resolveCraftingEquipmentConfig,
+  rollDailyState,
   rollEquipmentAffixes,
   settleCultivation,
   sectContributionRequirement,
@@ -110,6 +121,7 @@ import {
   type AutoSalvageQuality,
   type BootstrapSnapshot,
   type ChosenAvatarVariant,
+  type DailyTaskKind,
   type DebugGrantTarget,
   type DropRewardSummary,
   type EquipmentBand,
@@ -130,6 +142,7 @@ import {
   GAME_CONFIG_VERSION_PRE_REALM_SPLIT,
   GAME_CONFIG_VERSION_PRE_MATERIAL_CURVE,
   GAME_CONFIG_VERSION_PRE_CAVE,
+  GAME_CONFIG_VERSION_PRE_DAILY_LOOP,
   GAME_CONFIG_VERSION_PRE_DAO,
   GAME_CONFIG_VERSION_PRE_EQUIPMENT_MANAGEMENT,
   GAME_CONFIG_VERSION_PRE_EXPEDITION,
@@ -772,6 +785,110 @@ export class LocalGameService {
     });
   }
 
+  /**
+   * The day's free jade. `mutate` settles first, so the cross-day reset in
+   * `settleTo` has already run by the time this sees `snapshot.daily` — a player
+   * who left the app open overnight can check in again without reloading.
+   */
+  checkInDaily(): LocalMutationResult {
+    return this.mutate((snapshot) => {
+      requireDailyLoopUnlocked(snapshot);
+      if (snapshot.daily.checkedInAt !== null) {
+        throw new LocalGameError("今日已经签到");
+      }
+      const now = new Date().toISOString();
+      return {
+        snapshot: {
+          ...snapshot,
+          wallet: addImmortalJade(snapshot.wallet, DAILY_CHECK_IN_JADE),
+          daily: {
+            ...snapshot.daily,
+            checkedInAt: now,
+            checkInCount: snapshot.daily.checkInCount + 1,
+          },
+        },
+        events: [],
+        message: `签到成功，获得仙玉 ${DAILY_CHECK_IN_JADE}`,
+      };
+    });
+  }
+
+  claimDailyTask(taskConfigId: string): LocalMutationResult {
+    return this.mutate((snapshot) => {
+      requireDailyLoopUnlocked(snapshot);
+      let config: ReturnType<typeof getDailyTaskConfig>;
+      try {
+        config = getDailyTaskConfig(taskConfigId);
+      } catch {
+        throw new LocalGameError("未知的日常任务");
+      }
+      const state = snapshot.daily.tasks.find(
+        (task) => task.taskConfigId === taskConfigId,
+      );
+      if (!state) throw new LocalGameError("该日常任务今日尚未开启");
+      if (state.claimedAt !== null) throw new LocalGameError("该日常今日已领取");
+      if (!isDailyTaskClaimable(state)) {
+        throw new LocalGameError(`${config.title}尚未完成`);
+      }
+      const now = new Date().toISOString();
+      return {
+        snapshot: {
+          ...snapshot,
+          // Jade is a wallet number, not an item, so a full bag can never block
+          // a daily reward — which is the reason §3.2 made the currency a
+          // currency instead of a token stack.
+          wallet: addImmortalJade(snapshot.wallet, config.jade),
+          daily: {
+            ...snapshot.daily,
+            tasks: snapshot.daily.tasks.map((task) =>
+              task.taskConfigId === taskConfigId
+                ? { ...task, claimedAt: now }
+                : task,
+            ),
+          },
+        },
+        events: [],
+        message: `${config.title}完成，获得仙玉 ${config.jade}`,
+      };
+    });
+  }
+
+  exchangeImmortalJade(rowId: string): LocalMutationResult {
+    return this.mutate((snapshot) => {
+      requireDailyLoopUnlocked(snapshot);
+      let row: ReturnType<typeof getImmortalJadeShopRow>;
+      try {
+        row = getImmortalJadeShopRow(rowId);
+      } catch {
+        throw new LocalGameError("未知的仙玉兑换项");
+      }
+      const jade = decimal(snapshot.wallet.immortalJade);
+      if (jade.lessThan(row.jadeCost)) {
+        throw new LocalGameError(
+          `仙玉不足，还需 ${decimal(row.jadeCost).minus(jade).toFixed(0)} 枚`,
+        );
+      }
+      ensureStackOutputCapacity(
+        snapshot,
+        row.itemConfigId,
+        "行囊空间不足，无法兑换",
+      );
+      const item = getItemConfig(row.itemConfigId);
+      return {
+        snapshot: {
+          ...snapshot,
+          inventory: addStack(snapshot.inventory, row.itemConfigId, row.quantity),
+          wallet: {
+            ...snapshot.wallet,
+            immortalJade: jade.minus(row.jadeCost).toFixed(0),
+          },
+        },
+        events: [],
+        message: `兑换 ${item.displayName} x${row.quantity}，消耗仙玉 ${row.jadeCost}`,
+      };
+    });
+  }
+
   brewAlchemy(recipeId: string): LocalMutationResult {
     return this.brewAlchemyInternal(recipeId, false);
   }
@@ -851,6 +968,9 @@ export class LocalGameService {
         snapshot: {
           ...snapshot,
           inventory,
+          // Counted per furnace, not per call, so the batch button is never
+          // worse for the daily than pressing the single one repeatedly.
+          daily: addDailyProgress(snapshot.daily, "alchemy_brew", batchCount),
           wallet: {
             ...snapshot.wallet,
             spiritStone: stones
@@ -953,6 +1073,7 @@ export class LocalGameService {
           ...snapshot,
           inventory,
           equipment,
+          daily: addDailyProgress(snapshot.daily, "crafting_forge", batchCount),
           wallet: {
             ...snapshot.wallet,
             spiritStone: stones
@@ -1303,6 +1424,7 @@ export class LocalGameService {
           ...snapshot,
           equipment,
           techniques,
+          daily: addDailyProgress(snapshot.daily, "harvest_handled", 1),
           harvestChest: { pendingCount: entries.length, entries },
         }),
         events: [],
@@ -1386,6 +1508,11 @@ export class LocalGameService {
           ...snapshot,
           equipment,
           techniques,
+          daily: addDailyProgress(
+            snapshot.daily,
+            "harvest_handled",
+            collectedCount,
+          ),
           harvestChest: {
             pendingCount: remainingEntries.length,
             entries: remainingEntries,
@@ -1417,6 +1544,7 @@ export class LocalGameService {
           equipment,
           inventory: applied.inventory,
           wallet: applied.wallet,
+          daily: addDailyProgress(snapshot.daily, "harvest_handled", 1),
           harvestChest: { pendingCount: entries.length, entries },
         },
         events: [],
@@ -1480,6 +1608,11 @@ export class LocalGameService {
           equipment,
           inventory: applied.inventory,
           wallet: applied.wallet,
+          daily: addDailyProgress(
+            snapshot.daily,
+            "harvest_handled",
+            salvageEntries.length,
+          ),
           harvestChest: { pendingCount: entries.length, entries },
         }),
         events: [],
@@ -2214,6 +2347,13 @@ export class LocalGameService {
     efficiencyBp: number,
     showOfflineSummary: boolean,
   ): LocalMutationResult {
+    // The day is rolled before anything accrues, and before the zero-elapsed
+    // shortcut below, so two actions inside the same millisecond across midnight
+    // still land on today's rows. Everything this settlement covers is then
+    // credited to the new day: a player returning after three days has his
+    // capped 24 hours counted as "idle today", which is both true and the
+    // reading that favours him (§9.1 of the daily-loop design).
+    this.rollCalendarDay(now);
     const previous = this.snapshot;
     const fromMilliseconds = Date.parse(previous.progress.settledAt);
     const requestedMilliseconds = Math.max(0, now.getTime() - fromMilliseconds);
@@ -2241,6 +2381,19 @@ export class LocalGameService {
       events: result.events,
       sourceId: result.sourceId,
     };
+  }
+
+  /**
+   * Clears the daily block when `now` has crossed a local midnight. Writes
+   * straight to `saveData` rather than going through `setSnapshot`, because a
+   * reset must not move `settledAt` — the elapsed span the caller is about to
+   * settle is measured from it.
+   */
+  private rollCalendarDay(now: Date): void {
+    const save = this.requireSave();
+    const daily = rollDailyState(save.snapshot.daily, localDayIndex(now));
+    if (daily === save.snapshot.daily) return;
+    this.saveData = { ...save, snapshot: { ...save.snapshot, daily } };
   }
 
   private settleElapsed(
@@ -2295,6 +2448,13 @@ export class LocalGameService {
     const taskResult = syncProgressionTasks(next);
     next = taskResult.snapshot;
     const effectiveSeconds = Math.floor(elapsedMilliseconds / 1_000);
+    // Whole seconds only, remainder dropped. One settlement loses at most 1
+    // second against a 3,600-second threshold, and the autosave ticks every 30
+    // seconds, so carrying a micros remainder here would buy nothing.
+    next = {
+      ...next,
+      daily: addDailyProgress(next.daily, "idle_seconds", effectiveSeconds),
+    };
     const shouldShow =
       showOfflineSummary && effectiveSeconds >= OFFLINE_NOTICE_MIN_SECONDS;
     const offlineSettlement = shouldShow
@@ -2582,6 +2742,25 @@ function createTechniqueSnapshot(
     spiritStoneBonusBp: config.spiritStoneBonusBp,
     dropBonusBp: config.dropBonusBp,
     configVersion: DROP_CONFIG_VERSION,
+  };
+}
+
+function requireDailyLoopUnlocked(snapshot: BootstrapSnapshot): void {
+  if (snapshot.progress.level < DAILY_LOOP_UNLOCK_LEVEL) {
+    throw new LocalGameError(
+      `修为达到 Lv.${DAILY_LOOP_UNLOCK_LEVEL} 才能开启日常`,
+    );
+  }
+}
+
+/** Jade is earned only here, so there is no lifetime counter to keep in step. */
+function addImmortalJade(
+  wallet: BootstrapSnapshot["wallet"],
+  amount: number,
+): BootstrapSnapshot["wallet"] {
+  return {
+    ...wallet,
+    immortalJade: decimal(wallet.immortalJade).plus(amount).toFixed(0),
   };
 }
 
@@ -3194,6 +3373,28 @@ function migrateSnapshot(snapshot: unknown): unknown {
     // unknown and the whole save is discarded.
     migrated = {
       ...migrated,
+      config: { ...config, version: GAME_CONFIG_VERSION_PRE_DAILY_LOOP },
+    };
+    config = migrated.config;
+  }
+  if (
+    isRecord(config) &&
+    config.version === GAME_CONFIG_VERSION_PRE_DAILY_LOOP
+  ) {
+    // The first step in a while that carries a real field: `daily` did not exist
+    // before this version. `NEVER_ROLLED_DAY_INDEX` is what makes it a one-liner
+    // — every real day index is larger, so the first settlement after loading
+    // rolls the block into today and builds the task rows. The migration
+    // therefore never has to decide what "today" is, which is the whole reason
+    // the day is stored as an index rather than a date string.
+    migrated = {
+      ...migrated,
+      daily: {
+        dayIndex: NEVER_ROLLED_DAY_INDEX,
+        checkedInAt: null,
+        checkInCount: 0,
+        tasks: [],
+      },
       config: { ...config, version: GAME_CONFIG_VERSION },
     };
   }
@@ -3360,6 +3561,7 @@ function isBootstrapSnapshot(value: unknown): value is BootstrapSnapshot {
     isSectSnapshot(value.sect) &&
     isDaoSnapshot(value.dao) &&
     isProgressionTaskList(value.progressionTasks) &&
+    isDailySnapshot(value.daily) &&
     isRecord(value.unlocks) &&
     typeof value.unlocks.partner === "boolean" &&
     typeof value.unlocks.cave === "boolean" &&
@@ -3723,6 +3925,43 @@ function isProgressionTaskList(value: unknown): boolean {
       !isNullableIsoTimestamp(task.claimedAt) ||
       (task.claimedAt !== null && task.completedAt === null) ||
       !PROGRESSION_TASK_CONFIGS.some((config) => config.id === task.taskConfigId)
+    ) {
+      return false;
+    }
+    taskIds.add(task.taskConfigId);
+    return true;
+  });
+}
+
+/**
+ * The task rows are validated as a subset rather than an exact list. `tasks: []`
+ * is what a migrated save carries, and a save written before a task existed is
+ * short one row — both are repaired by the next cross-day roll, so rejecting
+ * them would discard a perfectly good save over a field the game rebuilds
+ * anyway. `NEVER_ROLLED_DAY_INDEX` is the floor because it is the sentinel the
+ * migration writes; nothing below it can be produced.
+ */
+function isDailySnapshot(value: unknown): boolean {
+  if (
+    !isRecord(value) ||
+    !Number.isSafeInteger(value.dayIndex) ||
+    Number(value.dayIndex) < NEVER_ROLLED_DAY_INDEX ||
+    !isNullableIsoTimestamp(value.checkedInAt) ||
+    !isNonNegativeSafeInteger(value.checkInCount) ||
+    !Array.isArray(value.tasks) ||
+    value.tasks.length > DAILY_TASK_CONFIGS.length
+  ) {
+    return false;
+  }
+  const taskIds = new Set<string>();
+  return value.tasks.every((task) => {
+    if (
+      !isRecord(task) ||
+      typeof task.taskConfigId !== "string" ||
+      taskIds.has(task.taskConfigId) ||
+      !isDecimalString(task.progress) ||
+      !isNullableIsoTimestamp(task.claimedAt) ||
+      !DAILY_TASK_CONFIGS.some((config) => config.id === task.taskConfigId)
     ) {
       return false;
     }

@@ -2,6 +2,7 @@ import {
   EXPEDITION_STAGE_CONFIGS,
   EXPEDITION_SWEEP_MAX_COUNT,
   MAX_LEVEL,
+  NEVER_ROLLED_DAY_INDEX,
   PROGRESSION_TASK_CONFIGS,
   TRIAL_TOWER_MAX_FLOOR,
 } from "@cultivation-diary/shared";
@@ -233,6 +234,72 @@ describe("partner and sect validation", () => {
         save.snapshot.sect = { sectId: "qingyun", level: 1, contribution: 400 };
       }),
     ).toBe(true);
+  });
+});
+
+describe("daily validation", () => {
+  it("rejects a non-integer day index", () => {
+    expect(
+      corrupt((save) => {
+        save.snapshot.daily.dayIndex = 20_700.5;
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects a day index below the never-rolled sentinel", () => {
+    expect(
+      corrupt((save) => {
+        save.snapshot.daily.dayIndex = NEVER_ROLLED_DAY_INDEX - 1;
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects a negative check-in count", () => {
+    expect(
+      corrupt((save) => {
+        save.snapshot.daily.checkInCount = -1;
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects an unknown task id", () => {
+    expect(
+      corrupt((save) => {
+        save.snapshot.daily.tasks[0].taskConfigId = "daily.nope";
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects a duplicated task row", () => {
+    expect(
+      corrupt((save) => {
+        save.snapshot.daily.tasks.push({ ...save.snapshot.daily.tasks[0] });
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects a progress value that is not a decimal string", () => {
+    expect(
+      corrupt((save) => {
+        save.snapshot.daily.tasks[0].progress = 600;
+      }),
+    ).toBe(true);
+  });
+
+  it("accepts a short task list, which the next roll repairs", () => {
+    // A save written before a task existed is one row light, and a migrated save
+    // has no rows at all. Discarding either would cost the player everything else
+    // over the one field the next midnight rebuilds from scratch.
+    expect(
+      corrupt((save) => {
+        save.snapshot.daily.tasks.pop();
+      }),
+    ).toBe(false);
+    expect(
+      corrupt((save) => {
+        save.snapshot.daily.tasks = [];
+      }),
+    ).toBe(false);
   });
 });
 

@@ -16,6 +16,7 @@ import {
   calculateTechniqueContribution,
   calculateTotalPower,
   countOccupiedBagSlots,
+  createDailyState,
   createEmptyCaveBuildings,
   decimal,
   getRealmConfigForLevel,
@@ -23,6 +24,7 @@ import {
   getRealmTitle,
   getItemConfig,
   isAssetQuality,
+  localDayIndex,
   progressionTaskTarget,
   requiredExperienceForLevel,
   type AssetQuality,
@@ -32,7 +34,8 @@ import {
 } from "@cultivation-diary/shared";
 
 export const LOCAL_SAVE_SCHEMA_VERSION = 1 as const;
-export const GAME_CONFIG_VERSION = "local-2.16.0";
+export const GAME_CONFIG_VERSION = "local-2.17.0";
+export const GAME_CONFIG_VERSION_PRE_DAILY_LOOP = "local-2.16.0";
 export const GAME_CONFIG_VERSION_PRE_TREASURE_HUNT_BANDS = "local-2.15.0";
 export const GAME_CONFIG_VERSION_PRE_ALCHEMY_BANDS = "local-2.14.0";
 export const GAME_CONFIG_VERSION_PRE_CAPPED_SYSTEM_BANDS = "local-2.13.0";
@@ -114,6 +117,7 @@ export function createInitialSave(now: Date): LocalGameSave {
       completedAt: null,
       claimedAt: null,
     })),
+    daily: createDailyState(localDayIndex(now)),
     unlocks: { partner: false, cave: false, trialTower: false },
     settings: {
       autoSalvageCommon: false,

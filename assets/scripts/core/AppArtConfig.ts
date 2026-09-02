@@ -26,6 +26,7 @@ export const FEATURE_NAVIGATION_ART_FILES: Readonly<
   expedition: "training",
   inventory: "inventory",
   tasks: "tasks",
+  daily: "daily",
 };
 
 export function normalizeResourceName(name: string): string {

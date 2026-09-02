@@ -33,6 +33,7 @@ describe("navigation art resource mapping", () => {
       "training",
       "inventory",
       "tasks",
+      "daily",
     ]);
   });
 

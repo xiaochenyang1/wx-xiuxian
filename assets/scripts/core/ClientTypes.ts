@@ -8,6 +8,7 @@ export type ImplementedFeaturePanel =
   | "equipment"
   | "inventory"
   | "tasks"
+  | "daily"
   | "alchemy"
   | "crafting"
   | "sect"

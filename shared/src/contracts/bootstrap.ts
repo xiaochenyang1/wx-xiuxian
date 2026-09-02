@@ -1,5 +1,6 @@
 import type { RealmId, RealmStage } from "../config/realms";
 import type { ExpeditionStageId } from "../config/expedition";
+import type { DailyState } from "../domain/daily";
 import type { ProgressionStatus } from "../domain/progression";
 import type { BigNumberString } from "../types";
 import type { OfflineSettlementSummary } from "./offline";
@@ -140,6 +141,13 @@ export interface BootstrapSnapshot {
     completedAt: string | null;
     claimedAt: string | null;
   }>;
+  /**
+   * The one block in this snapshot that resets on a calendar day. Unlike
+   * `progressionTasks` it carries no completion timestamp: a daily row is
+   * cleared at the next local midnight, so when it completed says nothing that
+   * `progress` against the config's target does not.
+   */
+  daily: DailyState;
   unlocks: {
     partner: boolean;
     cave: boolean;

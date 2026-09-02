@@ -39,14 +39,20 @@ describe("navigation coverage", () => {
     expect(found.size).toBe(ALL_FEATURE_PANELS.length);
   });
 
-  it("keeps a badge on both cultivation shortcuts", () => {
+  it("keeps a badge on every cultivation shortcut", () => {
     // A shortcut earns its slot by showing a number the player is waiting on.
     // One without a badge belongs on the bottom rail with the rest.
     expect(CULTIVATION_SHORTCUTS.map((entry) => entry.badge)).toEqual([
       "tasks",
       "harvest",
+      "daily",
     ]);
     expect(CULTIVATION_SHORTCUTS.every((entry) => entry.x < 0)).toBe(true);
+    // One badge source per slot: two shortcuts showing the same count would put
+    // the same number in two places and make one of them a lie.
+    expect(
+      new Set(CULTIVATION_SHORTCUTS.map((entry) => entry.badge)).size,
+    ).toBe(CULTIVATION_SHORTCUTS.length);
   });
 
   it("lists the four pages the main rail switches between", () => {
