@@ -1,4 +1,9 @@
 import { countOccupiedBagSlots } from "@cultivation-diary/shared";
+import type { AssetIconArtSet } from "../../core/AppArt";
+import {
+  COMPACT_ROW_ICON_SIZE,
+  pickAssetIcon,
+} from "../../core/AppArtConfig";
 import { formatLargeNumber } from "../../core/ClientNumber";
 import type { AppState } from "../../core/ClientTypes";
 import { canRunLocalMutation } from "../../core/ClientTypes";
@@ -6,8 +11,8 @@ import { getAutoSalvageControls } from "../../core/AutoSalvageDisplay";
 import { getHarvestBatchDisplay, getHarvestEntryDetailText } from "../../core/HarvestBatchDisplay";
 import { getInventoryItemUseDisplay } from "../../core/InventoryDisplay";
 import type { AppViewActions, PanelPaging } from "../AppView";
-import { COLORS } from "../primitives/Colors";
-import {
+import { drawRowIcon } from "../AppViewHelpers";
+import { COLORS } from "../primitives/Colors";import {
   addLabel,
   createButton,
   createToggle,
@@ -27,6 +32,7 @@ export function drawInventoryPanel(
   state: Readonly<AppState>,
   actions: AppViewActions,
   paging: PanelPaging,
+  icons: AssetIconArtSet,
 ): void {
   const data = state.bootstrap!;
   const mutationsEnabled = canRunLocalMutation(state);
@@ -127,6 +133,13 @@ export function drawInventoryPanel(
         );
         const directlyUsable = useDisplay.visible;
         drawBand(overlay, `Stack-${stack.itemConfigId}`, 0, y, 600, 46, COLORS.panel);
+        drawRowIcon(
+          overlay,
+          `StackIcon-${stack.itemConfigId}`,
+          pickAssetIcon(icons.item, [stack.itemConfigId]),
+          y,
+          COMPACT_ROW_ICON_SIZE,
+        );
         addLabel(
           overlay,
           stack.displayName,

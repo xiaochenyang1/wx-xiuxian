@@ -5,10 +5,13 @@ import {
   getTechniqueUpgradeDisplay,
   type AssetUpgradeDisplay,
 } from "../../core/AssetUpgradeDisplay";
+import type { AssetIconArtSet } from "../../core/AppArt";
+import { pickAssetIcon } from "../../core/AppArtConfig";
 import { formatLargeNumber } from "../../core/ClientNumber";
 import type { AppState } from "../../core/ClientTypes";
 import { canRunLocalMutation } from "../../core/ClientTypes";
 import type { AppViewActions, PanelPaging } from "../AppView";
+import { drawRowIcon } from "../AppViewHelpers";
 import { COLORS } from "../primitives/Colors";
 import {
   addLabel,
@@ -41,6 +44,7 @@ export function drawTechniquePanel(
   state: Readonly<AppState>,
   actions: AppViewActions,
   paging: PanelPaging,
+  icons: AssetIconArtSet,
 ): void {
   const techniques = state.bootstrap!.techniques;
   const mutationsEnabled = canRunLocalMutation(state);
@@ -100,6 +104,15 @@ export function drawTechniquePanel(
     const inherit = getTechniqueInheritDisplay(state.bootstrap!, technique);
     const ascend = getTechniqueAscendDisplay(state.bootstrap!, technique);
     drawBand(overlay, `Technique-${technique.techniqueConfigId}`, 0, y, 600, 108, COLORS.panel);
+    drawRowIcon(
+      overlay,
+      `TechniqueIcon-${technique.techniqueConfigId}`,
+      pickAssetIcon(icons.technique, [
+        technique.techniqueConfigId,
+        technique.slot,
+      ]),
+      y,
+    );
     addLabel(
       overlay,
       technique.displayName,

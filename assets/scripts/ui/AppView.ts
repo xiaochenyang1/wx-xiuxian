@@ -38,6 +38,7 @@ import type {
   MainBackgroundKey,
   SupplementalArt,
 } from "../core/AppArt";
+import { EMPTY_ASSET_ICON_ART_SET } from "../core/AppArt";
 import {
   mergeCultivationPresentationPlans,
   type CultivationPresentationPlan,
@@ -297,6 +298,7 @@ export class AppView {
     playerAvatars: {},
     mainNavigation: {},
     featureNavigation: {},
+    assetIcons: EMPTY_ASSET_ICON_ART_SET,
   };
   private destroyed = false;
   private mainPageRoot: Node | null = null;
@@ -2693,11 +2695,29 @@ export class AppView {
         this.profileResetControls,
       );
     if (feature === "inventory")
-      drawInventoryPanel(overlay, state, this.actions, this.panelPaging);
+      drawInventoryPanel(
+        overlay,
+        state,
+        this.actions,
+        this.panelPaging,
+        this.supplementalArt.assetIcons,
+      );
     if (feature === "techniques")
-      drawTechniquePanel(overlay, state, this.actions, this.panelPaging);
+      drawTechniquePanel(
+        overlay,
+        state,
+        this.actions,
+        this.panelPaging,
+        this.supplementalArt.assetIcons,
+      );
     if (feature === "equipment")
-      drawEquipmentPanel(overlay, state, this.actions, this.panelPaging);
+      drawEquipmentPanel(
+        overlay,
+        state,
+        this.actions,
+        this.panelPaging,
+        this.supplementalArt.assetIcons,
+      );
     if (feature === "tasks") drawTaskPanel(overlay, state);
     if (feature === "daily") drawDailyPanel(overlay, state, this.actions);
     if (feature === "alchemy") drawAlchemyPanel(overlay, state, this.actions);
