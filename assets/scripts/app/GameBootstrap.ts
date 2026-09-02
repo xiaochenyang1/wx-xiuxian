@@ -9,6 +9,14 @@ import type {
   ProgressionEvent,
 } from "@cultivation-diary/shared";
 import { loadMainBackgroundArt, loadSupplementalArt } from "../core/AppArt";
+import {
+  initializeAudio,
+  playAudioCue,
+  resumeAudioMusic,
+  shutdownAudio,
+  startAudioMusic,
+  suspendAudioMusic,
+} from "../core/AppAudio";
 import { CLIENT_CONFIG } from "../core/ClientConfig";
 import type { MainTab } from "../core/ClientTypes";
 import {
@@ -58,6 +66,7 @@ export class GameBootstrap extends Component {
     const appRoot = new Node("AppRoot");
     appRoot.layer = this.node.layer;
     this.node.addChild(appRoot);
+    initializeAudio(this.node, this.platform);
     const appView = new AppView(
       appRoot,
       {
@@ -195,7 +204,13 @@ export class GameBootstrap extends Component {
         grantDebug: (target) => this.debugGrant(target),
         resetDebugSave: (playerId, confirmation) =>
           this.debugResetSave(playerId, confirmation),
-        feedback: () => this.platform.feedback(),
+        // Haptics and sound answer the same tap, so the cue rides along with the
+        // vibration already wired to every button worth confirming — twenty-odd
+        // call sites covered without editing one of them.
+        feedback: () => {
+          this.platform.feedback();
+          playAudioCue("tap");
+        },
       },
       safeAreaLayout,
     );
@@ -222,6 +237,7 @@ export class GameBootstrap extends Component {
     this.unsubscribeLifecycle = this.platform.subscribeLifecycle({
       onHide: () => {
         if (!this.foreground) return;
+        suspendAudioMusic();
         this.appView?.setDebugLifecycleStatus("background");
         this.checkpoint();
         this.foreground = false;
@@ -229,6 +245,7 @@ export class GameBootstrap extends Component {
       onShow: () => {
         if (this.foreground) return;
         this.foreground = true;
+        resumeAudioMusic();
         this.appView?.setDebugLifecycleStatus("foreground");
         this.resumeFromBackground();
       },
@@ -246,6 +263,7 @@ export class GameBootstrap extends Component {
     this.unsubscribeStore = null;
     this.unsubscribeLifecycle?.();
     this.unsubscribeLifecycle = null;
+    shutdownAudio();
     this.appView?.destroy();
     this.appView = null;
   }
@@ -261,6 +279,9 @@ export class GameBootstrap extends Component {
         result.savedAt,
         result.persisted ? "saved" : "volatile",
       );
+      // The loop waits for a save that is actually on screen, so a failed read
+      // stays silent rather than scoring an error message.
+      startAudioMusic();
       this.enqueuePresentation(
         result.snapshot,
         result.events,
