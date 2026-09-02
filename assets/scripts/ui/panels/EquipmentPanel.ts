@@ -13,9 +13,12 @@ import {
   type AssetUpgradeDisplay,
 } from "../../core/AssetUpgradeDisplay";
 import { getEquipmentManagementDisplay } from "../../core/EquipmentManagementDisplay";
+import type { AssetIconArtSet } from "../../core/AppArt";
+import { pickAssetIcon } from "../../core/AppArtConfig";
 import type { AppState } from "../../core/ClientTypes";
 import { canRunLocalMutation } from "../../core/ClientTypes";
 import type { AppViewActions, PanelPaging } from "../AppView";
+import { drawRowIcon } from "../AppViewHelpers";
 import { COLORS } from "../primitives/Colors";
 import {
   addLabel,
@@ -31,6 +34,7 @@ export function drawEquipmentPanel(
   state: Readonly<AppState>,
   actions: AppViewActions,
   paging: PanelPaging,
+  icons: AssetIconArtSet,
 ): void {
   const equipment = getStoredEquipment(state.bootstrap!);
   const mutationsEnabled = canRunLocalMutation(state);
@@ -97,6 +101,12 @@ export function drawEquipmentPanel(
     const ascend = getEquipmentAscendDisplay(state.bootstrap!, item);
     const management = getEquipmentManagementDisplay(item);
     drawBand(overlay, `Equipment-${item.id}`, 0, y, 600, 112, COLORS.panel);
+    drawRowIcon(
+      overlay,
+      `EquipmentIcon-${item.id}`,
+      pickAssetIcon(icons.equipment, [item.equipmentConfigId, item.slot]),
+      y,
+    );
     addLabel(
       overlay,
       getEquipmentTitleText(item),

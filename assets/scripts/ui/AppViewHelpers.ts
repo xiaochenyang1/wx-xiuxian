@@ -3,6 +3,7 @@ import type {
 } from "@cultivation-diary/shared";
 import { ratioOfBigNumberStrings, formatLargeNumber } from "../core/ClientNumber";
 import type { AppState, MainTab } from "../core/ClientTypes";
+import { ROW_ICON_SIZE, ROW_ICON_X } from "../core/AppArtConfig";
 import type { CultivationPresentationPlan } from "../core/CultivationPresentation";
 import { COLORS, withAlpha } from "./primitives/Colors";
 import {
@@ -105,6 +106,23 @@ export function drawContainedSprite(
   sprite.trim = false;
   sprite.spriteFrame = spriteFrame;
   return node;
+}
+
+/**
+ * Draws one asset icon in the gutter, or nothing at all when that file has not
+ * been delivered — a row without art keeps the text-only layout it has today.
+ * The geometry lives in `AppArtConfig` so a test can hold it to the panel body
+ * without importing `cc`.
+ */
+export function drawRowIcon(
+  parent: Node,
+  name: string,
+  spriteFrame: SpriteFrame | undefined,
+  y: number,
+  size: number = ROW_ICON_SIZE,
+): void {
+  if (!spriteFrame) return;
+  drawContainedSprite(parent, name, spriteFrame, ROW_ICON_X, y, size, size);
 }
 
 export function createMainTabButton(
