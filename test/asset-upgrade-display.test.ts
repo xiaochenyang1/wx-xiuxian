@@ -9,6 +9,7 @@ import {
   getEquipmentHeaderText,
   getEquipmentRerollDisplay,
   getEquipmentTitleText,
+  getTechniqueAscendDisplay,
   getTechniqueBandName,
   getTechniqueInheritDisplay,
   getTechniqueUpgradeDisplay,
@@ -631,10 +632,14 @@ describe("technique star-up display", () => {
   });
 });
 
-/** Any book, at any star, unequipped — the rows 传承 chooses between. */
+/**
+ * Any book, at any star, unequipped — the rows 传承 chooses between. Copies are
+ * optional because only 升华 charges in them; 传承 is paid entirely in spirit stone.
+ */
 function bandTechnique(
   techniqueConfigId: string,
   star: number,
+  duplicateCount = 0,
 ): BootstrapSnapshot["techniques"][number] {
   const config = getTechniqueConfig(techniqueConfigId);
   return {
@@ -643,7 +648,7 @@ function bandTechnique(
     quality: config.quality,
     slot: config.slot,
     star,
-    duplicateCount: 0,
+    duplicateCount,
     equippedSlot: null,
     powerBonusBp: 0,
     experienceBonusBp: 0,
@@ -753,5 +758,144 @@ describe("technique inheritance display", () => {
 
     expect(display.targetTechniqueConfigId).toBe("grand_clarity_heart_manual");
     expect(display.costText).toBe("承接 太清心法\n灵石 90万");
+  });
+});
+
+/** 凡阶 心法 普通 静息诀 and its 优秀 twin 青云心法 — the pair 升华 bridges. */
+const COMMON_MIND = "quiet_breathing_art";
+const UNCOMMON_MIND = "azure_cloud_heart_manual";
+
+function snapshotForTechniqueAscension(options: {
+  spiritStone: number;
+  seclusionRoomLevel: number;
+  techniques: readonly BootstrapSnapshot["techniques"][number][];
+}): BootstrapSnapshot {
+  const snapshot = snapshotWithTechniques(
+    options.spiritStone,
+    options.techniques,
+  );
+  return {
+    ...snapshot,
+    cave: {
+      ...snapshot.cave,
+      buildings: [
+        {
+          buildingConfigId: "seclusion_room",
+          level: options.seclusionRoomLevel,
+        },
+      ],
+    },
+  };
+}
+
+describe("technique ascension display", () => {
+  it("quotes the copies and the band's price, and names the 优秀 book", () => {
+    const source = bandTechnique(COMMON_MIND, 6, 2);
+
+    expect(
+      getTechniqueAscendDisplay(
+        snapshotForTechniqueAscension({
+          spiritStone: 75_000,
+          seclusionRoomLevel: 5,
+          techniques: [source],
+        }),
+        source,
+      ),
+    ).toEqual({
+      maxed: false,
+      affordable: true,
+      costText: "副本 2/2\n灵石 7.5万",
+      actionText: "升华",
+      actionEnabled: true,
+      targetDisplayName: "青云心法",
+    });
+  });
+
+  it("keeps an unaffordable ascension actionable, only tinted", () => {
+    const source = bandTechnique(COMMON_MIND, 6, 1);
+    const display = getTechniqueAscendDisplay(
+      snapshotForTechniqueAscension({
+        spiritStone: 75_000,
+        seclusionRoomLevel: 5,
+        techniques: [source],
+      }),
+      source,
+    );
+
+    expect(display.affordable).toBe(false);
+    expect(display.actionEnabled).toBe(true);
+    expect(display.costText).toBe("副本 1/2\n灵石 7.5万");
+  });
+
+  it("reports 优秀 as the top of the ladder rather than a step not yet reached", () => {
+    const source = bandTechnique(UNCOMMON_MIND, 6, 9);
+
+    expect(
+      getTechniqueAscendDisplay(
+        snapshotForTechniqueAscension({
+          spiritStone: 10_000_000,
+          seclusionRoomLevel: 40,
+          techniques: [source],
+        }),
+        source,
+      ),
+    ).toEqual({
+      maxed: true,
+      affordable: false,
+      costText: "已是优秀品质",
+      actionText: "升华",
+      actionEnabled: false,
+      targetDisplayName: null,
+    });
+  });
+
+  it("disables the button on a short seclusion room, price or no price", () => {
+    const source = bandTechnique(COMMON_MIND, 6, 2);
+    const display = getTechniqueAscendDisplay(
+      snapshotForTechniqueAscension({
+        spiritStone: 10_000_000,
+        seclusionRoomLevel: 4,
+        techniques: [source],
+      }),
+      source,
+    );
+
+    // A prerequisite, not a price: no amount of spare copies substitutes.
+    expect(display.actionEnabled).toBe(false);
+    expect(display.costText).toBe("闭关室 Lv.4/5");
+    expect(display.targetDisplayName).toBe("青云心法");
+  });
+
+  it("disables the button when the 优秀 book is already at or above the stars", () => {
+    const source = bandTechnique(COMMON_MIND, 6, 2);
+    const display = getTechniqueAscendDisplay(
+      snapshotForTechniqueAscension({
+        spiritStone: 10_000_000,
+        seclusionRoomLevel: 5,
+        techniques: [source, bandTechnique(UNCOMMON_MIND, 6)],
+      }),
+      source,
+    );
+
+    expect(display.actionEnabled).toBe(false);
+    expect(display.costText).toBe("青云心法已 6 星");
+  });
+
+  it("prices each band off the book's own band, never the target's", () => {
+    // 升华 is a sideways step, so the 灵阶 book pays the 灵阶 price — the same
+    // ×4 the crafting recipes charge — and both land on their own band's 优秀.
+    const source = bandTechnique("spirit_intake_art", 3, 2);
+    const display = getTechniqueAscendDisplay(
+      snapshotForTechniqueAscension({
+        spiritStone: 300_000,
+        seclusionRoomLevel: 5,
+        techniques: [source],
+      }),
+      source,
+    );
+
+    expect(display.affordable).toBe(true);
+    expect(display.costText).toBe("副本 2/2\n灵石 30万");
+    expect(display.targetDisplayName).toBe("玄真心法");
   });
 });

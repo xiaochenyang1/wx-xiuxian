@@ -16,6 +16,27 @@ export const EQUIPMENT_REROLL_BASE_ENHANCE_STONE = 3;
 export const EQUIPMENT_REROLL_BASE_SPIRIT_STONE = 800;
 export const EQUIPMENT_ASCEND_DUPLICATE_COUNT = 2;
 export const EQUIPMENT_ASCEND_BASE_SPIRIT_STONE = 20_000;
+export const TECHNIQUE_ASCEND_DUPLICATE_COUNT = 2;
+export const TECHNIQUE_ASCEND_BASE_SPIRIT_STONE = 50_000;
+export const TECHNIQUE_ASCEND_REQUIRED_SECLUSION_ROOM_LEVEL = 5;
+
+/**
+ * The only quality step a book can take. 功法 has two qualities where 法宝 has
+ * seven, and that is not an omission to be filled in later:
+ * `LOADOUT_POWER_SCALE_BP` is solved from a starter and a *maxed* endpoint, and
+ * the maxed one is the four 优秀 books at `TECHNIQUE_MAX_STAR`
+ * (`test/loadout-power-model.test.ts` pins it at 69,774bp, which is
+ * `FULL_LOADOUT_BP = 71774` less the crafting room's 2,000). A third technique
+ * quality would move that endpoint, and with it the tower's achievability
+ * table, the expedition thresholds and the task chain's ordering — the same
+ * cascade the 炼器室 cap comment in `cave.ts` exists to prevent.
+ *
+ * So ascension here buys *agency over an existing ceiling*, not a new one: the
+ * 优秀 book was always the top of the ladder and always droppable, and this
+ * turns reaching it from a matter of luck into a matter of investment.
+ */
+export const TECHNIQUE_ASCEND_SOURCE_QUALITY = "common" satisfies AssetQuality;
+export const TECHNIQUE_ASCEND_TARGET_QUALITY = "uncommon" satisfies AssetQuality;
 
 /**
  * Which crafting room level unlocks ascending *into* each quality. Keyed by
@@ -87,6 +108,13 @@ export interface EquipmentAscendCost {
   readonly duplicateCount: number;
   readonly spiritStone: number;
   readonly requiredCraftingRoomLevel: number;
+}
+
+export interface TechniqueAscendCost {
+  readonly targetQuality: AssetQuality;
+  readonly duplicateCount: number;
+  readonly spiritStone: number;
+  readonly requiredSeclusionRoomLevel: number;
 }
 
 export function equipmentEnhanceCost(
@@ -176,6 +204,47 @@ export function techniqueInheritCost(
       qualityMultiplierBp,
     ) * bandMultiplier
   );
+}
+
+/**
+ * What it costs to turn a 普通 book into its 优秀 counterpart in the same slot
+ * and band.
+ *
+ * The same shape as `techniqueInheritCost`, because it is the same kind of move:
+ * both take the stars a player has already paid for and carry them onto another
+ * config, one along the band axis and one along the quality axis. The band
+ * multiplier is the book's own — there is no "target band" here, the step is
+ * sideways — and the quality multiplier is the target's, so the price is set by
+ * what the stars land on rather than by what they left.
+ *
+ * Paid in the book's own duplicates plus spirit stone, never in 功法残页. Pages
+ * substitute for duplicates in 升星 and that is deliberate; letting them do it
+ * here too would put the lifetime page budget (700 across four equipped slots)
+ * in the path of a second mechanic, and pages would then be able to buy quality
+ * on a book the player never farmed.
+ */
+export function techniqueAscendCost(band: EquipmentBand): TechniqueAscendCost {
+  const qualityMultiplierBp =
+    ASSET_QUALITY_MULTIPLIER_BP[TECHNIQUE_ASCEND_TARGET_QUALITY];
+  const bandMultiplier = CRAFTING_BAND_SPIRIT_STONE_MULTIPLIER[band];
+  if (!bandMultiplier) {
+    throw new RangeError(`Unknown equipment band: ${band}`);
+  }
+  return {
+    targetQuality: TECHNIQUE_ASCEND_TARGET_QUALITY,
+    duplicateCount: TECHNIQUE_ASCEND_DUPLICATE_COUNT,
+    spiritStone:
+      scaleByBasisPointsCeil(
+        TECHNIQUE_ASCEND_BASE_SPIRIT_STONE,
+        qualityMultiplierBp,
+      ) * bandMultiplier,
+    requiredSeclusionRoomLevel: TECHNIQUE_ASCEND_REQUIRED_SECLUSION_ROOM_LEVEL,
+  };
+}
+
+/** 优秀 is the top of the two-quality ladder, so only 普通 books can ascend. */
+export function canAscendTechniqueQuality(quality: AssetQuality): boolean {
+  return quality === TECHNIQUE_ASCEND_SOURCE_QUALITY;
 }
 
 export function shouldAutoLockEquipment(quality: AssetQuality): boolean {

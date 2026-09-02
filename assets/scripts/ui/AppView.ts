@@ -196,6 +196,7 @@ export interface AppViewActions {
     sourceTechniqueConfigId: string,
     targetTechniqueConfigId: string,
   ): void;
+  ascendTechnique(techniqueConfigId: string): void;
   useInventoryItem(itemConfigId: string): void;
   useAllInventoryItems(itemConfigId: string): void;
   transferHarvest(entryId: string): void;

@@ -1,10 +1,12 @@
 import {
+  TECHNIQUE_ASCEND_REQUIRED_SECLUSION_ROOM_LEVEL,
   TECHNIQUE_PAGES_PER_DUPLICATE,
   calculateEquipmentContribution,
   calculateTechniqueContribution,
   calculateTotalPower,
   equipmentEnhanceCost,
   getTechniqueConfig,
+  techniqueAscendCost,
   techniqueInheritCost,
   techniqueStarUpgradeCost,
   type AssetQuality,
@@ -329,11 +331,13 @@ interface TechniqueSeed {
 
 /**
  * A save holding an arbitrary set of books. 传承 needs two rows in the same slot
- * from different bands, which the single-technique fixture above cannot express.
+ * from different bands, which the single-technique fixture above cannot express;
+ * 升华 needs the seclusion room, which is why the cave comes in here too.
  */
 function serviceWithTechniques(
   seeds: readonly TechniqueSeed[],
   spiritStone: number,
+  seclusionRoomLevel = 0,
 ): LocalGameService {
   const now = new Date();
   const platform = new FakePlatformAdapter();
@@ -348,6 +352,13 @@ function serviceWithTechniques(
   save.snapshot.wallet.spiritStone = String(spiritStone);
   save.snapshot.inventory.stacks = [];
   save.snapshot.equipment = [];
+  save.snapshot.cave.buildings = (
+    save.snapshot.cave.buildings as { buildingConfigId: string; level: number }[]
+  ).map((building) =>
+    building.buildingConfigId === "seclusion_room"
+      ? { ...building, level: seclusionRoomLevel }
+      : building,
+  );
   save.snapshot.techniques = seeds.map((seed) => {
     const config = getTechniqueConfig(seed.techniqueConfigId);
     return {
@@ -562,6 +573,173 @@ describe("technique inheritance refuses the wrong pairings", () => {
       BAND_2_MIND,
       "灵石不足，还需 1 灵石",
       INHERIT_COST - 1,
+    );
+  });
+});
+
+// 升华 works along the quality axis inside one band, so its pairing is the
+// star-up fixture's 静息诀 (凡阶 心法 普通) and 传承's BAND_1_MIND (its 优秀 twin).
+const ASCEND_COST = techniqueAscendCost(1);
+const ASCEND_ROOM_LEVEL = TECHNIQUE_ASCEND_REQUIRED_SECLUSION_ROOM_LEVEL;
+
+describe("technique ascension service", () => {
+  it("materialises the 优秀 book, carries the stars and eats two copies", () => {
+    const service = serviceWithTechniques(
+      [
+        {
+          techniqueConfigId: TECHNIQUE_ID,
+          star: 6,
+          duplicateCount: 5,
+          equipped: true,
+        },
+      ],
+      ASCEND_COST.spiritStone + 1_000,
+      ASCEND_ROOM_LEVEL,
+    );
+
+    const result = service.ascendTechnique(TECHNIQUE_ID);
+
+    const target = service.snapshot.techniques.find(
+      (item) => item.techniqueConfigId === BAND_1_MIND,
+    );
+    expect(target?.star).toBe(6);
+    expect(target?.quality).toBe("uncommon");
+    expect(target?.equippedSlot).toBe("mind");
+    expect(
+      service.snapshot.techniques.some(
+        (item) => item.techniqueConfigId === TECHNIQUE_ID,
+      ),
+    ).toBe(false);
+    expect(service.snapshot.wallet.spiritStone).toBe("1000");
+    // Two copies paid the price; the other three came back as pages.
+    expect(stackQuantity(service, "technique_page")).toBe(
+      String(3 * TECHNIQUE_PAGES_PER_DUPLICATE),
+    );
+    expect(result.message).toBe(
+      `消耗 ${ASCEND_COST.duplicateCount} 本同名副本和 ${ASCEND_COST.spiritStone} 灵石，静息诀升华为青云心法，返还 15 张功法残页`,
+    );
+  });
+
+  it("pays the 优秀 book's own power, not the 普通 one's", () => {
+    const service = serviceWithTechniques(
+      [
+        {
+          techniqueConfigId: TECHNIQUE_ID,
+          star: 4,
+          duplicateCount: 2,
+          equipped: true,
+        },
+      ],
+      ASCEND_COST.spiritStone,
+      ASCEND_ROOM_LEVEL,
+    );
+    const before = service.snapshot.progress.loadoutPowerBonusBp;
+
+    service.ascendTechnique(TECHNIQUE_ID);
+
+    const contribution = calculateTechniqueContribution({
+      techniqueConfigId: BAND_1_MIND,
+      star: 4,
+    });
+    expect(service.snapshot.progress.loadoutPowerBonusBp).toBe(
+      contribution.powerBonusBp,
+    );
+    // The quality multiplier is x1.5, so this is the assertion that the step is
+    // worth taking at all.
+    expect(contribution.powerBonusBp).toBeGreaterThan(before);
+    expect(stackQuantity(service, "technique_page")).toBe("0");
+  });
+
+  it("merges onto an owned 优秀 book that has fewer stars", () => {
+    const service = serviceWithTechniques(
+      [
+        { techniqueConfigId: TECHNIQUE_ID, star: 8, duplicateCount: 2 },
+        { techniqueConfigId: BAND_1_MIND, star: 3, duplicateCount: 1 },
+      ],
+      ASCEND_COST.spiritStone,
+      ASCEND_ROOM_LEVEL,
+    );
+
+    service.ascendTechnique(TECHNIQUE_ID);
+
+    const rows = service.snapshot.techniques.filter(
+      (item) => item.slot === "mind",
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.techniqueConfigId).toBe(BAND_1_MIND);
+    expect(rows[0]?.star).toBe(8);
+    // The target's own copies are untouched: only the source's surplus refunds.
+    expect(rows[0]?.duplicateCount).toBe(1);
+  });
+});
+
+describe("technique ascension refuses the wrong pairings", () => {
+  function expectRejected(
+    seeds: readonly TechniqueSeed[],
+    sourceId: string,
+    message: string,
+    spiritStone = ASCEND_COST.spiritStone,
+    seclusionRoomLevel = ASCEND_ROOM_LEVEL,
+  ): void {
+    const service = serviceWithTechniques(seeds, spiritStone, seclusionRoomLevel);
+    const before = JSON.stringify(service.snapshot.techniques);
+    expect(() => service.ascendTechnique(sourceId)).toThrow(message);
+    expect(JSON.stringify(service.snapshot.techniques)).toBe(before);
+    expect(service.snapshot.wallet.spiritStone).toBe(String(spiritStone));
+    expect(stackQuantity(service, "technique_page")).toBe("0");
+  }
+
+  it("rejects a book the player does not own", () => {
+    expectRejected(
+      [{ techniqueConfigId: TECHNIQUE_ID, star: 3, duplicateCount: 2 }],
+      "no_such_manual",
+      "尚未收录该功法",
+    );
+  });
+
+  it("rejects a book that is already 优秀", () => {
+    expectRejected(
+      [{ techniqueConfigId: BAND_1_MIND, star: 3, duplicateCount: 2 }],
+      BAND_1_MIND,
+      "青云心法已是最高品质",
+    );
+  });
+
+  it("rejects a seclusion room that is short of the gate", () => {
+    expectRejected(
+      [{ techniqueConfigId: TECHNIQUE_ID, star: 3, duplicateCount: 2 }],
+      TECHNIQUE_ID,
+      `闭关室需达到 Lv.${ASCEND_ROOM_LEVEL}`,
+      ASCEND_COST.spiritStone,
+      ASCEND_ROOM_LEVEL - 1,
+    );
+  });
+
+  it("rejects copies short of the price and says pages cannot cover it", () => {
+    expectRejected(
+      [{ techniqueConfigId: TECHNIQUE_ID, star: 3, duplicateCount: 1 }],
+      TECHNIQUE_ID,
+      "同名副本不足，还需 1 本（残页无法替代）",
+    );
+  });
+
+  it("rejects a price the player cannot pay", () => {
+    expectRejected(
+      [{ techniqueConfigId: TECHNIQUE_ID, star: 3, duplicateCount: 2 }],
+      TECHNIQUE_ID,
+      "灵石不足，还需 1 灵石",
+      ASCEND_COST.spiritStone - 1,
+    );
+  });
+
+  it("rejects an owned 优秀 book that is already at or above the stars", () => {
+    expectRejected(
+      [
+        { techniqueConfigId: TECHNIQUE_ID, star: 5, duplicateCount: 2 },
+        { techniqueConfigId: BAND_1_MIND, star: 5 },
+      ],
+      TECHNIQUE_ID,
+      "青云心法的星级不低于来源，无需升华",
     );
   });
 });
