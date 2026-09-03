@@ -4,6 +4,7 @@ import path from "node:path";
 import process from "node:process";
 import {
   COCOS_WECHAT_TEST_APP_ID,
+  buildSharedPackage,
   loadWechatBuildConfig,
   sha256,
   sourceFingerprint,
@@ -44,6 +45,7 @@ if (production && candidateSource.dirty) {
   );
 }
 
+buildSharedPackage(workspace);
 for (const mode of modes) {
   await buildMode(mode, candidateSource);
 }

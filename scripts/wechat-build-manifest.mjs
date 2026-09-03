@@ -2,9 +2,25 @@ import { createHash } from "node:crypto";
 import { readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
+import process from "node:process";
 
 export const WECHAT_BUILD_MANIFEST = "cultivation-diary-build.json";
 export const COCOS_WECHAT_TEST_APP_ID = "wx6ac3f5090a6b99c5";
+
+export function buildSharedPackage(workspace) {
+  const pnpmCommand = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+  const built = spawnSync(
+    pnpmCommand,
+    ["--filter", "@cultivation-diary/shared", "build"],
+    { cwd: workspace, stdio: "inherit" },
+  );
+  if (built.error) throw built.error;
+  if (built.signal || built.status !== 0) {
+    throw new Error(
+      `Shared package build failed: status=${built.status}, signal=${built.signal}`,
+    );
+  }
+}
 
 export async function loadWechatBuildConfig(workspace) {
   return readJson(path.join(workspace, "wechat-build.config.json"));
