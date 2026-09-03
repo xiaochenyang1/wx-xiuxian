@@ -1,4 +1,9 @@
 import type { ChosenAvatarVariant } from "@cultivation-diary/shared";
+import {
+  getAudioToggleControls,
+  type AudioChannel,
+  type AudioPreference,
+} from "../../core/AppAudioConfig";
 import { formatLargeNumber } from "../../core/ClientNumber";
 import type { AppState } from "../../core/ClientTypes";
 import { canRunLocalMutation } from "../../core/ClientTypes";
@@ -8,6 +13,7 @@ import {
   addLabel,
   createButton,
   createTextInput,
+  createToggle,
   drawBand,
 } from "../primitives/Draw";
 import { avatarVariantName } from "../primitives/Format";
@@ -42,6 +48,17 @@ export interface ProfileBackupControls {
   arm(action: ProfileBackupAction): void;
   cancel(): void;
   confirm(): void;
+}
+
+/**
+ * Read through a getter rather than passed by value because the preference lives
+ * outside the save: `AppAudio` owns it, this panel only draws it. Kept in the
+ * same shape as the reset and backup controls above so the panel keeps taking
+ * all of its non-snapshot state the one way.
+ */
+export interface ProfileAudioControls {
+  preference(): AudioPreference;
+  toggle(channel: AudioChannel): void;
 }
 
 export interface ProfileResetControlDisplay {
@@ -94,6 +111,7 @@ export function drawProfilePanel(
   drafts: ProfileDraftState,
   backup: ProfileBackupControls,
   reset: ProfileResetControls,
+  audio: ProfileAudioControls,
 ): void {
   const data = state.bootstrap!;
   const player = data.player;
@@ -488,4 +506,47 @@ export function drawProfilePanel(
       () => reset.arm(),
     );
   }
+
+  // The bands above stop at y=-409 while the panel body reaches -530, so this
+  // strip is the one place a new row lands without moving a control a player
+  // already knows. Audio never touches the snapshot, so unlike everything else
+  // in this panel its switches stay live while a mutation is in flight.
+  drawBand(overlay, "AudioProfile", 0, -468, 620, 100, COLORS.panel);
+  addLabel(
+    overlay,
+    "声音",
+    -245,
+    -437,
+    120,
+    38,
+    22,
+    COLORS.gold,
+    true,
+    1,
+    HorizontalTextAlignment.LEFT,
+  );
+  getAudioToggleControls(audio.preference()).forEach((control, index) => {
+    createToggle(
+      overlay,
+      `Audio-${control.channel}`,
+      control.label,
+      index === 0 ? -60 : 66,
+      -437,
+      116,
+      36,
+      control.active,
+      { fontSize: 15 },
+      () => audio.toggle(control.channel),
+    );
+  });
+  addLabel(
+    overlay,
+    "关闭只静音，不影响挂机与收益",
+    0,
+    -492,
+    540,
+    30,
+    14,
+    COLORS.textMuted,
+  );
 }

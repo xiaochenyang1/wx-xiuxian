@@ -39,6 +39,15 @@ import type {
   SupplementalArt,
 } from "../core/AppArt";
 import {
+  getAudioPreference,
+  playAudioCue,
+  toggleAudio,
+} from "../core/AppAudio";
+import {
+  audioCueForPresentation,
+  type AudioChannel,
+} from "../core/AppAudioConfig";
+import {
   mergeCultivationPresentationPlans,
   type CultivationPresentationPlan,
 } from "../core/CultivationPresentation";
@@ -127,6 +136,7 @@ import { drawExpeditionPanel } from "./panels/ExpeditionPanel";
 import { drawInventoryPanel } from "./panels/InventoryPanel";
 import {
   drawProfilePanel,
+  type ProfileAudioControls,
   type ProfileBackupAction,
   type ProfileBackupControls,
   type ProfileDraftState,
@@ -380,6 +390,10 @@ export class AppView {
     arm: (action) => this.armProfileBackup(action),
     cancel: () => this.cancelProfileBackup(),
     confirm: () => this.confirmProfileBackup(),
+  };
+  private readonly profileAudioControls: ProfileAudioControls = {
+    preference: () => getAudioPreference(),
+    toggle: (channel) => this.toggleAudioPreference(channel),
   };
 
   constructor(
@@ -1046,6 +1060,11 @@ export class AppView {
     this.pendingPresentation = null;
     this.activePresentation = plan;
     try {
+      // Fired here rather than inside the three `play*` methods because this is
+      // the one place the kind is already switched on — a cue placed beside each
+      // overlay could drift from the overlay it is meant to accompany, and a
+      // merged burst would sound like the weaker of the two moments.
+      playAudioCue(audioCueForPresentation(plan.kind));
       if (plan.kind === "breakthrough") {
         this.playBreakthroughPresentation(plan);
       } else if (plan.kind === "level_up") {
@@ -2675,6 +2694,7 @@ export class AppView {
         this.profileDrafts,
         this.profileBackupControls,
         this.profileResetControls,
+        this.profileAudioControls,
       );
     if (feature === "inventory")
       drawInventoryPanel(overlay, state, this.actions, this.panelPaging);
@@ -2718,6 +2738,17 @@ export class AppView {
         "fixed",
       );
     }
+  }
+
+  /**
+   * The switch is a device preference, so nothing here goes through a mutation:
+   * `AppAudio` persists it and the panel is redrawn from the state already on
+   * screen, the same way the armed/pending flags above redraw themselves.
+   */
+  private toggleAudioPreference(channel: AudioChannel): void {
+    this.actions.feedback();
+    toggleAudio(channel);
+    if (this.lastState) this.render(this.lastState);
   }
 
   private armProfileReset(): void {
