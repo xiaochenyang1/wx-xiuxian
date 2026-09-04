@@ -42,7 +42,7 @@ export function drawAlchemyPanel(
     addLabel(
       overlay,
       recipe.displayName,
-      -190,
+      -180,
       y + 42,
       210,
       32,
@@ -62,10 +62,16 @@ export function drawAlchemyPanel(
       15,
       display.affordable ? COLORS.jade : COLORS.textMuted,
     );
+    // The three left-aligned labels all start at design x=-285: 20px inside the
+    // band's left edge. Their widths differ, so a shared centre x would put each
+    // one's left edge somewhere else — which is how they came to hang off the
+    // 700-wide panel body, `materialText` past the 750-wide viewport as well.
+    // Right edges are bounded by what shares the line: the 炼制 button at 204
+    // for `outputText`, `costText` at 62 for `materialText`.
     addLabel(
       overlay,
       display.outputText,
-      -190,
+      -105,
       y + 7,
       360,
       30,
@@ -78,9 +84,9 @@ export function drawAlchemyPanel(
     addLabel(
       overlay,
       display.materialText,
-      -190,
+      -115,
       y - 30,
-      390,
+      340,
       42,
       14,
       display.affordable ? COLORS.textMuted : COLORS.red,

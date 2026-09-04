@@ -74,6 +74,18 @@ export function drawTribulationLightning(parent: Node): void {
   graphic.stroke();
 }
 
+/**
+ * One outline per navigation button, picked by the index the button's table row
+ * declares. Ten buttons carry a glyph, so ten indices are drawn here: before the
+ * bottom rail declared its own, the index was the rail position and four pairs
+ * collided — 宗门/历练 both fell through to `else`, 炼丹 wore 行囊's bag and 炼器
+ * wore 任务's clock.
+ *
+ * The accent alternates on parity because the rail reads as a gold/cyan rhythm
+ * left to right, which pins each rail slot's index to its position's parity.
+ * `AppNavigation` keeps the assignment; `test/app-navigation.test.ts` holds both
+ * invariants.
+ */
 export function drawFeatureGlyph(
   graphic: Graphics,
   iconIndex: number,
@@ -113,6 +125,56 @@ export function drawFeatureGlyph(
     graphic.lineTo(point(20), point(-16));
     graphic.moveTo(point(-13), point(-4));
     graphic.lineTo(point(13), point(-4));
+  } else if (iconIndex === 5) {
+    graphic.roundRect(point(-20), point(6), point(40), point(15), point(3));
+    graphic.moveTo(0, point(6));
+    graphic.lineTo(0, point(-22));
+    graphic.moveTo(point(-11), point(-22));
+    graphic.lineTo(point(11), point(-22));
+  } else if (iconIndex === 6) {
+    graphic.moveTo(point(-16), point(11));
+    graphic.lineTo(point(-20), point(-14));
+    graphic.lineTo(point(20), point(-14));
+    graphic.lineTo(point(16), point(11));
+    graphic.close();
+    graphic.moveTo(point(-22), point(11));
+    graphic.lineTo(point(22), point(11));
+    graphic.moveTo(point(-7), point(21));
+    graphic.lineTo(point(7), point(21));
+    graphic.circle(0, point(-2), point(6));
+  } else if (iconIndex === 7) {
+    graphic.moveTo(point(-22), point(19));
+    graphic.lineTo(point(22), point(19));
+    graphic.moveTo(point(-16), point(11));
+    graphic.lineTo(point(16), point(11));
+    graphic.moveTo(point(-13), point(11));
+    graphic.lineTo(point(-13), point(-21));
+    graphic.moveTo(point(13), point(11));
+    graphic.lineTo(point(13), point(-21));
+    graphic.moveTo(point(-20), point(-21));
+    graphic.lineTo(point(20), point(-21));
+  } else if (iconIndex === 8) {
+    graphic.moveTo(point(-22), point(-18));
+    graphic.lineTo(point(-8), point(14));
+    graphic.lineTo(0, point(-1));
+    graphic.lineTo(point(9), point(21));
+    graphic.lineTo(point(22), point(-18));
+    graphic.close();
+    graphic.moveTo(point(3), point(9));
+    graphic.lineTo(point(15), point(9));
+  } else if (iconIndex === 9) {
+    graphic.circle(0, point(2), point(11));
+    for (let ray = 0; ray < 8; ray += 1) {
+      const angle = (Math.PI * 2 * ray) / 8;
+      graphic.moveTo(
+        Math.cos(angle) * point(16),
+        point(2) + Math.sin(angle) * point(16),
+      );
+      graphic.lineTo(
+        Math.cos(angle) * point(23),
+        point(2) + Math.sin(angle) * point(23),
+      );
+    }
   } else {
     graphic.moveTo(point(-18), point(12));
     graphic.lineTo(point(-8), point(-15));

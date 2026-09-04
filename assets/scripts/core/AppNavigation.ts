@@ -18,6 +18,17 @@ export interface MainTabEntry {
 export interface FeatureEntry {
   readonly label: string;
   readonly feature: FeaturePanel;
+  /**
+   * Which outline `drawFeatureGlyph` draws when no icon file has been dropped in.
+   * Unique across both tables below — the rail used to pass its slot position
+   * here instead, which made 炼丹 wear 行囊's bag and 炼器 wear 任务's clock.
+   *
+   * The glyph's accent is `icon % 2 === 0 ? gold : cyan`, so a rail slot's parity
+   * is fixed by the gold/cyan rhythm it reads left to right, and only five of the
+   * ten indices are even. 日常 spends the last odd one; it separates from 任务 by
+   * shape (a sun against a clock) rather than by colour.
+   */
+  readonly icon: number;
 }
 
 /** The count bubble a shortcut carries, resolved to a number by the view. */
@@ -26,7 +37,6 @@ export type ShortcutBadge = "tasks" | "harvest" | "daily";
 export interface ShortcutEntry extends FeatureEntry {
   readonly x: number;
   readonly y: number;
-  readonly icon: number;
   readonly badge: ShortcutBadge;
 }
 
@@ -45,14 +55,14 @@ export const MAIN_TABS = [
  * off the header avatar.
  */
 export const BOTTOM_FEATURE_RAIL = [
-  { label: "功法", feature: "techniques" },
-  { label: "法宝", feature: "equipment" },
-  { label: "炼丹", feature: "alchemy" },
-  { label: "炼器", feature: "crafting" },
+  { label: "功法", feature: "techniques", icon: 0 },
+  { label: "法宝", feature: "equipment", icon: 1 },
+  { label: "炼丹", feature: "alchemy", icon: 6 },
+  { label: "炼器", feature: "crafting", icon: 5 },
   // 灵宠是法宝的一个槽位（月影灵狐），法宝面板已经管着它，这一格留给试炼塔。
-  { label: "试炼塔", feature: "trialTower" },
-  { label: "宗门", feature: "sect" },
-  { label: "历练", feature: "expedition" },
+  { label: "试炼塔", feature: "trialTower", icon: 4 },
+  { label: "宗门", feature: "sect", icon: 7 },
+  { label: "历练", feature: "expedition", icon: 8 },
 ] as const satisfies ReadonlyArray<FeatureEntry>;
 
 /**
@@ -64,7 +74,7 @@ export const BOTTOM_FEATURE_RAIL = [
 export const CULTIVATION_SHORTCUTS = [
   { label: "任务", feature: "tasks", x: -322, y: 255, icon: 3, badge: "tasks" },
   { label: "行囊", feature: "inventory", x: -322, y: 150, icon: 2, badge: "harvest" },
-  { label: "日常", feature: "daily", x: -322, y: 45, icon: 0, badge: "daily" },
+  { label: "日常", feature: "daily", x: -322, y: 45, icon: 9, badge: "daily" },
 ] as const satisfies ReadonlyArray<ShortcutEntry>;
 
 /**

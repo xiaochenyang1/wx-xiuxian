@@ -98,3 +98,46 @@ describe("bottom feature rail wiring", () => {
     expect(BOTTOM_FEATURE_RAIL.length * 107).toBeLessThanOrEqual(750);
   });
 });
+
+describe("fallback glyph assignment", () => {
+  const glyphButtons = [...BOTTOM_FEATURE_RAIL, ...CULTIVATION_SHORTCUTS];
+
+  it("gives each of the ten buttons its own outline", () => {
+    // The rail used to pass its slot position as the glyph index while the
+    // shortcuts declared theirs, so four pairs collided: 炼丹 drew 行囊's bag,
+    // 炼器 drew 任务's clock, 功法 drew 日常's, and 宗门/历练 shared the
+    // fallback shape. Two buttons on screen with one outline between them is
+    // the same defect however the indices come to be equal.
+    const byIcon = new Map<number, string[]>();
+    for (const entry of glyphButtons) {
+      const existing = byIcon.get(entry.icon);
+      if (existing) existing.push(entry.label);
+      else byIcon.set(entry.icon, [entry.label]);
+    }
+    const shared = [...byIcon]
+      .filter(([, labels]) => labels.length > 1)
+      .map(([icon, labels]) => `${icon}: ${labels.join(" + ")}`);
+    expect(shared).toEqual([]);
+    expect(byIcon.size).toBe(glyphButtons.length);
+  });
+
+  it("draws an outline that exists for every index", () => {
+    // `drawFeatureGlyph` branches on 0..9 and falls through to a shared shape
+    // for anything else, which is why an out-of-range index is invisible in
+    // review rather than blank on screen.
+    for (const entry of glyphButtons) {
+      expect(Number.isInteger(entry.icon)).toBe(true);
+      expect(entry.icon).toBeGreaterThanOrEqual(0);
+      expect(entry.icon).toBeLessThanOrEqual(9);
+    }
+  });
+
+  it("keeps the rail's gold and cyan alternating left to right", () => {
+    // The glyph and its medallion ring take their accent from `icon % 2`, so
+    // the rhythm the rail reads as is a property of these numbers: slot parity
+    // has to match index parity or the rail picks up two golds in a row.
+    expect(BOTTOM_FEATURE_RAIL.map((entry) => entry.icon % 2)).toEqual([
+      0, 1, 0, 1, 0, 1, 0,
+    ]);
+  });
+});

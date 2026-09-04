@@ -1,9 +1,12 @@
 import {
   ASSET_QUALITY_MULTIPLIER_BP,
   calculateTechniqueContribution,
+  canAscendTechniqueQuality,
   equipmentEnhanceCost,
   equipmentSalvageReward,
   shouldAutoLockEquipment,
+  techniqueAscendCost,
+  techniqueInheritCost,
   techniqueStarUpgradeCost,
   type AssetQuality,
 } from "@cultivation-diary/shared";
@@ -102,6 +105,45 @@ describe("technique star-up costs", () => {
       expect(() => techniqueStarUpgradeCost(currentStar)).toThrow(RangeError);
     },
   );
+});
+
+describe("technique ascension costs", () => {
+  it.each([
+    [1, 75_000],
+    [2, 300_000],
+    [3, 900_000],
+    [4, 2_250_000],
+  ] as const)("quotes band %i at %i spirit stone", (band, spiritStone) => {
+    expect(techniqueAscendCost(band)).toEqual({
+      targetQuality: "uncommon",
+      duplicateCount: 2,
+      spiritStone,
+      requiredSeclusionRoomLevel: 5,
+    });
+  });
+
+  it("charges what inheriting to the same band's 优秀 book charges", () => {
+    // Both moves carry stars the player has already paid for, one along the
+    // quality axis and one along the band axis, and both price them off
+    // `50,000 x 优秀` — so the two axes cost the same per step by construction.
+    for (const band of [2, 3, 4] as const) {
+      expect(techniqueAscendCost(band).spiritStone).toBe(
+        techniqueInheritCost("uncommon", band),
+      );
+    }
+  });
+
+  it("keeps 优秀 the top of the ladder", () => {
+    // A third quality would move the maxed endpoint `LOADOUT_POWER_SCALE_BP` is
+    // solved from; `test/loadout-power-model.test.ts` measures it with 优秀 books.
+    expect(canAscendTechniqueQuality("common")).toBe(true);
+    expect(canAscendTechniqueQuality("uncommon")).toBe(false);
+    expect(canAscendTechniqueQuality("legendary")).toBe(false);
+  });
+
+  it("rejects an unknown band", () => {
+    expect(() => techniqueAscendCost(9 as 1)).toThrow(RangeError);
+  });
 });
 
 describe("technique contribution star bounds", () => {

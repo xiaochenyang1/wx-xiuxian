@@ -39,10 +39,13 @@ export function drawCraftingPanel(
       display.affordable ? COLORS.inkGreenLight : COLORS.panel,
       COLORS.goldMuted,
     );
+    // Same rule as 炼丹: every left-aligned label starts at design x=-285, 20px
+    // inside the band, so the widths have to drive the centre x. The combined
+    // cost/material line was the worst offender at -405, 30px off the viewport.
     addLabel(
       overlay,
       recipe.displayName,
-      -190,
+      -165,
       y + 40,
       240,
       30,
@@ -65,7 +68,7 @@ export function drawCraftingPanel(
     addLabel(
       overlay,
       display.productText,
-      -190,
+      -135,
       y + 15,
       300,
       22,
@@ -78,7 +81,7 @@ export function drawCraftingPanel(
     addLabel(
       overlay,
       `${display.costText}　${display.materialText}`,
-      -190,
+      -70,
       y - 22,
       430,
       44,

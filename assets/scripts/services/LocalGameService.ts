@@ -56,6 +56,7 @@ import {
   caveBuildingLevel,
   caveMaxLevelForBand,
   canAscendEquipmentQuality,
+  canAscendTechniqueQuality,
   craftingQualityWeight,
   craftingSpiritStoneCost,
   completeBreakthrough,
@@ -114,6 +115,8 @@ import {
   shouldAutoLockEquipment,
   simulateOnlineExperience,
   techniqueBandForConfig,
+  techniqueAscendCost,
+  techniqueConfigForSlotBandQuality,
   techniqueConfigsForBand,
   techniqueInheritCost,
   techniqueStarUpgradeCost,
@@ -1757,6 +1760,119 @@ export class LocalGameService {
           refundedPages > 0
             ? `消耗 ${cost} 灵石，${target.displayName}承接 ${source.star} 星，返还 ${refundedPages} 张功法残页`
             : `消耗 ${cost} 灵石，${target.displayName}承接 ${source.star} 星`,
+      };
+    });
+  }
+
+  /**
+   * Moves a book's stars onto its 优秀 counterpart in the same slot and band —
+   * the quality-axis twin of `inheritTechnique`, and the only way a 普通 book
+   * ever becomes an 优秀 one.
+   *
+   * The target row is created when the player does not own it, which is the one
+   * place this differs from 传承: 传承 needs a book that already exists because a
+   * band is something the player has to have reached, whereas the 优秀 book of a
+   * band already in reach is only ever a matter of what the drop stream handed
+   * out. Ascending is how a player stops waiting for it.
+   */
+  ascendTechnique(techniqueConfigId: string): LocalMutationResult {
+    return this.mutate((snapshot) => {
+      const source = snapshot.techniques.find(
+        (item) => item.techniqueConfigId === techniqueConfigId,
+      );
+      if (!source) throw new LocalGameError("尚未收录该功法");
+      if (!isAssetQuality(source.quality)) {
+        throw new LocalGameError("功法品质数据无效");
+      }
+      if (!canAscendTechniqueQuality(source.quality)) {
+        throw new LocalGameError(`${source.displayName}已是最高品质`);
+      }
+
+      const band = techniqueBandForConfig(source.techniqueConfigId);
+      const cost = techniqueAscendCost(band);
+      const seclusionRoomLevel = caveBuildingLevel(
+        snapshot.cave.buildings,
+        "seclusion_room",
+      );
+      if (seclusionRoomLevel < cost.requiredSeclusionRoomLevel) {
+        throw new LocalGameError(
+          `闭关室需达到 Lv.${cost.requiredSeclusionRoomLevel}`,
+        );
+      }
+      if (source.duplicateCount < cost.duplicateCount) {
+        throw new LocalGameError(
+          `同名副本不足，还需 ${cost.duplicateCount - source.duplicateCount} 本（残页无法替代）`,
+        );
+      }
+      const spiritStone = decimal(snapshot.wallet.spiritStone);
+      if (spiritStone.lessThan(cost.spiritStone)) {
+        throw new LocalGameError(
+          `灵石不足，还需 ${decimal(cost.spiritStone).minus(spiritStone).toFixed(0)} 灵石`,
+        );
+      }
+
+      const targetConfig = techniqueConfigForSlotBandQuality(
+        getTechniqueConfig(source.techniqueConfigId).slot,
+        band,
+        cost.targetQuality,
+      );
+      const owned = snapshot.techniques.find(
+        (item) => item.techniqueConfigId === targetConfig.id,
+      );
+      if (owned && owned.star >= source.star) {
+        throw new LocalGameError(
+          `${owned.displayName}的星级不低于来源，无需升华`,
+        );
+      }
+
+      // Only the copies past the price come back, and they come back as pages at
+      // the same rate 传承 refunds them: the two duplicates the ascension eats are
+      // spent, the rest were never part of this purchase.
+      const refundedPages =
+        (source.duplicateCount - cost.duplicateCount) *
+        TECHNIQUE_PAGES_PER_DUPLICATE;
+      if (refundedPages > 0) {
+        ensureStackOutputCapacity(
+          snapshot,
+          "technique_page",
+          "行囊空间不足，无法返还功法残页",
+        );
+      }
+
+      const techniques = (
+        owned
+          ? snapshot.techniques
+          : [...snapshot.techniques, createTechniqueSnapshot(targetConfig.id)]
+      )
+        .filter((item) => item.techniqueConfigId !== source.techniqueConfigId)
+        .map((item) =>
+          item.techniqueConfigId === targetConfig.id
+            ? {
+                ...item,
+                star: source.star,
+                equippedSlot: source.equippedSlot ?? item.equippedSlot,
+              }
+            : item,
+        );
+      const ascendMessage = `消耗 ${cost.duplicateCount} 本同名副本和 ${cost.spiritStone} 灵石，${source.displayName}升华为${targetConfig.displayName}`;
+      return {
+        snapshot: refreshSnapshot({
+          ...snapshot,
+          wallet: {
+            ...snapshot.wallet,
+            spiritStone: spiritStone.minus(cost.spiritStone).toFixed(0),
+          },
+          inventory:
+            refundedPages > 0
+              ? addStack(snapshot.inventory, "technique_page", refundedPages)
+              : snapshot.inventory,
+          techniques,
+        }),
+        events: [],
+        message:
+          refundedPages > 0
+            ? `${ascendMessage}，返还 ${refundedPages} 张功法残页`
+            : ascendMessage,
       };
     });
   }

@@ -233,6 +233,17 @@ export function createTextInput(
   editBox.enabled = enabled;
   editBox.textLabel = textLabel;
   editBox.placeholderLabel = placeholderLabel;
+  // `addComponent` runs EditBox's preload, and because neither label is wired up
+  // yet it builds its own `TEXT_LABEL` / `PLACEHOLDER_LABEL` children with Cocos
+  // defaults — white, fontSize 40. Handing it ours on the two lines above does
+  // not take those back, so the default placeholder string stays on screen
+  // underneath the real one. Drop whatever it made that we are not using.
+  for (const child of [...node.children]) {
+    if (child === textLabel.node || child === placeholderLabel.node) continue;
+    if (child.name === "TEXT_LABEL" || child.name === "PLACEHOLDER_LABEL") {
+      removeAndDestroy(child);
+    }
+  }
   editBox.inputMode = options.inputMode ?? EditBox.InputMode.SINGLE_LINE;
   editBox.inputFlag = EditBox.InputFlag.DEFAULT;
   editBox.returnType = EditBox.KeyboardReturnType.DONE;

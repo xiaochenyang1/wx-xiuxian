@@ -6,6 +6,7 @@ import {
   ASSET_QUALITY_DISPLAY_NAMES,
   affixScorePercent,
   canAscendEquipmentQuality,
+  canAscendTechniqueQuality,
   caveBuildingLevel,
   decimal,
   equipmentAffixScoreBp,
@@ -15,10 +16,13 @@ import {
   equipmentEnhanceCost,
   equipmentRerollCost,
   getEquipmentBandConfig,
+  getTechniqueConfig,
   isAssetQuality,
   nextAssetQuality,
   readRolledAffixes,
+  techniqueAscendCost,
   techniqueBandForConfig,
+  techniqueConfigForSlotBandQuality,
   techniqueInheritCost,
   techniqueStarUpgradeCost,
   type AffixStat,
@@ -372,7 +376,8 @@ function stackQuantity(
   );
 }
 
-export function getTechniqueUpgradeDisplay(  snapshot: BootstrapSnapshot,
+export function getTechniqueUpgradeDisplay(
+  snapshot: BootstrapSnapshot,
   technique: BootstrapSnapshot["techniques"][number],
 ): AssetUpgradeDisplay {
   if (technique.star >= TECHNIQUE_MAX_STAR) {
@@ -412,6 +417,84 @@ export function getTechniqueUpgradeDisplay(  snapshot: BootstrapSnapshot,
 export function getTechniqueBandName(techniqueConfigId: string): string {
   return getEquipmentBandConfig(techniqueBandForConfig(techniqueConfigId))
     .displayName;
+}
+
+export interface TechniqueAscendDisplay extends AssetUpgradeDisplay {
+  /** The 优秀 book the stars would land on, or `null` when the row cannot ascend. */
+  readonly targetDisplayName: string | null;
+}
+
+/**
+ * Prices the 普通 → 优秀 step for this book's own slot and band.
+ *
+ * The seclusion room is a prerequisite rather than a price, so a short room
+ * disables the button instead of only tinting it — the same split
+ * `getEquipmentAscendDisplay` makes for the crafting room.
+ */
+export function getTechniqueAscendDisplay(
+  snapshot: BootstrapSnapshot,
+  technique: BootstrapSnapshot["techniques"][number],
+): TechniqueAscendDisplay {
+  if (!isAssetQuality(technique.quality)) {
+    throw new RangeError(`Unknown technique quality: ${technique.quality}`);
+  }
+  if (!canAscendTechniqueQuality(technique.quality)) {
+    return {
+      maxed: true,
+      affordable: false,
+      costText: `已是${ASSET_QUALITY_DISPLAY_NAMES[technique.quality]}品质`,
+      actionText: "升华",
+      actionEnabled: false,
+      targetDisplayName: null,
+    };
+  }
+
+  const band = techniqueBandForConfig(technique.techniqueConfigId);
+  const cost = techniqueAscendCost(band);
+  const target = techniqueConfigForSlotBandQuality(
+    getTechniqueConfig(technique.techniqueConfigId).slot,
+    band,
+    cost.targetQuality,
+  );
+  const owned = snapshot.techniques.find(
+    (item) => item.techniqueConfigId === target.id,
+  );
+  if (owned && owned.star >= technique.star) {
+    return {
+      maxed: false,
+      affordable: false,
+      costText: `${owned.displayName}已 ${owned.star} 星`,
+      actionText: "升华",
+      actionEnabled: false,
+      targetDisplayName: target.displayName,
+    };
+  }
+  const seclusionRoomLevel = caveBuildingLevel(
+    snapshot.cave.buildings,
+    "seclusion_room",
+  );
+  if (seclusionRoomLevel < cost.requiredSeclusionRoomLevel) {
+    return {
+      maxed: false,
+      affordable: false,
+      costText: `闭关室 Lv.${seclusionRoomLevel}/${cost.requiredSeclusionRoomLevel}`,
+      actionText: "升华",
+      actionEnabled: false,
+      targetDisplayName: target.displayName,
+    };
+  }
+  return {
+    maxed: false,
+    affordable:
+      technique.duplicateCount >= cost.duplicateCount &&
+      decimal(snapshot.wallet.spiritStone).greaterThanOrEqualTo(
+        cost.spiritStone,
+      ),
+    costText: `副本 ${technique.duplicateCount}/${cost.duplicateCount}\n灵石 ${formatLargeNumber(String(cost.spiritStone))}`,
+    actionText: "升华",
+    actionEnabled: true,
+    targetDisplayName: target.displayName,
+  };
 }
 
 export interface TechniqueInheritDisplay extends AssetUpgradeDisplay {

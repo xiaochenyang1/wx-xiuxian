@@ -232,6 +232,14 @@ export function createSideFeatureButton(
   plate.lineWidth = 2;
   plate.circle(0, 12, 37);
   plate.stroke();
+  // The label hangs below the disc, over whatever the page's background art is —
+  // on 修炼 that is a sunlit cliff, and gold on it was unreadable. The chip gives
+  // the label the same dark ground the bottom rail's band gives its own labels,
+  // and it spans the label's own box because a dense pair like 行囊 sets far more
+  // ink than 日常 does.
+  plate.fillColor = withAlpha(COLORS.black, 208);
+  plate.roundRect(-40, -47, 80, 26, 6);
+  plate.fill();
   const button = node.addComponent(Button);
   button.transition = Button.Transition.SCALE;
   button.zoomScale = 0.92;

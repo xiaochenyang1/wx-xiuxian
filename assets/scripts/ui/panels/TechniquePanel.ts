@@ -1,4 +1,5 @@
 import {
+  getTechniqueAscendDisplay,
   getTechniqueBandName,
   getTechniqueInheritDisplay,
   getTechniqueUpgradeDisplay,
@@ -43,7 +44,9 @@ export function drawTechniquePanel(
 ): void {
   const techniques = state.bootstrap!.techniques;
   const mutationsEnabled = canRunLocalMutation(state);
-  const techniqueWindow = paging.window("techniques", techniques.length, 6);
+  // Five rows rather than six: each row carries three upgrade pairs (升星, 传承,
+  // 升华) on two lines, and the third line is what took the sixth row's pitch.
+  const techniqueWindow = paging.window("techniques", techniques.length, 5);
   addLabel(
     overlay,
     `功法 ${techniques.length} 本 · 残页 ${formatLargeNumber(state.bootstrap!.inventory.stacks.find((stack) => stack.itemConfigId === "technique_page")?.quantity ?? "0")} · 装备战力 +${formatBasisPoints(state.bootstrap!.progress.loadoutPowerBonusBp)}`,
@@ -92,15 +95,16 @@ export function drawTechniquePanel(
     return;
   }
   techniques.slice(techniqueWindow.start, techniqueWindow.end).forEach((technique, index) => {
-    const y = 205 - index * 98;
+    const y = 205 - index * 116;
     const upgrade = getTechniqueUpgradeDisplay(state.bootstrap!, technique);
     const inherit = getTechniqueInheritDisplay(state.bootstrap!, technique);
-    drawBand(overlay, `Technique-${technique.techniqueConfigId}`, 0, y, 600, 90, COLORS.panel);
+    const ascend = getTechniqueAscendDisplay(state.bootstrap!, technique);
+    drawBand(overlay, `Technique-${technique.techniqueConfigId}`, 0, y, 600, 108, COLORS.panel);
     addLabel(
       overlay,
       technique.displayName,
       -225,
-      y + 24,
+      y + 34,
       144,
       28,
       16,
@@ -113,7 +117,7 @@ export function drawTechniquePanel(
       overlay,
       `${getTechniqueBandName(technique.techniqueConfigId)} · ${technique.star}星 · 战力 +${formatBasisPoints(technique.powerBonusBp)}`,
       40,
-      y + 24,
+      y + 34,
       300,
       26,
       14,
@@ -127,7 +131,7 @@ export function drawTechniquePanel(
       upgrade,
       -218,
       -78,
-      y - 22,
+      y,
       mutationsEnabled,
       () => actions.upgradeTechnique(technique.techniqueConfigId),
     );
@@ -136,13 +140,24 @@ export function drawTechniquePanel(
       inherit,
       42,
       164,
-      y - 22,
+      y,
       mutationsEnabled,
       () =>
         actions.inheritTechnique(
           technique.techniqueConfigId,
           inherit.targetTechniqueConfigId ?? technique.techniqueConfigId,
         ),
+    );
+    // 升华 sits under 升星 because they compete for the same duplicates: stars
+    // now, or the 优秀 book later. Reading them in one column is the point.
+    drawTechniqueAction(
+      overlay,
+      ascend,
+      -218,
+      -78,
+      y - 34,
+      mutationsEnabled,
+      () => actions.ascendTechnique(technique.techniqueConfigId),
     );
     const equipped = technique.equippedSlot !== null;
     createButton(
@@ -153,7 +168,7 @@ export function drawTechniquePanel(
           ? "替换"
           : "装备",
       255,
-      y,
+      y - 17,
       78,
       56,
       {
@@ -182,7 +197,8 @@ export function drawTechniquePanel(
 
 /**
  * One cost label plus its button, the same pairing the equipment rows use — the
- * technique rows now carry two of them (升星 and 传承) and they have to line up.
+ * technique rows now carry three of them (升星, 传承 and 升华) across two lines,
+ * and the two in the left column have to line up.
  */
 function drawTechniqueAction(
   overlay: Node,
