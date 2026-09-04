@@ -5,6 +5,7 @@ import process from "node:process";
 import {
   artifactFingerprint,
   assertEqual,
+  buildSharedPackage,
   loadWechatBuildConfig,
   sha256,
   sourceFingerprint,
@@ -40,6 +41,7 @@ await mkdir(path.dirname(configPath), { recursive: true });
 await writeFile(configPath, JSON.stringify(effectiveConfig, null, 2) + "\n", "utf8");
 await rm(path.join(creatorHome, "editor"), { recursive: true, force: true });
 
+buildSharedPackage(workspace);
 const built = spawnSync(
   creatorBinary,
   ["--project", workspace, "--home", creatorHome, "--build", "configPath=" + configPath],
